@@ -1,0 +1,1187 @@
+Timestamp: 2025-07-22 16:02:01
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu5p4yvv_.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+    $VISIBILITY $TYPE $FIELD;
+    ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: immutable-field
+  patterns:
+    - pattern: |
+        class $CLASS {
+            $VISIBILITY $TYPE $FIELD;
+            ...
+        }
+    - metavariable-regex:
+        metavariable: $VISIBILITY
+        regex: (private|protected|public)
+    - pattern-not: $TYPE final $FIELD = $INIT;
+    - pattern-not: $TYPE static $FIELD;
+    - pattern-not: $TYPE volatile $FIELD;
+    - pattern-not-inside: |
+        @...($ANNOT)
+        class $CLASS {
+            ...
+            $TYPE $FIELD;
+            ...
+        }
+        metavariable-regex:
+          metavariable: $ANNOT
+          regex: (lombok\.Builder|lombok\.Data|lombok\.Setter|lombok\.Value)
+    - pattern-not-inside: |
+        class $CLASS {
+            ...
+            @...($ANNOT)
+            $TYPE $FIELD;
+            ...
+        }
+        metavariable-regex:
+          metavariable: $ANNOT
+          regex: (lombok\.Setter)
+    - pattern-not: |
+        $TYPE $FIELD = $INIT;
+    - pattern-not-inside: |
+        class $CLASS {
+            ...
+            $TYPE $FIELD;
+            ...
+            $CONSTRUCTOR(...) {
+                ...
+                $FIELD = ...;
+                ...
+            }
+            ...
+        }
+  message: |
+    Field [ $FIELD ] is not immutable. Consider making it final or ensuring it's only assigned in constructors.
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: security
+    cwe: "CWE-665: Improper Initialization"
+    owasp: "A10:2021 - Security Logging and Monitoring Failures"
+    references:
+      - https://cwe.mitre.org/data/definitions/665.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.Set;
+import java.util.function.Function;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.AccessType;
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFieldDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTLambdaExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.AssignmentEntry;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.DataflowResult;
+import net.sourceforge.pmd.util.CollectionUtil;
+
+public class ImmutableFieldRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> INVALIDATING_CLASS_ANNOT =
+        setOf(
+            "lombok.Builder",
+            "lombok.Data",
+            "lombok.Setter",
+            "lombok.Value"
+        );
+
+    private static final Set<String> INVALIDATING_FIELD_ANNOT =
+        setOf(
+            "lombok.Setter"
+        );
+    private static final Function<Object, JavaNode> INTERESTING_ANCESTOR =
+        NodeStream.asInstanceOf(ASTLambdaExpression.class,
+                                ASTTypeDeclaration.class,
+                                ASTConstructorDeclaration.class);
+
+    public ImmutableFieldRule() {
+        super(ASTFieldDeclaration.class);
+    }
+
+
+    @Override
+    public Object visit(ASTFieldDeclaration field, Object data) {
+        ASTTypeDeclaration enclosingType = field.getEnclosingType();
+        if (field.getEffectiveVisibility().isAtMost(Visibility.V_PRIVATE)
+            && !field.getModifiers().hasAny(JModifier.VOLATILE, JModifier.STATIC, JModifier.FINAL)
+            && !JavaAstUtils.hasAnyAnnotation(enclosingType, INVALIDATING_CLASS_ANNOT)
+            && !JavaAstUtils.hasAnyAnnotation(field, INVALIDATING_FIELD_ANNOT)) {
+
+            DataflowResult dataflow = DataflowPass.getDataflowResult(field.getRoot());
+
+            outer:
+            for (ASTVariableId varId : field.getVarIds()) {
+
+                boolean hasWrite = false;
+                for (ASTNamedReferenceExpr usage : varId.getLocalUsages()) {
+                    if (usage.getAccessType() == AccessType.WRITE) {
+                        hasWrite = true;
+
+                        JavaNode enclosing = usage.ancestors().map(INTERESTING_ANCESTOR).first();
+                        if (!(enclosing instanceof ASTConstructorDeclaration)
+                            || enclosing.getEnclosingType() != enclosingType) {
+                            continue outer; // written-to outside ctor
+                        }
+                    }
+                }
+
+                // we now know that the field is maybe not written to,
+                // or maybe just inside constructors.
+
+                boolean isBlank = varId.getInitializer() == null;
+
+                if (!hasWrite && !isBlank) {
+                    //todo this case may also handle static fields easily.
+                    asCtx(data).addViolation(varId, varId.getName());
+                } else if (hasWrite && defaultValueDoesNotReachEndOfCtor(dataflow, varId)) {
+                    asCtx(data).addViolation(varId, varId.getName());
+                }
+            }
+
+        }
+        return null;
+    }
+
+    private boolean defaultValueDoesNotReachEndOfCtor(DataflowResult dataflow, ASTVariableId varId) {
+        AssignmentEntry fieldDef = DataflowPass.getFieldDefinition(varId);
+        // first assignments to the field
+        Set<AssignmentEntry> killers = dataflow.getKillers(fieldDef);
+        // no killer isFieldAssignmentAtEndOfCtor => the field is assigned on all code paths
+        // no killer isReassignedOnSomeCodePath => the field is assigned at most once
+        // => the field is assigned exactly once.
+        return CollectionUtil.none(
+            killers,
+            killer -> killer.isFieldAssignmentAtEndOfCtor() || isReassignedOnSomeCodePath(dataflow, killer)
+        );
+    }
+
+    private boolean isReassignedOnSomeCodePath(DataflowResult dataflow, AssignmentEntry anAssignment) {
+        // Ie, return whether there exists an assignment that overwrites the given assignment,
+        // and simultaneously is not unbound (=happens for sure). Unbound assignments are introduced by the
+        // dataflow pass to help analysis, but are overly conservative. They represent the
+        // "final value" of a field when a ctor ends, and also the value a field may have
+        // been set to when an instance method is called (we don't know whether the method
+        // actually sets anything, but we assume it does). The first case can be ignored
+        // because we already check for that in the logic of this rule. The second case
+        // can be ignored because we already made sure that the field is only written to
+        // in ctors, but not in any instance method.
+        Set<AssignmentEntry> killers = dataflow.getKillers(anAssignment);
+        return CollectionUtil.any(killers, killer -> !killer.isUnbound());
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:02:48
+Attempt: 2
+Error: semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjruyn_ml/rule.yml:2
+1  | rules:
+2  | - id: immutable-field
+3  |   message: |
+4  |     Field [ $FIELD ] is not immutable. Consider making it final or ensuring it's only assigned in constructors.
+5  |   pattern-either:
+6  |     - pattern: |
+7  |         class $CLASS {
+8  |             $MODIFIERS $TYPE $FIELD;
+9  |             ...
+10 |         }
+11 |       metavariable-regex:
+12 |         metavariable: $MODIFIERS
+13 |         regex: (private|protected|public)(?!.*(final|static|volatile))
+14 |     - pattern: |
+15 |         class $CLASS {
+16 |             $TYPE $FIELD;
+17 |             ...
+18 |         }
+19 |   pattern-not: |
+20 |     class $CLASS {
+21 |         ...
+22 |         $TYPE final $FIELD = ...;
+23 |         ...
+24 |     }
+25 |   pattern-not: |
+26 |     class $CLASS {
+27 |         ...
+28 |         $TYPE static $FIELD;
+29 |         ...
+30 |     }
+31 |   pattern-not: |
+32 |     class $CLASS {
+33 |         ...
+34 |         $TYPE volatile $FIELD;
+35 |         ...
+36 |     }
+37 |   pattern-not-inside: |
+38 |     @$CLASS_ANNOT(...)
+39 |     class $CLASS {
+40 |         ...
+41 |     }
+42 |     metavariable-regex:
+43 |       metavariable: $CLASS_ANNOT
+44 |       regex: "lombok\\.(Builder|Data|Setter|Value)"
+45 |   pattern-not-inside: |
+46 |     class $CLASS {
+47 |         ...
+48 |         @$FIELD_ANNOT(...)
+49 |         $TYPE $FIELD;
+50 |         ...
+51 |     }
+52 |     metavariable-regex:
+53 |       metavariable: $FIELD_ANNOT
+54 |       regex: "lombok\\.Setter"
+55 |   languages:
+56 |     - java
+57 |   severity: WARNING
+58 |   metadata:
+59 |     category: security
+60 |     cwe: "CWE-665: Improper Initialization"
+61 |     owasp: "A10:2021 - Security Logging and Monitoring Failures"
+62 |     references:
+63 |       - https://cwe.mitre.org/data/definitions/665.html
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern-either', 'pattern-not', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: immutable-field
+  message: |
+    Field [ $FIELD ] is not immutable. Consider making it final or ensuring it's only assigned in constructors.
+  pattern-either:
+    - pattern: |
+        class $CLASS {
+            $MODIFIERS $TYPE $FIELD;
+            ...
+        }
+      metavariable-regex:
+        metavariable: $MODIFIERS
+        regex: (private|protected|public)(?!.*(final|static|volatile))
+    - pattern: |
+        class $CLASS {
+            $TYPE $FIELD;
+            ...
+        }
+  pattern-not: |
+    class $CLASS {
+        ...
+        $TYPE final $FIELD = ...;
+        ...
+    }
+  pattern-not: |
+    class $CLASS {
+        ...
+        $TYPE static $FIELD;
+        ...
+    }
+  pattern-not: |
+    class $CLASS {
+        ...
+        $TYPE volatile $FIELD;
+        ...
+    }
+  pattern-not-inside: |
+    @$CLASS_ANNOT(...)
+    class $CLASS {
+        ...
+    }
+    metavariable-regex:
+      metavariable: $CLASS_ANNOT
+      regex: "lombok\\.(Builder|Data|Setter|Value)"
+  pattern-not-inside: |
+    class $CLASS {
+        ...
+        @$FIELD_ANNOT(...)
+        $TYPE $FIELD;
+        ...
+    }
+    metavariable-regex:
+      metavariable: $FIELD_ANNOT
+      regex: "lombok\\.Setter"
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: security
+    cwe: "CWE-665: Improper Initialization"
+    owasp: "A10:2021 - Security Logging and Monitoring Failures"
+    references:
+      - https://cwe.mitre.org/data/definitions/665.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu5p4yvv_.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+    $VISIBILITY $TYPE $FIELD;
+    ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu5p4yvv_.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+    $VISIBILITY $TYPE $FIELD;
+    ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修复模式语法结构：将顶层patterns改为pattern-either结构，因为Semgrep要求顶层模式必须是pattern或pattern-either
+2. 修正字段声明模式：使用更精确的Java字段声明语法，包括完整的修饰符和类型声明
+3. 修复pattern-not-inside嵌套：确保嵌套的模式语法正确，metavariable-regex应该与父模式平级
+4. 优化正则表达式：确保lombok注解的正则表达式使用正确的转义字符
+5. 重构构造函数检查部分：使用更精确的构造函数模式匹配
+6. 合并重复模式：整合相似的模式检查以减少复杂度
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:03:30
+Attempt: 3
+Error: [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpqsj0t_9f/rule.yml:
+	expected '<document start>', but found ('<block mapping start>',)
+	  in "<file>", line 9, column 1
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+【修改策略】
+1. 使用patterns代替pattern-either作为顶层结构
+2. 合并所有pattern-not条件到pattern-not-either中
+3. 使用单个pattern-not-inside并将两个注解检查组合在一起
+4. 修复YAML格式和缩进问题
+5. 统一变量命名规范
+
+# 转换后的 Semgrep 规则
+rules:
+- id: immutable-field
+  message: |
+    Field [ $FIELD ] is not immutable. Consider making it final or ensuring it's only assigned in constructors.
+  patterns:
+    - pattern: |
+        class $CLASS {
+            $MODIFIERS $TYPE $FIELD;
+            ...
+        }
+      metavariable-regex:
+        metavariable: $MODIFIERS
+        regex: (private|protected|public)(?!.*(final|static|volatile))
+    - pattern-not-either:
+        - pattern: |
+            class $CLASS {
+                ...
+                $TYPE final $FIELD = ...;
+                ...
+            }
+        - pattern: |
+            class $CLASS {
+                ...
+                $TYPE static $FIELD;
+                ...
+            }
+        - pattern: |
+            class $CLASS {
+                ...
+                $TYPE volatile $FIELD;
+                ...
+            }
+    - pattern-not-inside: |
+        class $CLASS {
+            ...
+            @$ANNOT(...)
+            $TYPE $FIELD;
+            ...
+        }
+      metavariable-regex:
+        metavariable: $ANNOT
+        regex: "lombok\\.(Setter|Builder|Data|Value)"
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: security
+    cwe: "CWE-665: Improper Initialization"
+    owasp: "A10:2021 - Security Logging and Monitoring Failures"
+    references:
+      - https://cwe.mitre.org/data/definitions/665.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjruyn_ml/rule.yml:2
+1  | rules:
+2  | - id: immutable-field
+3  |   message: |
+4  |     Field [ $FIELD ] is not immutable. Consider making it final or ensuring it's only assigned in constructors.
+5  |   pattern-either:
+6  |     - pattern: |
+7  |         class $CLASS {
+8  |             $MODIFIERS $TYPE $FIELD;
+9  |             ...
+10 |         }
+11 |       metavariable-regex:
+12 |         metavariable: $MODIFIERS
+13 |         regex: (private|protected|public)(?!.*(final|static|volatile))
+14 |     - pattern: |
+15 |         class $CLASS {
+16 |             $TYPE $FIELD;
+17 |             ...
+18 |         }
+19 |   pattern-not: |
+20 |     class $CLASS {
+21 |         ...
+22 |         $TYPE final $FIELD = ...;
+23 |         ...
+24 |     }
+25 |   pattern-not: |
+26 |     class $CLASS {
+27 |         ...
+28 |         $TYPE static $FIELD;
+29 |         ...
+30 |     }
+31 |   pattern-not: |
+32 |     class $CLASS {
+33 |         ...
+34 |         $TYPE volatile $FIELD;
+35 |         ...
+36 |     }
+37 |   pattern-not-inside: |
+38 |     @$CLASS_ANNOT(...)
+39 |     class $CLASS {
+40 |         ...
+41 |     }
+42 |     metavariable-regex:
+43 |       metavariable: $CLASS_ANNOT
+44 |       regex: "lombok\\.(Builder|Data|Setter|Value)"
+45 |   pattern-not-inside: |
+46 |     class $CLASS {
+47 |         ...
+48 |         @$FIELD_ANNOT(...)
+49 |         $TYPE $FIELD;
+50 |         ...
+51 |     }
+52 |     metavariable-regex:
+53 |       metavariable: $FIELD_ANNOT
+54 |       regex: "lombok\\.Setter"
+55 |   languages:
+56 |     - java
+57 |   severity: WARNING
+58 |   metadata:
+59 |     category: security
+60 |     cwe: "CWE-665: Improper Initialization"
+61 |     owasp: "A10:2021 - Security Logging and Monitoring Failures"
+62 |     references:
+63 |       - https://cwe.mitre.org/data/definitions/665.html
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern-either', 'pattern-not', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Detected duplicate key
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 修复重复key问题：确认pattern-not和pattern-not-inside没有重复定义，每个键只出现一次
+2. 重构模式结构：将多个pattern-not合并为一个pattern-not-either结构
+3. 合并pattern-not-inside：将两个pattern-not-inside条件合并为一个模式
+4. 整理元变量定义：确保所有元变量($CLASS, $FIELD等)在整个规则中命名一致
+5. 验证YAML格式：检查所有缩进和语法是否符合YAML规范
+6. 简化正则表达式：优化lombok注解的匹配模式为更简洁的形式
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:16:40
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpwlymsblo.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $VISIBILITY $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: immutable-field
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $VISIBILITY $TYPE $FIELD;
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $VISIBILITY
+      regex: (private|protected)
+  - pattern-not: |
+      class $CLASS {
+        ... @lombok.Builder ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        ... @lombok.Data ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        ... @lombok.Setter ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        ... @lombok.Value ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Setter $TYPE $FIELD;
+        ...
+      }
+  - pattern-not: volatile $TYPE $FIELD;
+  - pattern-not: static $TYPE $FIELD;
+  - pattern-not: final $TYPE $FIELD;
+  - pattern-not-inside: |
+      class $CLASS {
+        $TYPE $FIELD = $VAL;
+        ...
+      }
+  - pattern-not-inside: |
+      class $CLASS {
+        $CONSTRUCTOR() {
+          $FIELD = $VAL;
+          ...
+        }
+        ...
+      }
+  message: Field $FIELD is not properly immutable. Consider making it final or ensuring it's only assigned in constructors.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: immutability
+    cwe: "CWE-115: Misuse of Privileged APIs"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp: "A9:2017-Insecure Deserialization"
+    technology:
+    - Java
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.Set;
+import java.util.function.Function;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.AccessType;
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFieldDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTLambdaExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.AssignmentEntry;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.DataflowResult;
+import net.sourceforge.pmd.util.CollectionUtil;
+
+public class ImmutableFieldRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> INVALIDATING_CLASS_ANNOT =
+        setOf(
+            "lombok.Builder",
+            "lombok.Data",
+            "lombok.Setter",
+            "lombok.Value"
+        );
+
+    private static final Set<String> INVALIDATING_FIELD_ANNOT =
+        setOf(
+            "lombok.Setter"
+        );
+    private static final Function<Object, JavaNode> INTERESTING_ANCESTOR =
+        NodeStream.asInstanceOf(ASTLambdaExpression.class,
+                                ASTTypeDeclaration.class,
+                                ASTConstructorDeclaration.class);
+
+    public ImmutableFieldRule() {
+        super(ASTFieldDeclaration.class);
+    }
+
+
+    @Override
+    public Object visit(ASTFieldDeclaration field, Object data) {
+        ASTTypeDeclaration enclosingType = field.getEnclosingType();
+        if (field.getEffectiveVisibility().isAtMost(Visibility.V_PRIVATE)
+            && !field.getModifiers().hasAny(JModifier.VOLATILE, JModifier.STATIC, JModifier.FINAL)
+            && !JavaAstUtils.hasAnyAnnotation(enclosingType, INVALIDATING_CLASS_ANNOT)
+            && !JavaAstUtils.hasAnyAnnotation(field, INVALIDATING_FIELD_ANNOT)) {
+
+            DataflowResult dataflow = DataflowPass.getDataflowResult(field.getRoot());
+
+            outer:
+            for (ASTVariableId varId : field.getVarIds()) {
+
+                boolean hasWrite = false;
+                for (ASTNamedReferenceExpr usage : varId.getLocalUsages()) {
+                    if (usage.getAccessType() == AccessType.WRITE) {
+                        hasWrite = true;
+
+                        JavaNode enclosing = usage.ancestors().map(INTERESTING_ANCESTOR).first();
+                        if (!(enclosing instanceof ASTConstructorDeclaration)
+                            || enclosing.getEnclosingType() != enclosingType) {
+                            continue outer; // written-to outside ctor
+                        }
+                    }
+                }
+
+                // we now know that the field is maybe not written to,
+                // or maybe just inside constructors.
+
+                boolean isBlank = varId.getInitializer() == null;
+
+                if (!hasWrite && !isBlank) {
+                    //todo this case may also handle static fields easily.
+                    asCtx(data).addViolation(varId, varId.getName());
+                } else if (hasWrite && defaultValueDoesNotReachEndOfCtor(dataflow, varId)) {
+                    asCtx(data).addViolation(varId, varId.getName());
+                }
+            }
+
+        }
+        return null;
+    }
+
+    private boolean defaultValueDoesNotReachEndOfCtor(DataflowResult dataflow, ASTVariableId varId) {
+        AssignmentEntry fieldDef = DataflowPass.getFieldDefinition(varId);
+        // first assignments to the field
+        Set<AssignmentEntry> killers = dataflow.getKillers(fieldDef);
+        // no killer isFieldAssignmentAtEndOfCtor => the field is assigned on all code paths
+        // no killer isReassignedOnSomeCodePath => the field is assigned at most once
+        // => the field is assigned exactly once.
+        return CollectionUtil.none(
+            killers,
+            killer -> killer.isFieldAssignmentAtEndOfCtor() || isReassignedOnSomeCodePath(dataflow, killer)
+        );
+    }
+
+    private boolean isReassignedOnSomeCodePath(DataflowResult dataflow, AssignmentEntry anAssignment) {
+        // Ie, return whether there exists an assignment that overwrites the given assignment,
+        // and simultaneously is not unbound (=happens for sure). Unbound assignments are introduced by the
+        // dataflow pass to help analysis, but are overly conservative. They represent the
+        // "final value" of a field when a ctor ends, and also the value a field may have
+        // been set to when an instance method is called (we don't know whether the method
+        // actually sets anything, but we assume it does). The first case can be ignored
+        // because we already check for that in the logic of this rule. The second case
+        // can be ignored because we already made sure that the field is only written to
+        // in ctors, but not in any instance method.
+        Set<AssignmentEntry> killers = dataflow.getKillers(anAssignment);
+        return CollectionUtil.any(killers, killer -> !killer.isUnbound());
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:17:24
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp29xzt34e/rule.yml:35
+35 |   - pattern-not: |
+36 |       $MODIFIERS $TYPE $FIELD;
+37 |       ...
+38 |     where:
+39 |       $MODIFIERS |= /.*\b(volatile|static|final)\b.*/
+40 |   - pattern-not: |
+
+{'pattern-not': '$MODIFIERS $TYPE $FIELD;\n...\n', 'where': '$MODIFIERS |= /.*\\b(volatile|static|final)\\b.*/'} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: immutable-field
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $VISIBILITY $TYPE $FIELD;
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $VISIBILITY
+      regex: (private|protected)
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Builder ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Data ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Setter ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Value ...;
+        ...
+      }
+  - pattern-not: |
+      @lombok.Setter
+      $VISIBILITY $TYPE $FIELD;
+  - pattern-not: |
+      $MODIFIERS $TYPE $FIELD;
+      ...
+    where:
+      $MODIFIERS |= /.*\b(volatile|static|final)\b.*/
+  - pattern-not: |
+      $TYPE $FIELD = ...;
+  - pattern-not: |
+      class $CLASS {
+        ... $CONSTRUCTOR(...) {
+          ... $FIELD = ...; ...
+        }
+        ...
+      }
+  message: Field $FIELD is not properly immutable. Consider making it final or ensuring it's only assigned in constructors.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: immutability
+    cwe: "CWE-115: Misuse of Privileged APIs"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp: "A9:2017-Insecure Deserialization"
+    technology:
+    - Java
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpwlymsblo.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $VISIBILITY $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpwlymsblo.immutable-field:
+Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $VISIBILITY $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+请按照以下步骤进行修复：
+1. 修改模式语法，将`$VISIBILITY`和`$TYPE`等元变量改为符合Semgrep规范的格式，即使用`$`作为前缀的后跟大写字母或下划线的命名方式（如`$VISIBILITY`应保持不变，但确保后面使用时正确）
+2. 将class模式的`...`替换为具体的模式或使用`<... ... />`表示任意内容
+3. 确保所有的模式元素都符合Java语法规范，特别是在class声明中
+4. 对于注解检查的模式，使用更精确的匹配方式，而不是简单的字符串匹配
+5. 将pattern-not-inside替换为更具体的模式匹配，避免过于宽泛的匹配
+6. 测试修改后的规则是否能正确匹配目标代码
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:18:03
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpcxk92gi2.immutable-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $VISIBILITY $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: immutable-field
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $VISIBILITY $TYPE $FIELD;
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $VISIBILITY
+      regex: (private|protected)
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Builder ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Data ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Setter ...;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        @lombok.Value ...;
+        ...
+      }
+  - pattern-not: |
+      @lombok.Setter $TYPE $FIELD
+  - pattern-not: volatile $TYPE $FIELD
+  - pattern-not: static $TYPE $FIELD
+  - pattern-not: final $TYPE $FIELD
+  - pattern-not: $TYPE $FIELD = ...
+  - pattern-not: |
+      $CLASS(...) {
+        ... $FIELD = ...; ...
+      }
+  message: Field $FIELD is not properly immutable. Consider making it final or ensuring it's only assigned in constructors.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: immutability
+    cwe: "CWE-115: Misuse of Privileged APIs"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp: "A9:2017-Insecure Deserialization"
+    technology:
+    - Java
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp29xzt34e/rule.yml:35
+35 |   - pattern-not: |
+36 |       $MODIFIERS $TYPE $FIELD;
+37 |       ...
+38 |     where:
+39 |       $MODIFIERS |= /.*\b(volatile|static|final)\b.*/
+40 |   - pattern-not: |
+
+{'pattern-not': '$MODIFIERS $TYPE $FIELD;\n...\n', 'where': '$MODIFIERS |= /.*\\b(volatile|static|final)\\b.*/'} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：
+semgrep error: Invalid rule schema
+{'pattern-not': '$MODIFIERS $TYPE $FIELD;\n...\n', 'where': '$MODIFIERS |= /.*\\b(volatile|static|final)\\b.*/'} is not valid under any of the given schemas
+
+请按照以下步骤进行修复：
+1. 拆分条件表达式，将`where`子句改为使用`pattern-not`和`metavariable-regex`组合实现同等功能
+2. 移除无效的`where`语法，改用Semgrep标准模式匹配方式
+3. 将修饰符检查拆分为多个明确的pattern-not规则
+4. 确保每条规则只包含Semgrep支持的语法元素
+5. 重新组织规则结构，使其符合Semgrep的YAML模式验证要求
+6. 测试修改后的规则是否能正确匹配目标代码
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

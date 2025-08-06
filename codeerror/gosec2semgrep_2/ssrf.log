@@ -1,0 +1,328 @@
+Timestamp: 2025-07-21 19:31:24
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphff8ethi/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       match: $CONST != "constant"
+
+{'metavariable-comparison': {'metavariable': '$CONST', 'match': '$CONST != "constant"'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: ssrf-check
+  message: Potential HTTP request made with variable url
+  languages: [go]
+  severity: WARNING
+  patterns:
+  - pattern: |
+      net/http.$FUNC(...)
+  - metavariable-comparison:
+      metavariable: $FUNC
+      regex: (Do|Get|Head|Post|PostForm|RoundTrip)
+  - pattern-not: |
+      net/http.$FUNC("static-url"...)
+  - pattern-not: |
+      net/http.$FUNC($CONST ...)
+  - metavariable-comparison:
+      metavariable: $CONST
+      match: $CONST != "constant"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type ssrf struct {
+	issue.MetaData
+	gosec.CallList
+}
+
+// ID returns the identifier for this rule
+func (r *ssrf) ID() string {
+	return r.MetaData.ID
+}
+
+// ResolveVar tries to resolve the first argument of a call expression
+// The first argument is the url
+func (r *ssrf) ResolveVar(n *ast.CallExpr, c *gosec.Context) bool {
+	if len(n.Args) > 0 {
+		arg := n.Args[0]
+		if ident, ok := arg.(*ast.Ident); ok {
+			obj := c.Info.ObjectOf(ident)
+			if _, ok := obj.(*types.Var); ok {
+				scope := c.Pkg.Scope()
+				if scope != nil && scope.Lookup(ident.Name) != nil {
+					// a URL defined in a variable at package scope can be changed at any time
+					return true
+				}
+				if !gosec.TryResolve(ident, c) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// Match inspects AST nodes to determine if certain net/http methods are called with variable input
+func (r *ssrf) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Call expression is using http package directly
+	if node := r.ContainsPkgCallExpr(n, c, false); node != nil {
+		if r.ResolveVar(node, c) {
+			return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+// NewSSRFCheck detects cases where HTTP requests are sent
+func NewSSRFCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	rule := &ssrf{
+		CallList: gosec.NewCallList(),
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Potential HTTP request made with variable url",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+		},
+	}
+	rule.AddAll("net/http", "Do", "Get", "Head", "Post", "PostForm", "RoundTrip")
+	return rule, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </origin_rule>
+            <example>
+            patterns:
+  - pattern: |
+      $VAR := $VAL
+      $VAR = $VAL
+      var $VAR = $VAL
+      const $VAR = $VAL
+  - metavariable-regex:
+      metavariable: $VAR
+      regex: (?i)passwd|pass|password|pwd|secret|token|pw|apiKey|bearer|cred
+  - metavariable-regex:
+      metavariable: $VAL
+      regex: >
+        (-----BEGIN (RSA|DSA|EC) PRIVATE KEY-----)|
+        (xox[pborsa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})|
+        (AKIA[0-9A-Z]{16})|
+        (ghp_[a-zA-Z0-9]{36})|
+        (AIza[0-9A-Za-z\-_]{35})|
+        ([aA][pP][iI]_?[kK][eE][yY].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        ([sS][eE][cC][rR][eE][tT].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        (key-[0-9a-zA-Z]{32})|
+        ([a-zA-Z]{3,10}://[^/\\s:@]{3,20}:[^/\\s:@]{3,20}@.{1,100}["'\\s])|
+        (sk_live_[0-9a-zA-Z]{24})|
+        (rk_live_[0-9a-zA-Z]{24})
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-21 19:31:59
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpsnjr4koa/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       comparison:
+19 |         value: "$CONST"
+20 |         operator: "not-regex"
+21 |         # 匹配任何看起来不像常量的字符串
+22 |         another_value: "^[\"'][^\"']+[\"']$"
+
+{'value': '$CONST', 'operator': 'not-regex', 'another_value': '^["\'][^"\']+["\']$'} is not of type 'string'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: ssrf-check
+  message: Potential HTTP request made with variable url
+  languages: [go]
+  severity: WARNING
+  patterns:
+  - pattern: |
+      net/http.$FUNC(...)
+  - metavariable-comparison:
+      metavariable: $FUNC
+      regex: (Do|Get|Head|Post|PostForm|RoundTrip)
+  - pattern-not: |
+      net/http.$FUNC("static-url"...)
+  - pattern-not: |
+      net/http.$FUNC($CONST ...)
+  - metavariable-comparison:
+      metavariable: $CONST
+      comparison:
+        value: "$CONST"
+        operator: "not-regex"
+        # 匹配任何看起来不像常量的字符串
+        another_value: "^[\"'][^\"']+[\"']$"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphff8ethi/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       match: $CONST != "constant"
+
+{'metavariable-comparison': {'metavariable': '$CONST', 'match': '$CONST != "constant"'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphff8ethi/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       match: $CONST != "constant"
+
+{'metavariable-comparison': {'metavariable': '$CONST', 'match': '$CONST != "constant"'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 检查Semgrep官方文档中关于metavariable-comparison的合法语法格式
+2. 确认当前使用的match表达式语法是否符合Semgrep规范（标准语法应使用comparison运算符而非!=等形式）
+3. 修改为合法的比较语法格式，如：
+   - comparison: $CONST != "constant"
+   或：
+   - comparison:
+       value: "$CONST"
+       operator: "!="
+       another_value: "constant"
+4. 重新测试规则确保语法正确且功能不变
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-21 19:32:34
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjjobidn8/rule.yml:9
+9  |   - metavariable-comparison:
+10 |       metavariable: $FUNC
+11 |       regex: (Do|Get|Head|Post|PostForm|RoundTrip)
+12 |   - pattern-not: |
+
+{'metavariable-comparison': {'metavariable': '$FUNC', 'regex': '(Do|Get|Head|Post|PostForm|RoundTrip)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: ssrf-check
+  message: Potential HTTP request made with variable url
+  languages: [go]
+  severity: WARNING
+  patterns:
+  - pattern: |
+      net/http.$FUNC(...)
+  - metavariable-comparison:
+      metavariable: $FUNC
+      regex: (Do|Get|Head|Post|PostForm|RoundTrip)
+  - pattern-not: |
+      net/http.$FUNC("static-url"...)
+  - pattern-not: |
+      net/http.$FUNC($CONST ...)
+  - metavariable-regex:
+      metavariable: $CONST
+      regex: ^[^\"'].*$|^$
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpsnjr4koa/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       comparison:
+19 |         value: "$CONST"
+20 |         operator: "not-regex"
+21 |         # 匹配任何看起来不像常量的字符串
+22 |         another_value: "^[\"'][^\"']+[\"']$"
+
+{'value': '$CONST', 'operator': 'not-regex', 'another_value': '^["\'][^"\']+["\']$'} is not of type 'string'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpsnjr4koa/rule.yml:16
+16 |   - metavariable-comparison:
+17 |       metavariable: $CONST
+18 |       comparison:
+19 |         value: "$CONST"
+20 |         operator: "not-regex"
+21 |         # 匹配任何看起来不像常量的字符串
+22 |         another_value: "^[\"'][^\"']+[\"']$"
+
+{'value': '$CONST', 'operator': 'not-regex', 'another_value': '^["\'][^"\']+["\']$'} is not of type 'string'
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 检查Semgrep官方文档确认metavariable-comparison支持的operator类型，发现'not-regex'不是有效运算符
+2. 改用标准regex匹配方式，反转逻辑判断
+3. 使用metavariable-regex替代metavariable-comparison来实现相同功能
+4. 调整正则表达式格式使其符合Semgrep语法规范
+"""
+
+【修改策略】
+```yaml
+rules:
+- id: ssrf-check
+  message: Potential HTTP request made with variable url
+  languages: [go]
+  severity: WARNING
+  patterns:
+  - pattern: |
+      net/http.$FUNC(...)
+  - metavariable-comparison:
+      metavariable: $FUNC
+      regex: (Do|Get|Head|Post|PostForm|RoundTrip)
+  - pattern-not: |
+      net/http.$FUNC("static-url"...)
+  - pattern-not: |
+      net/http.$FUNC($CONST ...)
+  - metavariable-regex:
+      metavariable: $CONST
+      regex: ^[^\"'].*$|^$
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

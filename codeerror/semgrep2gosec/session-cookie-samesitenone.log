@@ -1,0 +1,191 @@
+Timestamp: 2025-07-23 15:53:57
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:53:57Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type sessionCookieSameSiteNone struct {
+	issue.MetaData
+	options gosec.CallList
+}
+
+func (s *sessionCookieSameSiteNone) ID() string {
+	return s.MetaData.ID
+}
+
+func (s *sessionCookieSameSiteNone) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := s.options.ContainsPkgCallExpr(n, c, false); node != nil {
+		if composite, ok := node.Args[0].(*ast.CompositeLit); ok {
+			for _, elt := range composite.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "SameSite" {
+						if sel, ok := kv.Value.(*ast.SelectorExpr); ok {
+							if x, ok := sel.X.(*ast.Ident); ok && x.Name == "http" && sel.Sel.Name == "SameSiteNoneMode" {
+								return c.NewIssue(n, s.ID(), s.What, s.Severity, s.Confidence), nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewSessionCookieSameSiteNone(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	options := gosec.NewCallList()
+	options.Add("github.com/gorilla/sessions", "NewCookieStore")
+	options.Add("github.com/gorilla/sessions", "NewFilesystemStore")
+
+	return &sessionCookieSameSiteNone{
+		options: options,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "Found SameSiteNoneMode setting in Gorilla session options. Consider setting SameSite to Lax, Strict or Default for enhanced security.",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: session-cookie-samesitenone
+  patterns:
+  - pattern-inside: |
+      &sessions.Options{
+        ...,
+        SameSite: http.SameSiteNoneMode,
+        ...,
+      }
+  - pattern: |
+      &sessions.Options{
+        ...,
+      }
+  message: Found SameSiteNoneMode setting in Gorilla session options. Consider setting
+    SameSite to Lax, Strict or Default for enhanced security.
+  metadata:
+    cwe:
+    - 'CWE-1275: Sensitive Cookie with Improper SameSite Attribute'
+    owasp:
+    - A05:2021 - Security Misconfiguration
+    references:
+    - https://pkg.go.dev/github.com/gorilla/sessions#Options
+    category: security
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+  fix-regex:
+    regex: (SameSite\s*:\s+)http.SameSiteNoneMode
+    replacement: \1http.SameSiteDefaultMode
+  severity: WARNING
+  languages:
+  - go
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

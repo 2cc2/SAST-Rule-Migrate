@@ -1,0 +1,464 @@
+Timestamp: 2025-07-22 15:49:52
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppi8koago/rule.yml:12
+12 |   - pattern-not: |
+13 |       private $RET $NAME(...) { ... }
+14 |     metavariable-regex:
+15 |       metavariable: $NAME
+16 |       regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+17 |   - pattern-not: |
+
+{'pattern-not': 'private $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$NAME', 'regex': '(readObject|readObjectNoData|writeObject|readResolve|writeReplace)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-private-method
+  patterns:
+  - pattern: |
+      private $RET $NAME(...) { ... }
+  - pattern-not: |
+      @($ANN)
+      private $RET $NAME(...) { ... }
+    metavariable-regex:
+      metavariable: $ANN
+      regex: (Deprecated|PostConstruct|PreDestroy|Include)
+  - pattern-not: |
+      private $RET $NAME(...) { ... }
+    metavariable-regex:
+      metavariable: $NAME
+      regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+  - pattern-not: |
+      $OBJ.$NAME(...)
+  - pattern-not: |
+      $OBJ::$NAME(...)
+  message: |
+    Private method '$NAME' is unused and can be safely removed
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-561: Dead Code'
+    confidence: HIGH
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/561.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.lang.ast.NodeStream.asInstanceOf;
+import static net.sourceforge.pmd.util.CollectionUtil.listOf;
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import org.apache.commons.lang3.StringUtils;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTAnnotation;
+import net.sourceforge.pmd.lang.java.ast.ASTCompilationUnit;
+import net.sourceforge.pmd.lang.java.ast.ASTMemberValue;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodCall;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodReference;
+import net.sourceforge.pmd.lang.java.ast.MethodUsage;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.PrettyPrintingUtil;
+import net.sourceforge.pmd.lang.java.rule.internal.AbstractIgnoredAnnotationRule;
+import net.sourceforge.pmd.lang.java.symbols.JExecutableSymbol;
+import net.sourceforge.pmd.lang.java.types.JTypeMirror;
+import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
+import net.sourceforge.pmd.lang.java.types.TypeOps;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+
+/**
+ * This rule detects private methods, that are not used and can therefore be
+ * deleted.
+ */
+public class UnusedPrivateMethodRule extends AbstractIgnoredAnnotationRule {
+
+    private static final Set<String> SERIALIZATION_METHODS =
+        setOf("readObject", "readObjectNoData", "writeObject", "readResolve", "writeReplace");
+
+    @Override
+    protected Collection<String> defaultSuppressionAnnotations() {
+        return listOf(
+            "java.lang.Deprecated",
+            "jakarta.annotation.PostConstruct",
+            "jakarta.annotation.PreDestroy",
+            "lombok.EqualsAndHashCode.Include"
+        );
+    }
+
+    @Override
+    public Object visit(ASTCompilationUnit file, Object param) {
+        // this does a couple of traversals:
+        // - one to find annotations that potentially reference a method
+        // - one to collect candidates, that is, potentially unused methods
+        // - one to walk through all possible usages of methods, and delete used methods from the set
+        Set<String> methodsUsedByAnnotations = methodsUsedByAnnotations(file);
+        Map<JExecutableSymbol, ASTMethodDeclaration> candidates = findCandidates(file, methodsUsedByAnnotations);
+
+        file.descendants()
+            .crossFindBoundaries()
+            .<MethodUsage>map(asInstanceOf(ASTMethodCall.class, ASTMethodReference.class))
+            .forEach(ref -> {
+                OverloadSelectionResult selectionInfo = ref.getOverloadSelectionInfo();
+                JExecutableSymbol calledMethod = selectionInfo.getMethodType().getSymbol();
+                if (calledMethod.isUnresolved()) {
+                    handleUnresolvedCall(ref, selectionInfo, candidates);
+                    return;
+                }
+                candidates.compute(calledMethod, (sym2, reffed) -> {
+                    if (reffed != null && ref.ancestors(ASTMethodDeclaration.class).first() != reffed) {
+                        // remove mapping, but only if it is called from outside itself
+                        return null;
+                    }
+                    return reffed;
+                });
+            });
+
+        for (ASTMethodDeclaration unusedMethod : candidates.values()) {
+            asCtx(param).addViolation(unusedMethod, PrettyPrintingUtil.displaySignature(unusedMethod));
+        }
+        return null;
+    }
+
+    private static void handleUnresolvedCall(MethodUsage ref, OverloadSelectionResult selectionInfo, Map<JExecutableSymbol, ASTMethodDeclaration> candidates) {
+        // If the type is may be an instance of this class, then the method may be
+        // a call to a private method here. In that case we whitelist all methods
+        // with that name.
+        JTypeMirror receive = selectionInfo.getTypeToSearch();
+        boolean receiverMayBeInstanceOfThisClass =
+                receive == null
+                || TypeOps.isSpecialUnresolved(receive)
+                || receive.equals(ref.getEnclosingType().getTypeMirror());
+
+        if (receiverMayBeInstanceOfThisClass) {
+            candidates.values().removeIf(it -> it.getName().equals(ref.getMethodName()));
+        }
+    }
+
+    /**
+     * Collect potential unused private methods and index them by their symbol.
+     * We don't use {@link JExecutableSymbol#tryGetNode()} because it may return
+     * null for types that are treated specially by the type inference system. For
+     * instance for java.lang.String, the ASM symbol is preferred over the AST symbol.
+     */
+    private Map<JExecutableSymbol, ASTMethodDeclaration> findCandidates(ASTCompilationUnit file, Set<String> methodsUsedByAnnotations) {
+        return file.descendants(ASTMethodDeclaration.class)
+                   .crossFindBoundaries()
+                   .filter(
+                       it -> it.getVisibility() == Visibility.V_PRIVATE
+                           && !hasIgnoredAnnotation(it)
+                           && !hasExcludedName(it)
+                           && !(it.getArity() == 0 && methodsUsedByAnnotations.contains(it.getName())))
+                   .collect(Collectors.toMap(
+                       ASTMethodDeclaration::getSymbol,
+                       m -> m
+                   ));
+    }
+
+    private static Set<String> methodsUsedByAnnotations(ASTCompilationUnit file) {
+        return file.descendants(ASTAnnotation.class)
+            .crossFindBoundaries()
+            .toStream()
+            .flatMap(UnusedPrivateMethodRule::extractMethodsFromAnnotation)
+            .collect(Collectors.toSet());
+    }
+
+    private static Stream<String> extractMethodsFromAnnotation(ASTAnnotation a) {
+        return Stream.concat(
+            a.getFlatValues().toStream()
+                .map(ASTMemberValue::getConstValue)
+                .map(asInstanceOf(String.class))
+                .filter(StringUtils::isNotEmpty),
+            NodeStream.of(a)
+                .filter(it -> TypeTestUtil.isA("org.junit.jupiter.params.provider.MethodSource", it)
+                    && it.getFlatValue("value").isEmpty())
+                .ancestors(ASTMethodDeclaration.class)
+                .take(1)
+                .toStream()
+                .map(ASTMethodDeclaration::getName)
+        );
+    }
+
+    private boolean hasExcludedName(ASTMethodDeclaration node) {
+        return SERIALIZATION_METHODS.contains(node.getName());
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:50:34
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp7qykqs5j/rule.yml:6
+6  |   - pattern-not: |
+7  |       @($ANN)
+8  |       private $RET $NAME(...) { ... }
+9  |     metavariable-regex:
+10 |       metavariable: $ANN
+11 |       regex: (Deprecated|PostConstruct|PreDestroy|Include)
+12 |   - metavariable-pattern:
+
+{'pattern-not': '@($ANN)\nprivate $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$ANN', 'regex': '(Deprecated|PostConstruct|PreDestroy|Include)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-private-method
+  patterns:
+  - pattern: |
+      private $RET $NAME(...) { ... }
+  - pattern-not: |
+      @($ANN)
+      private $RET $NAME(...) { ... }
+    metavariable-regex:
+      metavariable: $ANN
+      regex: (Deprecated|PostConstruct|PreDestroy|Include)
+  - metavariable-pattern:
+      metavariable: $NAME
+      pattern: |
+        "^(?!.*(readObject|readObjectNoData|writeObject|readResolve|writeReplace)).*$"
+  - pattern-not: |
+      $OBJ.$NAME(...)
+  - pattern-not: |
+      $OBJ::$NAME(...)
+  message: |
+    Private method '$NAME' is unused and can be safely removed
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-561: Dead Code'
+    confidence: HIGH
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/561.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppi8koago/rule.yml:12
+12 |   - pattern-not: |
+13 |       private $RET $NAME(...) { ... }
+14 |     metavariable-regex:
+15 |       metavariable: $NAME
+16 |       regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+17 |   - pattern-not: |
+
+{'pattern-not': 'private $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$NAME', 'regex': '(readObject|readObjectNoData|writeObject|readResolve|writeReplace)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppi8koago/rule.yml:12
+12 |   - pattern-not: |
+13 |       private $RET $NAME(...) { ... }
+14 |     metavariable-regex:
+15 |       metaviteral: $NAME
+16 |       regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+17 |   - pattern-not: |
+
+{'pattern-not': 'private $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$NAME', 'regex': '(readObject|readObjectNoData|writeObject|readResolve|writeReplace)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将 pattern-not 和 metavariable-regex 分开为独立的 pattern 规则项，因为 Semgrep 不支持在 pattern-not 内部直接使用 metavariable-regex
+2. 使用 metavariable-pattern 替代 metavariable-regex 来实现正则匹配，这是 Semgrep 推荐的方式
+3. 确保所有匹配项都在同一层级，遵循 Semgrep 的规则结构要求
+4. 检查所有元变量的定义和使用是否一致，确保没有语法冲突
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:51:17
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpwqicb2__/rule.yml:14
+14 |   - metavariable-pattern:
+15 |       metavariable: $NAME
+16 |       regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+17 |   - pattern-not: |
+
+Additional properties are not allowed ('metavariable-pattern' was unexpected)
+Additional properties are not allowed ('regex' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: unused-private-method
+  patterns:
+  - pattern: |
+      private $RET $NAME(...) { ... }
+  - pattern-not-inside: |
+      @$ANN
+      ...
+      private $RET $NAME(...) { ... }
+    metavariable-pattern:
+      metavariable: $ANN
+      regex: (Deprecated|PostConstruct|PreDestroy|Include)
+  - metavariable-pattern:
+      metavariable: $NAME
+      regex: (readObject|readObjectNoData|writeObject|readResolve|writeReplace)
+  - pattern-not: |
+      $OBJ.$NAME(...)
+  - pattern-not: |
+      $OBJ::$NAME(...)
+  message: |
+    Private method '$NAME' is unused and can be safely removed
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-561: Dead Code'
+    confidence: HIGH
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/561.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp7qykqs5j/rule.yml:6
+6  |   - pattern-not: |
+7  |       @($ANN)
+8  |       private $RET $NAME(...) { ... }
+9  |     metavariable-regex:
+10 |       metavariable: $ANN
+11 |       regex: (Deprecated|PostConstruct|PreDestroy|Include)
+12 |   - metavariable-pattern:
+
+{'pattern-not': '@($ANN)\nprivate $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$ANN', 'regex': '(Deprecated|PostConstruct|PreDestroy|Include)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp7qykqs5j/rule.yml:6
+6  |   - pattern-not: |
+7  |       @($ANN)
+8  |       private $RET $NAME(...) { ... }
+9  |     metavariable-regex:
+10 |       metavariable: $ANN
+11 |       regex: (Deprecated|PostConstruct|PreDestroy|Include)
+12 |   - metavariable-pattern:
+
+{'pattern-not': '@($ANN)\nprivate $RET $NAME(...) { ... }\n', 'metavariable-regex': {'metavariable': '$ANN', 'regex': '(Deprecated|PostConstruct|PreDestroy|Include)'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 拆分 pattern-not 和 metavariable-regex 为两个独立的规则项，因为 Semgrep 不允许在 pattern-not 中使用 metavariable-regex
+2. 使用单个 pattern-not-inside 替代当前的组合逻辑
+3. 将注解排除逻辑重构为单独的模式，使用 pattern-not-inside 来处理注解情况
+4. 确保所有模式都位于正确的层级结构中，遵循 YAML 缩进规则
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,703 @@
+Timestamp: 2025-07-22 18:42:36
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp9gv11mhq.broken-null-check:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$LEFT ($OP $RIGHT)
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: broken-null-check
+  patterns:
+  - pattern: |
+      $LEFT ($OP $RIGHT)
+  - metavariable-pattern:
+      metavariable: $LEFT
+      pattern: |
+        $VAR == null | $VAR != null
+  - metavariable-pattern:
+      metavariable: $OP
+      pattern-either:
+        - pattern: "&&"
+        - pattern: "||"
+  - pattern-not: |
+      $VAR != null && ...
+  - pattern-not: |
+      $VAR == null || ...
+  message: |
+    Potential broken null check detected. Dereferencing or unboxing this expression may throw a NullPointerException.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+    - error-prone
+    cwe:
+    - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A04:2021 - Insecure Design
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/476.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTInfixExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTNullLiteral;
+import net.sourceforge.pmd.lang.java.ast.BinaryOp;
+import net.sourceforge.pmd.lang.java.ast.QualifiableExpression;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.StablePathMatcher;
+import net.sourceforge.pmd.reporting.RuleContext;
+
+public class BrokenNullCheckRule extends AbstractJavaRulechainRule {
+
+    public BrokenNullCheckRule() {
+        super(ASTInfixExpression.class);
+    }
+
+    @Override
+    public Object visit(ASTInfixExpression node, Object data) {
+        checkBrokenNullCheck(node, (RuleContext) data);
+        return data;
+    }
+
+    private void checkBrokenNullCheck(ASTInfixExpression enclosingConditional, RuleContext ctx) {
+        ASTExpression left = enclosingConditional.getLeftOperand();
+        if (!(left instanceof ASTInfixExpression)) {
+            return;
+        }
+
+        BinaryOp op = ((ASTInfixExpression) left).getOperator();
+        if (op != BinaryOp.EQ && op != BinaryOp.NE) {
+            return;
+        } else if (op == BinaryOp.NE && enclosingConditional.getOperator() == BinaryOp.CONDITIONAL_AND
+            || op == BinaryOp.EQ && enclosingConditional.getOperator() == BinaryOp.CONDITIONAL_OR) {
+            return; // not problematic
+        }
+
+        ASTNullLiteral nullLit = left.children(ASTNullLiteral.class).first();
+        if (nullLit == null) {
+            return;
+        }
+
+        ASTExpression otherChild = JavaAstUtils.getOtherOperandIfInInfixExpr(nullLit);
+        StablePathMatcher pathToNullVar = StablePathMatcher.matching(otherChild);
+        if (pathToNullVar == null) {
+            // cannot be matched, because it's not stable
+            return;
+        }
+
+        NodeStream<ASTExpression> exprsToCheck = enclosingConditional.getRightOperand()
+                                                                     .descendantsOrSelf()
+                                                                     .filterIs(ASTExpression.class);
+
+        for (ASTExpression subexpr : exprsToCheck) {
+            NpeReason npeReason = willNpeWithReason(subexpr, pathToNullVar);
+            if (npeReason != null) {
+                ctx.addViolationWithMessage(subexpr, npeReason.formatMessage);
+            }
+        }
+
+    }
+
+    private static NpeReason willNpeWithReason(ASTExpression e, StablePathMatcher pathToNullVar) {
+        if (e instanceof QualifiableExpression) {
+            ASTExpression qualifier = ((QualifiableExpression) e).getQualifier();
+            if (pathToNullVar.matches(qualifier)) {
+                return NpeReason.DEREFERENCE;
+            }
+        }
+
+        if (e.getParent() instanceof ASTInfixExpression) {
+            ASTInfixExpression infix = (ASTInfixExpression) e.getParent();
+            if (pathToNullVar.matches(e) && operatorUnboxesOperand(infix)) {
+                return NpeReason.UNBOXING;
+            }
+        }
+        return null;
+    }
+
+    private static boolean operatorUnboxesOperand(ASTInfixExpression infix) {
+        BinaryOp operator = infix.getOperator();
+
+        if (operator == BinaryOp.INSTANCEOF) {
+            return false;
+        }
+
+        boolean leftIsPrimitive = infix.getLeftOperand().getTypeMirror().isPrimitive();
+        boolean rightIsPrimitive = infix.getRightOperand().getTypeMirror().isPrimitive();
+        if (leftIsPrimitive != rightIsPrimitive) {
+            return true;
+        } else {
+            assert !leftIsPrimitive || !rightIsPrimitive : "We know at least one of the operands is null";
+            // So both are reference types
+            // With these ops, in this case no unboxing takes place
+            return operator != BinaryOp.NE && operator != BinaryOp.EQ;
+        }
+    }
+
+    enum NpeReason {
+        DEREFERENCE("Dereferencing the qualifier of this expression will throw a NullPointerException"),
+        UNBOXING("Unboxing this operand will throw a NullPointerException");
+
+        private final String formatMessage;
+
+        NpeReason(String formatMessage) {
+            this.formatMessage = formatMessage;
+        }
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:43:13
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprxqkcqfe/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $OP
+11 |       pattern-either:
+12 |         - "&&"
+13 |         - "||"
+14 |   - metavariable-pattern:
+
+Additional properties are not allowed ('metavariable-pattern' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: broken-null-check
+  patterns:
+  - pattern: $LEFT $OP $RIGHT
+  - metavariable-pattern:
+      metavariable: $LEFT
+      pattern: |
+        $VAR == null || $VAR != null
+  - metavariable-pattern:
+      metavariable: $OP
+      pattern-either:
+        - "&&"
+        - "||"
+  - metavariable-pattern:
+      metavariable: $VAR
+      pattern: $X
+  - pattern-not: $VAR != null && $RIGHT
+  - pattern-not: $VAR == null || $RIGHT
+  message: |
+    Potential broken null check detected. Dereferencing or unboxing this expression may throw a NullPointerException.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+    - error-prone
+    cwe:
+    - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A04:2021 - Insecure Design
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/476.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp9gv11mhq.broken-null-check:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$LEFT ($OP $RIGHT)
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp9gv11mhq.broken-null-check:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$LEFT ($OP $RIGHT)
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修正基础模式语法：Semgrep的模式需要使用Java语法，原模式`$LEFT ($OP $RIGHT)`不符合Java表达式语法结构，应改为`$LEFT $OP $RIGHT`
+2. 完善变量定义：`$VAR`需要在模式中明确定义，应在前面的patterns中添加定义`$VAR`的元变量模式
+3. 调整逻辑运算符匹配：确保`$OP`匹配的逻辑运算符(`&&`/`||`)符合Java语法规范，使用固定字符串而非YAML格式的原样输出
+4. 重构pattern-not条件：将当前YAML多行格式改为单行模式，并使用正确的Java语法结构
+5. 补全表达式上下文：为模式添加必要的AST节点上下文，确保能匹配完整的Java表达式而非片段
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:43:54
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmplizl67rc/rule.yml:7
+7  |     - pattern-and:
+8  |       - metavariable-pattern:
+9  |           metavariable: $LEFT
+10 |           pattern: |
+11 |             $VAR == null || $VAR != null
+12 |       - metavariable-pattern:
+13 |           metavariable: $OP
+14 |           pattern-either:
+15 |             - "&&"
+16 |             - "||"
+17 |     - pattern-not-inside: |
+
+{'pattern-and': [{'metavariable-pattern': {'metavariable': '$LEFT', 'pattern': '$VAR == null || $VAR != null\n'}}, {'metavariable-pattern': {'metavariable': '$OP', 'pattern-either': ['&&', '||']}}]} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: broken-null-check
+  patterns:
+    - pattern-inside: |
+        $LEFT $OP $RIGHT
+    - pattern-and:
+      - metavariable-pattern:
+          metavariable: $LEFT
+          pattern: |
+            $VAR == null || $VAR != null
+      - metavariable-pattern:
+          metavariable: $OP
+          pattern-either:
+            - "&&"
+            - "||"
+    - pattern-not-inside: |
+        $VAR != null && $RIGHT
+    - pattern-not-inside: |
+        $VAR == null || $RIGHT
+  message: |
+    Potential broken null check detected. Dereferencing or unboxing this expression may throw a NullPointerException.
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+      - error-prone
+    cwe:
+      - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+      - A04:2021 - Insecure Design
+    technology:
+      - Java
+    references:
+      - https://cwe.mitre.org/data/definitions/476.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprxqkcqfe/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $OP
+11 |       pattern-either:
+12 |         - "&&"
+13 |         - "||"
+14 |   - metavariable-pattern:
+
+Additional properties are not allowed ('metavariable-pattern' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprxqkcqfe/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $OP
+11 |       pattern-either:
+12 |         - "&&"
+13 |         - "||"
+14 |   - metavariable-pattern:
+
+Additional properties are not allowed ('metavariable-pattern' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 重组模式结构：将多个metavariable-pattern合并到单个pattern组合中，使用pattern-and结构包裹
+2. 移除独立的metavariable-pattern节点：按照Semgrep规范，metavariable-pattern应该作为pattern的子属性存在
+3. 修正YAML缩进：确保所有嵌套属性的缩进符合标准，使用2个空格作为缩进单位
+4. 合并相关匹配条件：将原始规则中的多个独立条件合并到统一的模式结构中
+5. 重构否定模式：使用pattern-not-inside替代独立的pattern-not节点以适应规则结构
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:04:04
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4dvo6yhl.broken-null-check:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+($LEFT == null || ...) && ...$RIGHT
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: broken-null-check
+  patterns:
+    - pattern: |
+        ($LEFT == null || ...) && ...$RIGHT
+    - pattern: |
+        ($LEFT != null && ...) || ...$RIGHT
+    - focus-metavariable: $RIGHT
+  message: |
+    Potential broken null check detected. Dereferencing or unboxing this operand may throw a NullPointerException:
+    - If dereferencing: 'Dereferencing the qualifier of this expression will throw a NullPointerException'
+    - If unboxing: 'Unboxing this operand will throw a NullPointerException'
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+      - error-prone
+    cwe:
+      - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+      - Java
+    references:
+      - https://cwe.mitre.org/data/definitions/476.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTInfixExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTNullLiteral;
+import net.sourceforge.pmd.lang.java.ast.BinaryOp;
+import net.sourceforge.pmd.lang.java.ast.QualifiableExpression;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.StablePathMatcher;
+import net.sourceforge.pmd.reporting.RuleContext;
+
+public class BrokenNullCheckRule extends AbstractJavaRulechainRule {
+
+    public BrokenNullCheckRule() {
+        super(ASTInfixExpression.class);
+    }
+
+    @Override
+    public Object visit(ASTInfixExpression node, Object data) {
+        checkBrokenNullCheck(node, (RuleContext) data);
+        return data;
+    }
+
+    private void checkBrokenNullCheck(ASTInfixExpression enclosingConditional, RuleContext ctx) {
+        ASTExpression left = enclosingConditional.getLeftOperand();
+        if (!(left instanceof ASTInfixExpression)) {
+            return;
+        }
+
+        BinaryOp op = ((ASTInfixExpression) left).getOperator();
+        if (op != BinaryOp.EQ && op != BinaryOp.NE) {
+            return;
+        } else if (op == BinaryOp.NE && enclosingConditional.getOperator() == BinaryOp.CONDITIONAL_AND
+            || op == BinaryOp.EQ && enclosingConditional.getOperator() == BinaryOp.CONDITIONAL_OR) {
+            return; // not problematic
+        }
+
+        ASTNullLiteral nullLit = left.children(ASTNullLiteral.class).first();
+        if (nullLit == null) {
+            return;
+        }
+
+        ASTExpression otherChild = JavaAstUtils.getOtherOperandIfInInfixExpr(nullLit);
+        StablePathMatcher pathToNullVar = StablePathMatcher.matching(otherChild);
+        if (pathToNullVar == null) {
+            // cannot be matched, because it's not stable
+            return;
+        }
+
+        NodeStream<ASTExpression> exprsToCheck = enclosingConditional.getRightOperand()
+                                                                     .descendantsOrSelf()
+                                                                     .filterIs(ASTExpression.class);
+
+        for (ASTExpression subexpr : exprsToCheck) {
+            NpeReason npeReason = willNpeWithReason(subexpr, pathToNullVar);
+            if (npeReason != null) {
+                ctx.addViolationWithMessage(subexpr, npeReason.formatMessage);
+            }
+        }
+
+    }
+
+    private static NpeReason willNpeWithReason(ASTExpression e, StablePathMatcher pathToNullVar) {
+        if (e instanceof QualifiableExpression) {
+            ASTExpression qualifier = ((QualifiableExpression) e).getQualifier();
+            if (pathToNullVar.matches(qualifier)) {
+                return NpeReason.DEREFERENCE;
+            }
+        }
+
+        if (e.getParent() instanceof ASTInfixExpression) {
+            ASTInfixExpression infix = (ASTInfixExpression) e.getParent();
+            if (pathToNullVar.matches(e) && operatorUnboxesOperand(infix)) {
+                return NpeReason.UNBOXING;
+            }
+        }
+        return null;
+    }
+
+    private static boolean operatorUnboxesOperand(ASTInfixExpression infix) {
+        BinaryOp operator = infix.getOperator();
+
+        if (operator == BinaryOp.INSTANCEOF) {
+            return false;
+        }
+
+        boolean leftIsPrimitive = infix.getLeftOperand().getTypeMirror().isPrimitive();
+        boolean rightIsPrimitive = infix.getRightOperand().getTypeMirror().isPrimitive();
+        if (leftIsPrimitive != rightIsPrimitive) {
+            return true;
+        } else {
+            assert !leftIsPrimitive || !rightIsPrimitive : "We know at least one of the operands is null";
+            // So both are reference types
+            // With these ops, in this case no unboxing takes place
+            return operator != BinaryOp.NE && operator != BinaryOp.EQ;
+        }
+    }
+
+    enum NpeReason {
+        DEREFERENCE("Dereferencing the qualifier of this expression will throw a NullPointerException"),
+        UNBOXING("Unboxing this operand will throw a NullPointerException");
+
+        private final String formatMessage;
+
+        NpeReason(String formatMessage) {
+            this.formatMessage = formatMessage;
+        }
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

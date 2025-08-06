@@ -1,0 +1,841 @@
+Timestamp: 2025-07-23 16:47:05
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:47:05Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:26:24: c.ParentStack undefined (type *gosec.Context has no field or method ParentStack)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type xssResponseWriterPrintf struct {
+	issue.MetaData
+	responseWriter gosec.CallList
+	printf         gosec.CallList
+	urlQuery       gosec.CallList
+}
+
+func (x *xssResponseWriterPrintf) ID() string {
+	return x.MetaData.ID
+}
+
+func (x *xssResponseWriterPrintf) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Check for ResponseWriter.Write with fmt.Printf inside
+	if node := x.printf.ContainsPkgCallExpr(n, c, false); node != nil {
+		// Find parent ResponseWriter.Write call
+		if funcDecl, ok := c.ParentStack[len(c.ParentStack)-1].(*ast.FuncDecl); ok {
+			for _, field := range funcDecl.Type.Params.List {
+				if sel, ok := field.Type.(*ast.SelectorExpr); ok {
+					if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "http" && sel.Sel.Name == "ResponseWriter" {
+						return c.NewIssue(n, x.ID(), x.What, x.Severity, x.Confidence), nil
+					}
+				}
+			}
+		}
+
+		// Check if any argument comes from URL query params
+		for _, arg := range node.Args {
+			if ident, ok := arg.(*ast.Ident); ok {
+				// Check if the variable comes from URL.Query()
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+						for _, rhs := range assign.Rhs {
+							if callExpr, ok := rhs.(*ast.CallExpr); ok {
+								if x.urlQuery.ContainsPkgCallExpr(callExpr, c, false) != nil {
+									return c.NewIssue(n, x.ID(), x.What, x.Severity, x.Confidence), nil
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewXSSResponseWriterPrintf(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	printf := gosec.NewCallList()
+	printf.Add("fmt", "Printf")
+	printf.Add("fmt", "Sprintf")
+	printf.Add("fmt", "Fprintf")
+
+	urlQuery := gosec.NewCallList()
+	urlQuery.Add("net/url", "Values")
+
+	return &xssResponseWriterPrintf{
+		printf:   printf,
+		urlQuery: urlQuery,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What: "Found data going from url query parameters into formatted data written to ResponseWriter. " +
+				"This could be XSS and should not be done. If you must do this, ensure your data is sanitized or escaped. " +
+				"CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting') " +
+				"OWASP A07:2017 - Cross-Site Scripting (XSS) " +
+				"A03:2021 - Injection",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: wip-xss-using-responsewriter-and-printf
+  patterns:
+  - pattern-inside: |
+      func $FUNC(..., $W http.ResponseWriter, ...) {
+        ...
+        var $TEMPLATE = "..."
+        ...
+        $W.Write([]byte(fmt.$PRINTF($TEMPLATE, ...)), ...)
+        ...
+      }
+  - pattern-either:
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $DATA, ...)))
+  message: >-
+    Found data going from url query parameters into formatted data written to ResponseWriter.
+    This could be XSS and should not be done. If you must do this, ensure your data
+    is
+    sanitized or escaped.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    category: security
+    technology:
+    - go
+    confidence: MEDIUM
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+  severity: WARNING
+  languages:
+  - go
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 16:54:14
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:54:14Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:68:38: too many arguments in call to x.queryCalls.Contains
+	have (*ast.CallExpr, *gosec.Context, bool)
+	want (string, string)
+rules/GC001.go:68:48: invalid operation: x.queryCalls.Contains(call, c, false) != nil (mismatched types bool and untyped nil)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type xssResponseWriter struct {
+	issue.MetaData
+	queryCalls  gosec.CallList
+	writeCalls  gosec.CallList
+	printfCalls gosec.CallList
+}
+
+func (x *xssResponseWriter) ID() string {
+	return x.MetaData.ID
+}
+
+func (x *xssResponseWriter) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Check for patterns where URL query params are directly written via fmt.Printf
+	switch node := n.(type) {
+	case *ast.CallExpr:
+		// Check if it's a ResponseWriter.Write call
+		if x.writeCalls.ContainsPkgCallExpr(node, c, false) != nil {
+			// Check if the argument is a fmt.Printf call
+			if arg, ok := node.Args[0].(*ast.CallExpr); ok {
+				if x.printfCalls.ContainsPkgCallExpr(arg, c, false) != nil {
+					// Check if any printf arguments come from URL.Query()
+					for _, printfArg := range arg.Args[1:] {
+						if x.isQueryData(printfArg, c) {
+							return c.NewIssue(n, x.ID(), x.What, x.Severity, x.Confidence), nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (x *xssResponseWriter) isQueryData(n ast.Node, c *gosec.Context) bool {
+	// Check if the node is ultimately derived from r.URL.Query()
+	switch expr := n.(type) {
+	case *ast.Ident:
+		if expr.Obj != nil {
+			if assign, ok := expr.Obj.Decl.(*ast.AssignStmt); ok {
+				for _, rhs := range assign.Rhs {
+					if x.isQueryCall(rhs, c) {
+						return true
+					}
+				}
+			}
+		}
+	case *ast.IndexExpr:
+		return x.isQueryData(expr.X, c)
+	case *ast.CallExpr:
+		return x.isQueryCall(expr, c)
+	}
+	return false
+}
+
+func (x *xssResponseWriter) isQueryCall(n ast.Node, c *gosec.Context) bool {
+	if call, ok := n.(*ast.CallExpr); ok {
+		if selExpr, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if x.queryCalls.Contains(call, c, false) != nil {
+				return true
+			}
+			// Handle r.URL.Query() pattern
+			if selExpr.Sel != nil && selExpr.Sel.Name == "Query" {
+				if selX, ok := selExpr.X.(*ast.SelectorExpr); ok {
+					if selX.Sel != nil && selX.Sel.Name == "URL" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func NewXSSResponseWriter(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	queryCalls := gosec.NewCallList()
+	writeCalls := gosec.NewCallList()
+	writeCalls.Add("net/http", "ResponseWriter.Write")
+	printfCalls := gosec.NewCallList()
+	printfCalls.Add("fmt", "Printf")
+	printfCalls.Add("fmt", "Sprintf")
+	printfCalls.Add("fmt", "Fprintf")
+
+	return &xssResponseWriter{
+		queryCalls:  queryCalls,
+		writeCalls:  writeCalls,
+		printfCalls: printfCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What: "Found data going from url query parameters into formatted data written to ResponseWriter. " +
+				"This could be XSS and should not be done. If you must do this, ensure your data is sanitized or escaped. " +
+				"CWE: CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting'). " +
+				"OWASP: A07:2017 - Cross-Site Scripting (XSS), A03:2021 - Injection",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: wip-xss-using-responsewriter-and-printf
+  patterns:
+  - pattern-inside: |
+      func $FUNC(..., $W http.ResponseWriter, ...) {
+        ...
+        var $TEMPLATE = "..."
+        ...
+        $W.Write([]byte(fmt.$PRINTF($TEMPLATE, ...)), ...)
+        ...
+      }
+  - pattern-either:
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $DATA, ...)))
+  message: >-
+    Found data going from url query parameters into formatted data written to ResponseWriter.
+    This could be XSS and should not be done. If you must do this, ensure your data
+    is
+    sanitized or escaped.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    category: security
+    technology:
+    - go
+    confidence: MEDIUM
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+  severity: WARNING
+  languages:
+  - go
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 17:01:26
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T09:01:26Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:73:47: too many arguments in call to responseWriter.Add
+	have (string, string, string)
+	want (string, string)
+rules/GC001.go:81:40: too many arguments in call to queryMethods.Add
+	have (string, string, string)
+	want (string, string)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type xssResponseWriter struct {
+	issue.MetaData
+	responseWriter gosec.CallList
+	printfFuncs    gosec.CallList
+	queryMethods   gosec.CallList
+}
+
+func (x *xssResponseWriter) ID() string {
+	return x.MetaData.ID
+}
+
+func (x *xssResponseWriter) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Check for ResponseWriter.Write() with fmt.Printf calls containing URL query params
+	if callExpr := x.responseWriter.ContainsPkgCallExpr(n, c, false); callExpr != nil {
+		if len(callExpr.Args) > 0 {
+			arg := callExpr.Args[0]
+			if arg, ok := arg.(*ast.CallExpr); ok {
+				if len(arg.Args) > 0 {
+					if selExpr, ok := arg.Fun.(*ast.SelectorExpr); ok {
+						if x.printfFuncs.Contains(selExpr.X.(*ast.Ident).Name, selExpr.Sel.Name) {
+							// Check if any argument comes from URL query parameters
+							for _, printfArg := range arg.Args {
+								if x.isFromQueryParam(printfArg, c) {
+									return c.NewIssue(n, x.ID(), x.What, x.Severity, x.Confidence), nil
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (x *xssResponseWriter) isFromQueryParam(n ast.Node, c *gosec.Context) bool {
+	if ident, ok := n.(*ast.Ident); ok && ident.Obj != nil {
+		if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+			if call, ok := assign.Rhs[0].(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if x.queryMethods.Contains(c.Info.TypeOf(sel.X).String(), sel.Sel.Name) {
+						return true
+					}
+				}
+			}
+			// Check for direct URL.Query() access
+			for _, rhs := range assign.Rhs {
+				if call, ok := rhs.(*ast.IndexExpr); ok {
+					if sel, ok := call.X.(*ast.SelectorExpr); ok {
+						if sel.Sel.Name == "Query" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func NewXSSResponseWriter(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	responseWriter := gosec.NewCallList()
+	responseWriter.Add("http", "ResponseWriter", "Write")
+
+	printfFuncs := gosec.NewCallList()
+	printfFuncs.Add("fmt", "Printf")
+	printfFuncs.Add("fmt", "Sprintf")
+	printfFuncs.Add("fmt", "Fprintf")
+
+	queryMethods := gosec.NewCallList()
+	queryMethods.Add("net/url", "Values", "Get")
+
+	return &xssResponseWriter{
+		responseWriter: responseWriter,
+		printfFuncs:    printfFuncs,
+		queryMethods:   queryMethods,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "Found data going from URL query parameters into formatted data written to ResponseWriter. This could be XSS and should not be done. If you must do this, ensure your data is sanitized or escaped. CWE-79, OWASP A07:2017, OWASP A03:2021",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: wip-xss-using-responsewriter-and-printf
+  patterns:
+  - pattern-inside: |
+      func $FUNC(..., $W http.ResponseWriter, ...) {
+        ...
+        var $TEMPLATE = "..."
+        ...
+        $W.Write([]byte(fmt.$PRINTF($TEMPLATE, ...)), ...)
+        ...
+      }
+  - pattern-either:
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $DATA[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $DATA, $ERR := r.URL.Query()[...]
+        ...
+        $INTERM = $ANYTHING(..., $DATA, ...)
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $INTERM, ...)))
+    - pattern: |
+        $PARAMS = r.URL.Query()
+        ...
+        $DATA, $ERR := $PARAMS[...]
+        ...
+        $W.Write([]byte(fmt.$PRINTF(..., $DATA, ...)))
+  message: >-
+    Found data going from url query parameters into formatted data written to ResponseWriter.
+    This could be XSS and should not be done. If you must do this, ensure your data
+    is
+    sanitized or escaped.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    category: security
+    technology:
+    - go
+    confidence: MEDIUM
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+  severity: WARNING
+  languages:
+  - go
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,195 @@
+Timestamp: 2025-07-23 18:34:55
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T10:34:54Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:22:4: declared and not used: channelOp
+rules/GC001.go:26:22: cannot use stmt.List[i + 1].(*ast.AssignStmt) (comma, ok expression of type *ast.AssignStmt) as *ast.SendStmt value in assignment
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type guardedChannel struct {
+	issue.MetaData
+}
+
+func (g *guardedChannel) ID() string {
+	return g.MetaData.ID
+}
+
+func (g *guardedChannel) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if stmt, ok := n.(*ast.BlockStmt); ok {
+		for i := 0; i < len(stmt.List)-2; i++ {
+			lock, ok1 := stmt.List[i].(*ast.ExprStmt)
+			channelOp, ok2 := stmt.List[i+1].(*ast.SendStmt)
+			unlock, ok3 := stmt.List[i+2].(*ast.ExprStmt)
+
+			if !ok1 || !ok2 || !ok3 {
+				channelOp, ok2 = stmt.List[i+1].(*ast.AssignStmt)
+				if !ok1 || !ok2 || !ok3 {
+					continue
+				}
+			}
+
+			call1, ok1 := lock.X.(*ast.CallExpr)
+			call2, ok2 := unlock.X.(*ast.CallExpr)
+			if !ok1 || !ok2 {
+				continue
+			}
+
+			sel1, ok1 := call1.Fun.(*ast.SelectorExpr)
+			sel2, ok2 := call2.Fun.(*ast.SelectorExpr)
+			if !ok1 || !ok2 {
+				continue
+			}
+
+			if sel1.Sel.Name == "Lock" && sel2.Sel.Name == "Unlock" {
+				return c.NewIssue(n, g.ID(), g.What, g.Severity, g.Confidence), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewGuardedChannel(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &guardedChannel{
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Low,
+			Confidence: issue.High,
+			What:       "Detected a channel guarded with a mutex. Channels already have an internal mutex, so this is unnecessary. Remove the mutex. See https://hackmongo.com/page/golang-antipatterns/#guarded-channel for more information.",
+		},
+	}, []ast.Node{(*ast.BlockStmt)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+  - id: channel-guarded-with-mutex
+    pattern-either:
+      - pattern: |
+          $MUX.Lock()
+          $VALUE <- $CHANNEL
+          $MUX.Unlock()
+      - pattern: |
+          $MUX.Lock()
+          $VALUE = <- $CHANNEL
+          $MUX.Unlock()
+    message: >-
+      Detected a channel guarded with a mutex. Channels already have
+      an internal mutex, so this is unnecessary. Remove the mutex.
+      See https://hackmongo.com/page/golang-antipatterns/#guarded-channel
+      for more information.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      category: best-practice
+      technology:
+        - go
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

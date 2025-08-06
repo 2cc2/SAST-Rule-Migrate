@@ -1,0 +1,323 @@
+Timestamp: 2025-07-22 15:30:16
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpj4lbxjpg.junit-use-expected:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Test(expected = ...)
+...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: junit-use-expected
+  patterns:
+  - pattern-inside: |
+      public void $METHOD(...) {
+        ...
+      }
+  - pattern: |
+      try {
+        ...
+        $FAIL_STMT;
+      } catch (...) { }
+  - metavariable-regex:
+      metavariable: $FAIL_STMT
+      regex: (fail\(.*\)|throw\s+.*;)
+  - pattern-not: |
+      @Test(expected = ...)
+      ...
+  message: |
+    In JUnit 4, use @Test(expected=Exception.class) instead of try-catch-fail pattern
+    to test expected exceptions. This makes the test more readable and concise.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: testing
+    cwe:
+    - 'CWE-398: Indicator of Poor Code Quality'
+    references:
+    - https://github.com/pmd/pmd/blob/master/pmd-java/src/main/java/net/sourceforge/pmd/lang/java/rule/bestpractices/JUnitUseExpectedRule.java
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.lang.java.rule.internal.TestFrameworksUtil.isJUnitMethod;
+
+import net.sourceforge.pmd.lang.java.ast.ASTBlock;
+import net.sourceforge.pmd.lang.java.ast.ASTExpressionStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodCall;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTThrowStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTTryStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+
+/**
+ * This rule finds code like this:
+ *
+ * <pre>
+ * public void testFoo() {
+ *     try {
+ *         doSomething();
+ *         fail(&quot;should have thrown an exception&quot;);
+ *     } catch (Exception e) {
+ *     }
+ * }
+ * </pre>
+ *
+ * In JUnit 4, use
+ *
+ * <pre>
+ *  &#064;Test(expected = Exception.class)
+ * </pre>
+ *
+ * @author acaplan
+ *
+ */
+public class JUnitUseExpectedRule extends AbstractJavaRulechainRule {
+
+    public JUnitUseExpectedRule() {
+        super(ASTMethodDeclaration.class);
+    }
+
+    @Override
+    public Object visit(ASTMethodDeclaration node, Object data) {
+        ASTBlock body = node.getBody();
+        if (body != null && isJUnitMethod(node)) {
+            body.descendants(ASTTryStatement.class)
+                .filter(this::isWeirdTry)
+                .forEach(it -> asCtx(data).addViolation(it));
+        }
+        return null;
+    }
+
+    private boolean isWeirdTry(ASTTryStatement tryStmt) {
+        ASTStatement lastStmt = tryStmt.getBody().getLastChild();
+        return (lastStmt instanceof ASTThrowStatement
+            || lastStmt instanceof ASTExpressionStatement && isFailStmt((ASTExpressionStatement) lastStmt))
+            && tryStmt.getCatchClauses().any(it -> it.getBody().size() == 0);
+    }
+
+    private boolean isFailStmt(ASTExpressionStatement stmt) {
+        if (stmt.getExpr() instanceof ASTMethodCall) {
+            ASTMethodCall expr = (ASTMethodCall) stmt.getExpr();
+            return "fail".equals(expr.getMethodName());
+        }
+        return false;
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:30:55
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpw2gylx3_.junit-use-expected:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Test(expected = $TYPE.class)
+...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: junit-use-expected
+  patterns:
+  - pattern-inside: |
+      @Test
+      public void $METHOD(...) {
+        ...
+      }
+  - pattern: |
+      try {
+        ...
+        $FAIL_STMT;
+      } catch ($EXCEPTION $VAR) { }
+  - metavariable-regex:
+      metavariable: $FAIL_STMT
+      regex: (fail\(.*\)|throw\s+.*;)
+  - pattern-not: |
+      @Test(expected = $TYPE.class)
+      ...
+  message: |
+    In JUnit 4, use @Test(expected=Exception.class) instead of try-catch-fail pattern
+    to test expected exceptions. This makes the test more readable and concise.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: testing
+    cwe:
+    - 'CWE-398: Indicator of Poor Code Quality'
+    references:
+    - https://github.com/pmd/pmd/blob/master/pmd-java/src/main/java/net/sourceforge/pmd/lang/java/rule/bestpractices/JUnitUseExpectedRule.java
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpj4lbxjpg.junit-use-expected:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Test(expected = ...)
+...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpj4lbxjpg.junit-use-expected:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Test(expected = ...)
+...
+
+----- end pattern -----
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修正pattern-not模式的语法错误，...应该用通配符替换或改为具体的模式匹配
+2. 使用注解的完整语法格式@Test(expected = $TYPE.class)替代当前模糊的模式
+3. 确保注解模式与Java语法完全兼容，必要时添加适当的语法元素如分号等
+4. 增加对JUnit测试方法的条件检查，确保只匹配测试方法
+5. 验证模式在Java解析器中的兼容性，避免使用可能导致解析错误的特殊字符
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

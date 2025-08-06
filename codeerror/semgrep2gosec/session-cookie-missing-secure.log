@@ -1,0 +1,407 @@
+Timestamp: 2025-07-23 15:50:39
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:50:39Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:52:4: unknown field MetaData in struct literal of type issue.MetaData
+rules/GC001.go:53:5: unknown field CWE in struct literal of type issue.MetaData
+rules/GC001.go:54:5: unknown field OWASP in struct literal of type issue.MetaData
+rules/GC001.go:55:5: unknown field References in struct literal of type issue.MetaData
+rules/GC001.go:56:5: unknown field Category in struct literal of type issue.MetaData
+rules/GC001.go:57:5: unknown field Technology in struct literal of type issue.MetaData
+rules/GC001.go:58:5: unknown field Subcategory in struct literal of type issue.MetaData
+rules/GC001.go:59:5: unknown field Likelihood in struct literal of type issue.MetaData
+rules/GC001.go:60:5: unknown field Impact in struct literal of type issue.MetaData
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type sessionCookieSecure struct {
+	issue.MetaData
+	optionsType string
+}
+
+func (s *sessionCookieSecure) ID() string {
+	return s.MetaData.ID
+}
+
+func (s *sessionCookieSecure) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node, ok := n.(*ast.UnaryExpr); ok {
+		if composite, ok := node.X.(*ast.CompositeLit); ok {
+			if ident, ok := composite.Type.(*ast.Ident); ok && ident.Name == "Options" {
+				hasSecure := false
+				for _, elt := range composite.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Secure" {
+							if value, ok := kv.Value.(*ast.Ident); ok && value.Name == "true" {
+								hasSecure = true
+								break
+							}
+						}
+					}
+				}
+				if !hasSecure {
+					return c.NewIssue(n, s.ID(), s.What, s.Severity, s.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewSessionCookieSecure creates a rule to detect missing Secure flag in session cookies
+func NewSessionCookieSecure(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &sessionCookieSecure{
+		optionsType: "github.com/gorilla/sessions",
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Low,
+			Confidence: issue.Medium,
+			What:       "A session cookie was detected without setting the 'Secure' flag. The 'secure' flag prevents the client from transmitting the cookie over insecure channels such as HTTP.",
+			MetaData: issue.MetaData{
+				CWE:         "CWE-614: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute",
+				OWASP:       "A05:2021 - Security Misconfiguration",
+				References:  []string{"https://github.com/0c34/govwa/blob/139693e56406b5684d2a6ae22c0af90717e149b8/user/session/session.go#L69"},
+				Category:    "security",
+				Technology:  []string{"gorilla"},
+				Subcategory: []string{"audit"},
+				Likelihood:  "LOW",
+				Impact:      "LOW",
+			},
+		},
+	}, []ast.Node{(*ast.UnaryExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: session-cookie-missing-secure
+  patterns:
+  - pattern-not-inside: |
+      &sessions.Options{
+        ...,
+        Secure: true,
+        ...,
+      }
+  - pattern: |
+      &sessions.Options{
+        ...,
+      }
+  message: >-
+    A session cookie was detected without setting the 'Secure' flag.
+    The 'secure' flag for cookies prevents the client from transmitting
+    the cookie over insecure channels such as HTTP. Set the 'Secure'
+    flag by setting 'Secure' to 'true' in the Options struct.
+  metadata:
+    cwe:
+    - "CWE-614: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute"
+    owasp:
+    - A05:2021 - Security Misconfiguration
+    references:
+    - https://github.com/0c34/govwa/blob/139693e56406b5684d2a6ae22c0af90717e149b8/user/session/session.go#L69
+    category: security
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+  fix-regex:
+    regex: (Secure\s*:\s+)false
+    replacement: \1true
+  severity: WARNING
+  languages: [go]
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:52:23
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:52:22Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:51:4: unknown field Cwe in struct literal of type issue.MetaData
+rules/GC001.go:51:22: undefined: issue.GetCweByID
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type insecureSessionCookie struct {
+	issue.MetaData
+	optionsType string
+}
+
+func (i *insecureSessionCookie) ID() string {
+	return i.MetaData.ID
+}
+
+func (i *insecureSessionCookie) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if compLit, ok := n.(*ast.CompositeLit); ok {
+		if selExpr, ok := compLit.Type.(*ast.SelectorExpr); ok {
+			if ident, ok := selExpr.X.(*ast.Ident); ok && ident.Name == "sessions" && selExpr.Sel.Name == "Options" {
+				secureFound := false
+				for _, elt := range compLit.Elts {
+					if kvExpr, ok := elt.(*ast.KeyValueExpr); ok {
+						if key, ok := kvExpr.Key.(*ast.Ident); ok && key.Name == "Secure" {
+							if val, ok := kvExpr.Value.(*ast.Ident); ok && val.Name == "true" {
+								secureFound = true
+								break
+							}
+						}
+					}
+				}
+				if !secureFound {
+					return c.NewIssue(n, i.ID(), i.What, i.Severity, i.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewInsecureSessionCookie(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &insecureSessionCookie{
+		optionsType: "github.com/gorilla/sessions.Options",
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "A session cookie was detected without setting the 'Secure' flag. The 'secure' flag for cookies prevents the client from transmitting the cookie over insecure channels such as HTTP.",
+			Cwe:        issue.GetCweByID("614"),
+		},
+	}, []ast.Node{(*ast.CompositeLit)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: session-cookie-missing-secure
+  patterns:
+  - pattern-not-inside: |
+      &sessions.Options{
+        ...,
+        Secure: true,
+        ...,
+      }
+  - pattern: |
+      &sessions.Options{
+        ...,
+      }
+  message: >-
+    A session cookie was detected without setting the 'Secure' flag.
+    The 'secure' flag for cookies prevents the client from transmitting
+    the cookie over insecure channels such as HTTP. Set the 'Secure'
+    flag by setting 'Secure' to 'true' in the Options struct.
+  metadata:
+    cwe:
+    - "CWE-614: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute"
+    owasp:
+    - A05:2021 - Security Misconfiguration
+    references:
+    - https://github.com/0c34/govwa/blob/139693e56406b5684d2a6ae22c0af90717e149b8/user/session/session.go#L69
+    category: security
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+  fix-regex:
+    regex: (Secure\s*:\s+)false
+    replacement: \1true
+  severity: WARNING
+  languages: [go]
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

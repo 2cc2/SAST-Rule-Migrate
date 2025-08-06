@@ -1,0 +1,239 @@
+Timestamp: 2025-07-23 17:05:54
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T09:05:54Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type templateHTML struct {
+	issue.MetaData
+	calls gosec.CallList
+}
+
+func (t *templateHTML) ID() string {
+	return t.MetaData.ID
+}
+
+func (t *templateHTML) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := t.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		// Check for simple string concatenation
+		if len(node.Args) > 0 {
+			if binExpr, ok := node.Args[0].(*ast.BinaryExpr); ok && binExpr.Op.String() == "+" {
+				return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence), nil
+			}
+		}
+
+		// Check for fmt package function calls
+		if selector, ok := node.Args[0].(*ast.CallExpr); ok {
+			if sel, ok := selector.Fun.(*ast.SelectorExpr); ok {
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "fmt" {
+					return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence), nil
+				}
+			}
+		}
+
+		// Check for variables that might contain formatted strings
+		if ident, ok := node.Args[0].(*ast.Ident); ok {
+			if ident.Obj != nil {
+				if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+					for _, rhs := range assign.Rhs {
+						if binaryExpr, ok := rhs.(*ast.BinaryExpr); ok && binaryExpr.Op.String() == "+" {
+							return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence), nil
+						}
+						if callExpr, ok := rhs.(*ast.CallExpr); ok {
+							if sel, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+								if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "fmt" {
+									return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence), nil
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewFormattedTemplateString(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("html/template", "HTML")
+	return &templateHTML{
+		calls: calls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "Found a formatted template string passed to 'template.HTML()'. 'template.HTML()' does not escape contents. Be absolutely sure there is no user-controlled data in this template. If user data can reach this template, you may have a XSS vulnerability. CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: formatted-template-string
+  message: >-
+    Found a formatted template string passed to 'template.HTML()'. 'template.HTML()' does not escape
+    contents. Be absolutely sure there is no user-controlled data in this template. If user data can
+    reach this template, you may have a XSS vulnerability.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    references:
+    - https://golang.org/pkg/html/template/#HTML
+    category: security
+    technology:
+    - go
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: MEDIUM
+  languages: [go]
+  severity: WARNING
+  patterns:
+  - pattern-not: template.HTML("..." + "...")
+  - pattern-either:
+    - pattern: template.HTML($T + $X, ...)
+    - pattern: template.HTML(fmt.$P("...", ...), ...)
+    - pattern: |
+        $T = "..."
+        ...
+        $T = $FXN(..., $T, ...)
+        ...
+        template.HTML($T, ...)
+    - pattern: |
+        $T = fmt.$P("...", ...)
+        ...
+        template.HTML($T, ...)
+    - pattern: |
+        $T, $ERR = fmt.$P("...", ...)
+        ...
+        template.HTML($T, ...)
+    - pattern: |
+        $T = $X + $Y
+        ...
+        template.HTML($T, ...)
+    - pattern: |-
+        $T = "..."
+        ...
+        $OTHER, $ERR = fmt.$P(..., $T, ...)
+        ...
+        template.HTML($OTHER, ...)
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

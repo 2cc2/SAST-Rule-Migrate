@@ -1,0 +1,229 @@
+Timestamp: 2025-07-24 15:26:15
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'fromString' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,37-47)
+ERROR: could not resolve module PosixFilePermission (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,6-18)
+ERROR: 'permString' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-27)
+Rule Content:
+/**
+ * @name Overly Permissive File Permission
+ * @description Detected file permissions that are overly permissive (read, write, and execute).
+ * @kind problem
+ * @problem.severity warning
+ * @precision low
+ * @id java/overly-permissive-file-permission
+ * @tags security
+ *       external/cwe/cwe-276
+ *       owasp-a01
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import PosixFilePermission
+
+predicate isOverlyPermissive(Expr permExpr) {
+  exists(string permString |
+    permExpr = PosixFilePermissions.fromString(permString) and
+    (
+      permString.matches("%......r..%") or    // Others read
+      permString.matches("%.......w.%") or    // Others write
+      permString.matches("%........x%")       // Others execute
+    )
+  )
+}
+
+predicate isOverlyPermissivePermission(Expr perm) {
+  exists(MethodAccess add |
+    add.getMethod().hasName("add") and
+    add.getQualifier().getType().hasName("java.util.Set") and
+    (
+      add.getArgument(0).toString().matches("%OTHERS_READ%") or
+      add.getArgument(0).toString().matches("%OTHERS_WRITE%") or
+      add.getArgument(0).toString().matches("%OTHERS_EXECUTE%")
+    ) and
+    DataFlow::localFlow(DataFlow::exprNode(add.getQualifier()), DataFlow::exprNode(perm))
+  )
+}
+
+from MethodAccess setPerm, Expr perms
+where
+  setPerm.getMethod().hasName("setPosixFilePermissions") and
+  setPerm.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Files") and
+  perms = setPerm.getArgument(1) and
+  (
+    isOverlyPermissive(perms) or
+    isOverlyPermissivePermission(perms)
+  )
+select setPerm, "Overly permissive file permissions detected, may lead to privilege escalation or information leakage."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: overly-permissive-file-permission
+  message: >-
+    Detected file permissions that are overly permissive (read, write, and execute).
+    It is generally a bad practices to set overly permissive file permission such
+    as read+write+exec for all users.
+    If the file affected is a configuration, a binary, a script or sensitive data,
+    it can lead to privilege escalation or information leakage.
+    Instead, follow the principle of least privilege and give users only the 
+    permissions they need.
+  severity: WARNING
+  languages: [java]
+  metadata:
+    cwe:
+    - 'CWE-276: Incorrect Default Permissions'
+    owasp:
+    - A01:2021 - Broken Access Control
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#OVERLY_PERMISSIVE_FILE_PERMISSION
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A01_2021-Broken_Access_Control
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: LOW
+  pattern-either:
+  - pattern: java.nio.file.Files.setPosixFilePermissions($FILE, java.nio.file.attribute.PosixFilePermissions.fromString("=~/(^......r..$)|(^.......w.$)|(^........x$)/"));
+  - pattern: |
+      $TYPE $P = java.nio.file.attribute.PosixFilePermissions.fromString("=~/(^......r..$)|(^.......w.$)|(^........x$)/");
+      ...
+      java.nio.file.Files.setPosixFilePermissions($FILE, $P);
+  - pattern: |
+      $P.add(java.nio.file.attribute.PosixFilePermission.OTHERS_READ);
+      ...
+      java.nio.file.Files.setPosixFilePermissions($FILE, $P);
+  - pattern: |
+      $P.add(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE);
+      ...
+      java.nio.file.Files.setPosixFilePermissions($FILE, $P);
+  - pattern: |-
+      $P.add(java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE);
+      ...
+      java.nio.file.Files.setPosixFilePermissions($FILE, $P);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:27:03
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java.nio.file.attribute.PosixFilePermissions (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-52)
+ERROR: could not resolve module java.nio.file.attribute.PosixFilePermission (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-51)
+ERROR: getQualifier() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,48-60)
+ERROR: getArgument(int) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,19-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,10-22)
+Rule Content:
+/**
+ * @name Overly Permissive File Permission
+ * @description Detected file permissions that are overly permissive (read, write, and execute).
+ * @kind problem
+ * @problem.severity warning
+ * @precision low
+ * @id java/overly-permissive-file-permission
+ * @tags security
+ *       external/cwe/cwe-276
+ *       owasp-a01
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.attribute.PosixFilePermission
+
+predicate isOverlyPermissive(Expr permExpr) {
+  exists(MethodAccess ma, string permString |
+    ma.getMethod().getName() = "fromString" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file.attribute", "PosixFilePermissions") and
+    permString = ma.getArgument(0).(StringLiteral).getValue() and
+    (
+      permString.regexpMatch(".*......r..") or    // Others read
+      permString.regexpMatch(".*.......w.") or    // Others write
+      permString.regexpMatch(".*........x")       // Others execute
+    ) and
+    DataFlow::localFlow(DataFlow::exprNode(ma), DataFlow::exprNode(permExpr))
+  )
+}
+
+predicate isOverlyPermissivePermission(Expr perm) {
+  exists(Method add, Expr arg |
+    add.getName() = "add" and
+    add.getDeclaringType().hasQualifiedName("java.util", "Set") and
+    (
+      arg.toString().matches("%OTHERS_READ%") or
+      arg.toString().matches("%OTHERS_WRITE%") or
+      arg.toString().matches("%OTHERS_EXECUTE%")
+    ) and
+    DataFlow::localFlow(DataFlow::exprNode(add.getQualifier()), DataFlow::exprNode(perm))
+  )
+}
+
+from Method setPerm, Expr perms
+where
+  setPerm.getName() = "setPosixFilePermissions" and
+  setPerm.getDeclaringType().hasQualifiedName("java.nio.file", "Files") and
+  perms = setPerm.getArgument(1) and
+  (
+    isOverlyPermissive(perms) or
+    isOverlyPermissivePermission(perms)
+  )
+select setPerm, "Overly permissive file permissions detected, may lead to privilege escalation or information leakage."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'fromString' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,37-47)
+ERROR: could not resolve module PosixFilePermission (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,6-18)
+ERROR: 'permString' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-27)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'fromString' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,37-47)
+ERROR: could not resolve module PosixFilePermission (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,6-18)
+ERROR: 'permString' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-27)，请按照以下步骤进行修复：
+1. 添加正确的导入模块，替换不存在的`PosixFilePermission`导入语句，正确的应该是导入`PosixFilePermissions`模块
+2. 将`MethodAccess`替换为新版本的`Method`类型，并更新相关方法的调用
+3. 修复`fromString`方法调用的正确语法，应该是一个方法调用而非直接引用
+4. 确保`permString`变量在predicate中被正确的声明和绑定值
+5. 更新字符串匹配的正则表达式语法，使用Codeql支持的模式匹配方式
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

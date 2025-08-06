@@ -1,0 +1,469 @@
+Timestamp: 2025-07-22 19:12:38
+Attempt: 1
+Error: [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppw4fhsen/rule.yml:
+	mapping values are not allowed here
+	  in "<file>", line 16, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: constructor-calls-overridable-method
+  patterns:
+    - pattern: |
+        class $CLASS {
+          $CONSTRUCTOR(...) { ... $METHOD(...); ... }
+        }
+    - metavariable-regex:
+        metavariable: $METHOD
+        regex: (?i)(final|private|static)
+        negation: true
+    - pattern-not: final class $CLASS { ... }
+    - pattern-not: |
+        @(...)
+        class $CLASS { ... }
+  message: Overridable method called during object construction: $METHOD
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: security
+    subcategory:
+      - error-prone
+    cwe:
+      - 'CWE-583: Finalize() Method Declared Public'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+      - A9:2021 Security Logging and Monitoring Failures
+    technology:
+      - Java
+    references:
+      - https://cwe.mitre.org/data/definitions/583.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.lang.reflect.Modifier;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.checkerframework.checker.nullness.qual.NonNull;
+import org.pcollections.PVector;
+import org.pcollections.TreePVector;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodCall;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.ast.internal.PrettyPrintingUtil;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.symbols.JExecutableSymbol;
+import net.sourceforge.pmd.lang.java.symbols.JMethodSymbol;
+import net.sourceforge.pmd.lang.java.types.JMethodSig;
+import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
+import net.sourceforge.pmd.reporting.RuleContext;
+
+
+/**
+ * Searches through all methods and constructors called from constructors. It
+ * marks as dangerous any call to overridable methods from non-private
+ * constructors. It marks as dangerous any calls to dangerous private
+ * constructors from non-private constructors.
+ *
+ * @author CL Gilbert (dnoyeb@users.sourceforge.net)
+ *
+ *         TODO match parameter types. Aggressively strips off any package
+ *         names. Normal compares the names as is. TODO What about interface
+ *         declarations which can have internal classes
+ */
+public final class ConstructorCallsOverridableMethodRule extends AbstractJavaRulechainRule {
+
+    private static final String MESSAGE = "Overridable method called during object construction: {0} ";
+    private static final String MESSAGE_TRANSITIVE = "This method may call an overridable method during object construction: {0} (call stack: [{1}])";
+
+
+    // Maps methods to the method call stack that makes them unsafe
+    // Safe methods are mapped to an empty stack
+    // The method call stack (value of the map) is used for better messages
+    private final Map<JMethodSymbol, Deque<JMethodSymbol>> safeMethods = new HashMap<>();
+
+    private static final Deque<JMethodSymbol> EMPTY_STACK = new LinkedList<>();
+
+    private static final Set<String> MAKE_FIELD_FINAL_CLASS_ANNOT =
+        setOf(
+            "lombok.Value"
+        );
+
+    public ConstructorCallsOverridableMethodRule() {
+        super(ASTConstructorDeclaration.class);
+    }
+
+    @Override
+    public void start(RuleContext ctx) {
+        super.start(ctx);
+        safeMethods.clear();
+    }
+
+    @Override
+    public Object visit(ASTConstructorDeclaration node, Object data) {
+        if (node.getEnclosingType().isFinal() || JavaAstUtils.hasAnyAnnotation(node.getEnclosingType(), MAKE_FIELD_FINAL_CLASS_ANNOT)) {
+            return null; // then cannot be overridden
+        }
+        for (ASTMethodCall call : node.getBody().descendants(ASTMethodCall.class)) {
+            Deque<JMethodSymbol> unsafetyReason = getUnsafetyReason(call, TreePVector.empty());
+            if (!unsafetyReason.isEmpty()) {
+                JMethodSig overload = call.getOverloadSelectionInfo().getMethodType();
+                JMethodSig unsafeMethod = call.getTypeSystem().sigOf(unsafetyReason.getLast());
+                String message = unsafeMethod.equals(overload) ? MESSAGE : MESSAGE_TRANSITIVE;
+                String lastMethod = PrettyPrintingUtil.prettyPrintOverload(unsafetyReason.getLast());
+                String stack = unsafetyReason.stream().map(PrettyPrintingUtil::prettyPrintOverload).collect(Collectors.joining(", "));
+                asCtx(data).addViolationWithMessage(call, message, lastMethod, stack);
+            }
+        }
+        return null;
+    }
+
+    @NonNull
+    private Deque<JMethodSymbol> getUnsafetyReason(ASTMethodCall call, PVector<ASTMethodDeclaration> recursionGuard) {
+        if (!isCallOnThisInstance(call)) {
+            return EMPTY_STACK;
+        }
+
+        OverloadSelectionResult overload = call.getOverloadSelectionInfo();
+        if (overload.isFailed()) {
+            return EMPTY_STACK;
+        }
+
+        JMethodSymbol method = (JMethodSymbol) overload.getMethodType().getSymbol();
+        if (isOverridable(method)) {
+            Deque<JMethodSymbol> stack = new LinkedList<>();
+            stack.addFirst(method); // the method itself
+            return stack;
+        } else {
+            return getUnsafetyReason(method, recursionGuard);
+        }
+    }
+
+    @NonNull
+    private Deque<JMethodSymbol> getUnsafetyReason(JMethodSymbol method, PVector<ASTMethodDeclaration> recursionGuard) {
+        if (method.isStatic()) {
+            return EMPTY_STACK; // no access to this instance anyway
+        }
+        // we need to prove that all calls on this instance are safe
+
+        ASTMethodDeclaration declaration = method.tryGetNode();
+        if (declaration == null) {
+            return EMPTY_STACK; // no idea
+        } else if (recursionGuard.contains(declaration)) {
+            // being visited, assume body is safe
+            return EMPTY_STACK;
+        }
+
+        // note we can't use computeIfAbsent because of comodification
+        if (safeMethods.containsKey(method)) {
+            return safeMethods.get(method);
+        }
+
+        PVector<ASTMethodDeclaration> deeperRecursion = recursionGuard.plus(declaration);
+
+        for (ASTMethodCall call : NodeStream.of(declaration.getBody())
+                                            .descendants(ASTMethodCall.class)
+                                            .filter(ConstructorCallsOverridableMethodRule::isCallOnThisInstance)) {
+            Deque<JMethodSymbol> unsafetyReason = getUnsafetyReason(call, deeperRecursion);
+            if (!unsafetyReason.isEmpty()) {
+                // this method call is unsafe for some reason,
+                // body is unsafe for the same reason
+                safeMethods.putIfAbsent(method, new LinkedList<>(unsafetyReason));
+                safeMethods.get(method).addFirst(method);
+                return safeMethods.get(method);
+            }
+        }
+
+        // body is safe
+        safeMethods.remove(method);
+        return EMPTY_STACK;
+    }
+
+    private static boolean isCallOnThisInstance(ASTMethodCall call) {
+        ASTExpression qualifier = call.getQualifier();
+        return qualifier == null || JavaAstUtils.isUnqualifiedThis(qualifier);
+    }
+
+    private static boolean isOverridable(JExecutableSymbol method) {
+        // (assuming enclosing type is not final)
+        // neither final nor private nor static
+        return ((Modifier.FINAL | Modifier.PRIVATE | Modifier.STATIC) & method.getModifiers()) == 0;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:13:13
+Attempt: 2
+Error: [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpg3a4jn_v/rule.yml:
+	mapping values are not allowed here
+	  in "<file>", line 20, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: constructor-calls-overridable-method
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $CONSTRUCTOR(...) { 
+          ... 
+          $METHOD(...);
+          ... 
+        }
+      }
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: "(?i)(final|private|static)"
+      negation: true
+  - pattern-not: final class $CLASS { ... }
+  - pattern-not: |
+      @$ANN(...)
+      class $CLASS { ... }
+  message: Overridable method called during object construction: $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: security
+    subcategory:
+    - error-prone
+    cwe:
+    - "CWE-583: Finalize() Method Declared Public"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A9:2021 Security Logging and Monitoring Failures
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/583.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppw4fhsen/rule.yml:
+	mapping values are not allowed here
+	  in "<file>", line 16, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：[ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppw4fhsen/rule.yml:
+mapping values are not allowed here
+  in "<file>", line 16, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. Yaml语法错误修复：检查第16行第64列的缩进和格式，确保所有映射值正确缩进且使用正确的YAML语法（冒号后要有空格）
+2. 检查pattern结构：确保多个pattern元素作为列表项正确缩进，每个pattern前用"-"开头并正确缩进
+3. 验证正则表达式：检查metavariable-regex部分，确保regex表达式格式正确且用引号包裹
+4. 检查注释语法：确保所有注释以"#"开头且不在映射值中间
+5. 校验全局缩进：确保整个yaml文件使用一致的缩进（推荐2或4个空格）
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:13:57
+Attempt: 3
+Error: [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjnuk3wrc/rule.yml:
+	mapping values are not allowed here
+	  in "<file>", line 25, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: constructor-calls-overridable-method
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $CONSTRUCTOR(...) { 
+          ... 
+          $METHOD(...);
+          ... 
+        }
+      }
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: "(?i)(final|private|static)"
+      negation: true
+  - pattern-not: |
+      final class $CLASS { 
+        ...
+      }
+  - pattern-not: |
+      @$ANN(...)
+      class $CLASS { 
+        ...
+      }
+  message: Overridable method called during object construction: $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: security
+    subcategory:
+    - error-prone
+    cwe:
+    - "CWE-583: Finalize() Method Declared Public"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A9:2021 Security Logging and Monitoring Failures
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/583.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpg3a4jn_v/rule.yml:
+	mapping values are not allowed here
+	  in "<file>", line 20, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：[ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpg3a4jn_v/rule.yml:
+mapping values are not allowed here
+  in "<file>", line 20, column 64
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 检查第20行附近的缩进，确保metadata下的子项正确缩进（推荐2或4空格）
+2. 验证所有字符串值都使用引号包裹，特别是包含特殊字符的值
+3. 确保YAML文件中没有隐藏的特殊字符或制表符
+4. 检查pattern-not部分的注解匹配语法是否正确
+5. 确认所有元变量($CLASS, $METHOD等)使用一致
+```yaml
+rules:
+- id: constructor-calls-overridable-method
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $CONSTRUCTOR(...) { 
+          ... 
+          $METHOD(...);
+          ... 
+        }
+      }
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: "(?i)(final|private|static)"
+      negation: true
+  - pattern-not: |
+      final class $CLASS { 
+        ...
+      }
+  - pattern-not: |
+      @$ANN(...)
+      class $CLASS { 
+        ...
+      }
+  message: Overridable method called during object construction: $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: security
+    subcategory:
+    - error-prone
+    cwe:
+    - "CWE-583: Finalize() Method Declared Public"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A9:2021 Security Logging and Monitoring Failures
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/583.html
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

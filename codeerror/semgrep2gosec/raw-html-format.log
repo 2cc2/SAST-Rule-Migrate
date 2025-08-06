@@ -1,0 +1,232 @@
+Timestamp: 2025-07-23 17:30:27
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T09:30:26Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:40:75: undefined: token
+rules/GC001.go:41:7: undefined: strings
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type htmlFormat struct {
+	issue.MetaData
+	fmtCalls gosec.CallList
+	httpReq  *types.Interface
+}
+
+func (h *htmlFormat) ID() string {
+	return h.MetaData.ID
+}
+
+// Match inspects AST nodes to detect user input flowing into manually constructed HTML strings
+func (h *htmlFormat) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Check for request sources
+	if ident, ok := n.(*ast.Ident); ok {
+		if ident.Obj != nil {
+			if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+				if call, ok := assign.Rhs[0].(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "http" {
+							return c.NewIssue(n, h.ID(), h.What, h.Severity, h.Confidence), nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Check for fmt.* sink calls
+	if node := h.fmtCalls.ContainsPkgCallExpr(n, c, false); node != nil {
+		if basicLit, ok := node.Args[0].(*ast.BasicLit); ok && basicLit.Kind == token.STRING {
+			if strings.Contains(basicLit.Value, "<") {
+				return c.NewIssue(n, h.ID(), h.What, h.Severity, h.Confidence), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewHTMLFormat creates a rule to detect XSS vulnerabilities from manually constructed HTML
+func NewHTMLFormat(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("fmt", "Printf")
+	calls.Add("fmt", "Sprintf")
+	calls.Add("fmt", "Fprintf")
+
+	return &htmlFormat{
+		fmtCalls: calls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What: "Detected user input flowing into manually constructed HTML string which may cause XSS. " +
+				"Use html/template package instead. CWE-79, OWASP A07:2017/A03:2021",
+		},
+	}, []ast.Node{(*ast.Ident)(nil), (*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: raw-html-format
+  languages: [go]
+  severity: WARNING
+  message: >-
+    Detected user input flowing into a manually constructed HTML string. You may be
+    accidentally bypassing secure methods
+    of rendering HTML by manually constructing HTML and this could create a cross-site
+    scripting vulnerability, which could
+    let attackers steal sensitive user data. Use the `html/template` package which
+    will safely render HTML instead, or inspect
+    that the HTML is rendered safely.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    category: security
+    technology:
+    - go
+    references:
+    - https://blogtitle.github.io/robn-go-security-pearls-cross-site-scripting-xss/
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          ($REQUEST : *http.Request).$ANYTHING
+      - pattern: |
+          ($REQUEST : http.Request).$ANYTHING
+    - metavariable-regex:
+        metavariable: $ANYTHING
+        regex: ^(BasicAuth|Body|Cookie|Cookies|Form|FormValue|GetBody|Host|MultipartReader|ParseForm|ParseMultipartForm|PostForm|PostFormValue|Referer|RequestURI|Trailer|TransferEncoding|UserAgent|URL)$
+  pattern-sanitizers:
+  - pattern: html.EscapeString(...)
+  pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: fmt.Printf("$HTMLSTR", ...)
+      - pattern: fmt.Sprintf("$HTMLSTR", ...)
+      - pattern: fmt.Fprintf($W, "$HTMLSTR", ...)
+      - pattern: '"$HTMLSTR" + ...'
+    - metavariable-pattern:
+        metavariable: $HTMLSTR
+        language: generic
+        pattern: <$TAG ...
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,1476 @@
+Timestamp: 2025-07-23 15:31:26
+Attempt: 1
+Error: make failed with error: Command '['make']' returned non-zero exit status 2.
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if callExpr, ok := n.(*ast.CallExpr); ok {
+		if selector, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+			// Check for websocket.Upgrader.Upgrade call
+			if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" && selector.Sel.Name == "Upgrade" {
+				// Check if CheckOrigin is set in struct initialization
+				if r.checkStructInitialization(c) && r.checkFieldAssignment(c) {
+					return nil, nil
+				}
+				return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (r *websocketOriginCheckRule) checkStructInitialization(c *gosec.Context) bool {
+	for _, file := range c.PkgFiles {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if compLit, ok := n.(*ast.CompositeLit); ok {
+				if ident, ok := compLit.Type.(*ast.Ident); ok && ident.Name == "Upgrader" {
+					for _, elt := range compLit.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "CheckOrigin" {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	return false
+}
+
+func (r *websocketOriginCheckRule) checkFieldAssignment(c *gosec.Context) bool {
+	for _, file := range c.PkgFiles {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if assign, ok := n.(*ast.AssignStmt); ok {
+				for i, rhs := range assign.Rhs {
+					if selector, ok := assign.Lhs[i].(*ast.SelectorExpr); ok {
+						if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" {
+							if selector.Sel.Name == "CheckOrigin" {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	return false
+}
+
+func NewWebSocketOriginCheckRule(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "The Origin header in the HTTP WebSocket handshake is used to guarantee that the connection accepted by the WebSocket is from a trusted origin domain. Failure to enforce can lead to Cross Site Request Forgery (CSRF).",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Cwe:        issue.CweList{"352"},
+			Metadata: map[string]interface{}{
+				"category":      "security",
+				"owasp":         "A01:2021 - Broken Access Control",
+				"cwe2022-top25": true,
+				"cwe2021-top25": true,
+				"technology":    "gorilla",
+				"references":    []string{"https://pkg.go.dev/github.com/gorilla/websocket#Upgrader"},
+			},
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: websocket-missing-origin-check
+  patterns:
+  - pattern-inside: |
+      import ("github.com/gorilla/websocket")
+      ...
+  - patterns:
+    - pattern-not-inside: |
+        $UPGRADER = websocket.Upgrader{..., CheckOrigin: $FN ,...}
+        ...
+    - pattern-not-inside: |
+        $UPGRADER.CheckOrigin = $FN2
+        ...
+    - pattern: |
+        $UPGRADER.Upgrade(...)
+  message: >-
+    The Origin header in the HTTP WebSocket handshake is used to guarantee that the
+    connection accepted by the WebSocket is from a trusted origin domain. Failure to enforce can
+    lead to Cross Site Request Forgery (CSRF). As per "gorilla/websocket" documentation: "A CheckOrigin function
+    should carefully validate the request origin to prevent cross-site request forgery."
+  languages: [go]
+  severity: WARNING
+  metadata:
+    category: security
+    cwe:
+    - 'CWE-352: Cross-Site Request Forgery (CSRF)'
+    owasp:
+    - A01:2021 - Broken Access Control
+    references:
+    - https://pkg.go.dev/github.com/gorilla/websocket#Upgrader
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+            </origin_rule>
+            <example>
+            package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type newFuncRule struct {
+	issue.MetaData
+}
+
+func (r *newFuncRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *newFuncRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// 目标是匹配函数定义
+	if fn, ok := n.(*ast.FuncDecl); ok {
+		if fn.Name != nil && strings.HasPrefix(fn.Name.Name, "New") {
+			return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func NewFuncStartsWithnew(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &newFuncRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Function name starts with 'New', may indicate factory pattern.",
+			Severity:   issue.Low,
+			Confidence: issue.Medium,
+		},
+	}, []ast.Node{(*ast.FuncDecl)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:32:08
+Attempt: 2
+Error: make failed with error: Command '['make']' returned non-zero exit status 2.
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if callExpr, ok := n.(*ast.CallExpr); ok {
+		if selector, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" && selector.Sel.Name == "Upgrade" {
+				// Check for CheckOrigin field in Upgrader initialization
+				if !r.checkStructInitialization(c) {
+					return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (r *websocketOriginCheckRule) checkStructInitialization(c *gosec.Context) bool {
+	for _, file := range c.PkgFiles {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if compLit, ok := n.(*ast.CompositeLit); ok {
+				if ident, ok := compLit.Type.(*ast.Ident); ok && ident.Name == "Upgrader" {
+					for _, elt := range compLit.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "CheckOrigin" {
+								return true
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	return false
+}
+
+func NewWebSocketOriginCheckRule(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Missing Origin check in WebSocket Upgrader",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Cwe:        issue.GetCweByID("352"),
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error: Command '['make']' returned non-zero exit status 2.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error: Command '['make']' returned non-zero exit status 2.，请按照以下步骤进行修复：
+
+1. 检查规则中的import语句是否存在问题，确保gosec/v2路径是正确的Go模块路径
+2. 验证规则结构是否符合Gosec要求，在NewXYZRule函数中需要返回有效的Rule接口实现和支持的节点类型
+3. 检查issue.MetaData中的字段是否完整且符合Gosec最新的结构定义
+4. 确保Metadata字段使用了正确的类型，在Gosec中使用的是issue.MetaData而不是直接map[string]interface{}
+5. 修复潜在的nil指针引用问题，特别是在ast节点类型断言时
+6. 检查Makefile中是否正确定义了构建目标和依赖关系
+7. 确认规则测试文件存在且包含适当的测试用例
+8. 运行go vet和go build命令检查其他潜在编译问题
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:32:57
+Attempt: 3
+Error: make failed with error: Command '['make']' returned non-zero exit status 2.
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+// websocketOriginCheckRule checks for missing Origin check in WebSocket Upgrader
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if callExpr, ok := n.(*ast.CallExpr); ok {
+		if selector, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" && selector.Sel.Name == "Upgrade" {
+				found := false
+				for _, file := range c.PkgFiles {
+					ast.Inspect(file, func(node ast.Node) bool {
+						if compLit, ok := node.(*ast.CompositeLit); ok {
+							if ident, ok := compLit.Type.(*ast.Ident); ok && ident.Name == "Upgrader" {
+								for _, elt := range compLit.Elts {
+									if kv, ok := elt.(*ast.KeyValueExpr); ok {
+										if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "CheckOrigin" {
+											found = true
+											return false
+										}
+									}
+								}
+							}
+						}
+						return true
+					})
+				}
+				if !found {
+					return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewWebSocketOriginCheckRule creates a rule to detect missing WebSocket Origin checks
+func NewWebSocketOriginCheckRule(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Missing Origin check in WebSocket Upgrader. This can lead to Cross-Site WebSocket Hijacking (CSWSH) vulnerabilities",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Cwe:        issue.GetCweByID("352"),
+			Metadata: map[string]interface{}{
+				"category":   "security",
+				"owasp":      "A01:2021-Broken Access Control",
+				"references": []string{"https://pkg.go.dev/github.com/gorilla/websocket#Upgrader"},
+			},
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error: Command '['make']' returned non-zero exit status 2.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error: Command '['make']' returned non-zero exit status 2.，请按照以下步骤进行修复：
+
+1. 验证import路径是否正确，确保使用的gosec/v2是最新版本
+2. 检查MetaData字段初始化是否完整，补充缺失的OWASP和参考文献信息
+3. 使用issue.GetCweByID()替代直接字符串赋值来设置CWE ID
+4. 简化检查逻辑，移除可能导致nil指针引用的复杂条件判断
+5. 确认Makefile中build标签和依赖项配置正确
+6. 确保规则ID在全局唯一且符合命名规范
+7. 检查返回的ast.Node类型是否正确匹配规则检查目标
+8. 添加规则注释说明并格式化代码符合gosec标准
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:36:46
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:36:46Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "strings" imported and not used
+rules/GC001.go:40:29: c.PkgScope undefined (type *gosec.Context has no field or method PkgScope)
+rules/GC001.go:68:4: unknown field Cwe in struct literal of type issue.MetaData
+rules/GC001.go:68:22: undefined: issue.GetCweByID
+rules/GC001.go:69:4: unknown field Metadata in struct literal of type issue.MetaData
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if call, ok := n.(*ast.CallExpr); ok {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "UPGRADER" {
+				if sel.Sel.Name == "Upgrade" {
+					// Check if UPGRADER has CheckOrigin field set
+					obj := ident.Obj
+					if obj != nil {
+						if decl, ok := obj.Decl.(*ast.AssignStmt); ok {
+							for _, rh := range decl.Rhs {
+								if comp, ok := rh.(*ast.CompositeLit); ok {
+									for _, elt := range comp.Elts {
+										if kv, ok := elt.(*ast.KeyValueExpr); ok && kv.Key.(*ast.Ident).Name == "CheckOrigin" {
+											return nil, nil
+										}
+									}
+								}
+							}
+						}
+					}
+					// Check if CheckOrigin is set later
+					for _, stmt := range c.PkgScope.Decls {
+						if fn, ok := stmt.(*ast.FuncDecl); ok {
+							for _, stmt := range fn.Body.List {
+								if assign, ok := stmt.(*ast.AssignStmt); ok {
+									if sel, ok := assign.Lhs[0].(*ast.SelectorExpr); ok {
+										if x, ok := sel.X.(*ast.Ident); ok && x.Name == "UPGRADER" && sel.Sel.Name == "CheckOrigin" {
+											return nil, nil
+										}
+									}
+								}
+							}
+						}
+					}
+					return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewWebsocketMissingOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "The Origin header in the HTTP WebSocket handshake should be checked to prevent CSRF attacks",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Cwe:        issue.GetCweByID("352"),
+			Metadata: map[string]interface{}{
+				"category":    "security",
+				"owasp":       "A01:2021 - Broken Access Control",
+				"references":  []string{"https://pkg.go.dev/github.com/gorilla/websocket#Upgrader"},
+				"technology":  []string{"gorilla"},
+				"subcategory": "audit",
+			},
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: websocket-missing-origin-check
+  patterns:
+  - pattern-inside: |
+      import ("github.com/gorilla/websocket")
+      ...
+  - patterns:
+    - pattern-not-inside: |
+        $UPGRADER = websocket.Upgrader{..., CheckOrigin: $FN ,...}
+        ...
+    - pattern-not-inside: |
+        $UPGRADER.CheckOrigin = $FN2
+        ...
+    - pattern: |
+        $UPGRADER.Upgrade(...)
+  message: >-
+    The Origin header in the HTTP WebSocket handshake is used to guarantee that the
+    connection accepted by the WebSocket is from a trusted origin domain. Failure to enforce can
+    lead to Cross Site Request Forgery (CSRF). As per "gorilla/websocket" documentation: "A CheckOrigin function
+    should carefully validate the request origin to prevent cross-site request forgery."
+  languages: [go]
+  severity: WARNING
+  metadata:
+    category: security
+    cwe:
+    - 'CWE-352: Cross-Site Request Forgery (CSRF)'
+    owasp:
+    - A01:2021 - Broken Access Control
+    references:
+    - https://pkg.go.dev/github.com/gorilla/websocket#Upgrader
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+            </origin_rule>
+            <example>
+            package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type newFuncRule struct {
+	issue.MetaData
+}
+
+func (r *newFuncRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *newFuncRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// 目标是匹配函数定义
+	if fn, ok := n.(*ast.FuncDecl); ok {
+		if fn.Name != nil && strings.HasPrefix(fn.Name.Name, "New") {
+			return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func NewFuncStartsWithnew(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &newFuncRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Function name starts with 'New', may indicate factory pattern.",
+			Severity:   issue.Low,
+			Confidence: issue.Medium,
+		},
+	}, []ast.Node{(*ast.FuncDecl)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:43:20
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:43:20Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:40:22: c.PkgInfo undefined (type *gosec.Context has no field or method PkgInfo)
+rules/GC001.go:82:4: unknown field Metadata in struct literal of type issue.MetaData
+rules/GC001.go:82:20: undefined: issue.Metadata
+rules/GC001.go:83:24: undefined: issue.GetCweByID
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// 检查是否调用Upgrade方法
+	callExpr, ok := n.(*ast.CallExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	// 检查是否为websocket.Upgrader的Upgrade方法
+	selector, ok := callExpr.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	if ident, ok := selector.X.(*ast.Ident); !ok || ident.Name != "Upgrader" {
+		return nil, nil
+	}
+
+	if selector.Sel.Name != "Upgrade" {
+		return nil, nil
+	}
+
+	// 检查是否有CheckOrigin设置
+	for _, f := range c.PkgInfo.Pkg.Files {
+		ast.Inspect(f, func(node ast.Node) bool {
+			// 检查Upgrader结构体中是否有CheckOrigin字段
+			if compLit, ok := node.(*ast.CompositeLit); ok {
+				if typeIdent, ok := compLit.Type.(*ast.Ident); ok && typeIdent.Name == "Upgrader" {
+					for _, elt := range compLit.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							if ident, ok := kv.Key.(*ast.Ident); ok && ident.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+
+			// 检查是否有单独设置CheckOrigin
+			if assign, ok := node.(*ast.AssignStmt); ok {
+				for _, expr := range assign.Lhs {
+					if selector, ok := expr.(*ast.SelectorExpr); ok {
+						if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" {
+							if selector.Sel.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	// 如果到这里说明没有CheckOrigin设置
+	return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+}
+
+func NewWebsocketMissingOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "The Origin header in the HTTP WebSocket handshake should be checked to prevent CSRF attacks",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Metadata: issue.Metadata{
+				Cwe:         issue.GetCweByID("352"),
+				Category:    "security",
+				Technology:  "gorilla/websocket",
+				Likelihood:  issue.Low,
+				Impact:      issue.Low,
+			},
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: websocket-missing-origin-check
+  patterns:
+  - pattern-inside: |
+      import ("github.com/gorilla/websocket")
+      ...
+  - patterns:
+    - pattern-not-inside: |
+        $UPGRADER = websocket.Upgrader{..., CheckOrigin: $FN ,...}
+        ...
+    - pattern-not-inside: |
+        $UPGRADER.CheckOrigin = $FN2
+        ...
+    - pattern: |
+        $UPGRADER.Upgrade(...)
+  message: >-
+    The Origin header in the HTTP WebSocket handshake is used to guarantee that the
+    connection accepted by the WebSocket is from a trusted origin domain. Failure to enforce can
+    lead to Cross Site Request Forgery (CSRF). As per "gorilla/websocket" documentation: "A CheckOrigin function
+    should carefully validate the request origin to prevent cross-site request forgery."
+  languages: [go]
+  severity: WARNING
+  metadata:
+    category: security
+    cwe:
+    - 'CWE-352: Cross-Site Request Forgery (CSRF)'
+    owasp:
+    - A01:2021 - Broken Access Control
+    references:
+    - https://pkg.go.dev/github.com/gorilla/websocket#Upgrader
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+            </origin_rule>
+            <example>
+            package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type newFuncRule struct {
+	issue.MetaData
+}
+
+func (r *newFuncRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *newFuncRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// 目标是匹配函数定义
+	if fn, ok := n.(*ast.FuncDecl); ok {
+		if fn.Name != nil && strings.HasPrefix(fn.Name.Name, "New") {
+			return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func NewFuncStartsWithnew(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &newFuncRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "Function name starts with 'New', may indicate factory pattern.",
+			Severity:   issue.Low,
+			Confidence: issue.Medium,
+		},
+	}, []ast.Node{(*ast.FuncDecl)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:44:09
+Attempt: 2
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:44:09Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:37:26: c.Pkg.Syntax undefined (type *types.Package has no field or method Syntax)
+rules/GC001.go:76:4: unknown field Cwe in struct literal of type issue.MetaData
+rules/GC001.go:77:4: unknown field Category in struct literal of type issue.MetaData
+rules/GC001.go:78:4: unknown field Technology in struct literal of type issue.MetaData
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	callExpr, ok := n.(*ast.CallExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	selector, ok := callExpr.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	if ident, ok := selector.X.(*ast.Ident); !ok || ident.Name != "Upgrader" {
+		return nil, nil
+	}
+
+	if selector.Sel.Name != "Upgrade" {
+		return nil, nil
+	}
+
+	for _, f := range c.Pkg.Syntax {
+		ast.Inspect(f, func(node ast.Node) bool {
+			if compLit, ok := node.(*ast.CompositeLit); ok {
+				if typeIdent, ok := compLit.Type.(*ast.Ident); ok && typeIdent.Name == "Upgrader" {
+					for _, elt := range compLit.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							if ident, ok := kv.Key.(*ast.Ident); ok && ident.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+
+			if assign, ok := node.(*ast.AssignStmt); ok {
+				for _, expr := range assign.Lhs {
+					if selector, ok := expr.(*ast.SelectorExpr); ok {
+						if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" {
+							if selector.Sel.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+}
+
+func NewWebsocketMissingOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "The Origin header in the HTTP WebSocket handshake should be checked to prevent CSRF attacks",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Cwe:        "CWE-352",
+			Category:   "security",
+			Technology: "gorilla/websocket",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:43:20Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:40:22: c.PkgInfo undefined (type *gosec.Context has no field or method PkgInfo)
+rules/GC001.go:82:4: unknown field Metadata in struct literal of type issue.MetaData
+rules/GC001.go:82:20: undefined: issue.Metadata
+rules/GC001.go:83:24: undefined: issue.GetCweByID
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:43:20Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:40:22: c.PkgInfo undefined (type *gosec.Context has no field or method PkgInfo)
+rules/GC001.go:82:4: unknown field Metadata in struct literal of type issue.MetaData
+rules/GC001.go:82:20: undefined: issue.Metadata
+rules/GC001.go:83:24: undefined: issue.GetCweByID
+make[1]: *** [build] Error 1
+make: *** [default] Error 2，请按照以下步骤进行修复：
+
+1. 对于c.PkgInfo未定义问题：在Gosec中应该使用c.Pkg而不是c.PkgInfo来访问包信息，修改Match方法中的检查逻辑，使用正确的包访问方式。
+
+2. 对于Metadata字段问题：MetaData结构体中没有Metadata字段，应该将CWE等信息直接设置在MetaData结构体上对应的字段中，而不是通过Metadata嵌套结构。
+
+3. 对于GetCweByID未定义问题：Gosec中应该直接使用字符串形式的CWE ID，而不是调用GetCweByID函数。将issue.GetCweByID("352")改为"CWE-352"字符串。
+
+4. 修改后的MetaData初始化应该直接设置CWE等字段，而不是通过嵌套的Metadata结构。正确的字段包括：Cwe、Category、Technology等。
+
+5. 确保规则返回的类型列表正确，在此规则中应该返回[]ast.Node{(*ast.CallExpr)(nil)}以匹配websocket Upgrade调用。
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:45:16
+Attempt: 3
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:45:16Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:40:25: c.Filelist undefined (type *gosec.Context has no field or method Filelist)
+rules/GC001.go:84:4: unknown field Metadata in struct literal of type issue.MetaData
+rules/GC001.go:84:20: undefined: issue.Metadata
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheckRule struct {
+	issue.MetaData
+}
+
+func (r *websocketOriginCheckRule) ID() string {
+	return r.MetaData.ID
+}
+
+func (r *websocketOriginCheckRule) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	callExpr, ok := n.(*ast.CallExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	selector, ok := callExpr.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, nil
+	}
+
+	if ident, ok := selector.X.(*ast.Ident); !ok || ident.Name != "Upgrader" {
+		return nil, nil
+	}
+
+	if selector.Sel.Name != "Upgrade" {
+		return nil, nil
+	}
+
+	fset := token.NewFileSet()
+	for _, file := range c.Filelist {
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			continue
+		}
+
+		ast.Inspect(f, func(node ast.Node) bool {
+			if compLit, ok := node.(*ast.CompositeLit); ok {
+				if typeIdent, ok := compLit.Type.(*ast.Ident); ok && typeIdent.Name == "Upgrader" {
+					for _, elt := range compLit.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							if ident, ok := kv.Key.(*ast.Ident); ok && ident.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+
+			if assign, ok := node.(*ast.AssignStmt); ok {
+				for _, expr := range assign.Lhs {
+					if selector, ok := expr.(*ast.SelectorExpr); ok {
+						if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == "Upgrader" {
+							if selector.Sel.Name == "CheckOrigin" {
+								return false
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	return c.NewIssue(n, r.ID(), r.What, r.Severity, r.Confidence), nil
+}
+
+func NewWebsocketMissingOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	return &websocketOriginCheckRule{
+		MetaData: issue.MetaData{
+			ID:         id,
+			What:       "The Origin header in the HTTP WebSocket handshake should be checked to prevent CSRF attacks",
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			Metadata: issue.Metadata{
+				Cwe:       "CWE-352",
+				Category:  "security",
+				Techology: "gorilla/websocket",
+			},
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:44:09Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:37:26: c.Pkg.Syntax undefined (type *types.Package has no field or method Syntax)
+rules/GC001.go:76:4: unknown field Cwe in struct literal of type issue.MetaData
+rules/GC001.go:77:4: unknown field Category in struct literal of type issue.MetaData
+rules/GC001.go:78:4: unknown field Technology in struct literal of type issue.MetaData
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:44:09Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:37:26: c.Pkg.Syntax undefined (type *types.Package has no field or method Syntax)
+rules/GC001.go:76:4: unknown field Cwe in struct literal of type issue.MetaData
+rules/GC001.go:77:4: unknown field Category in struct literal of type issue.MetaData
+rules/GC001.go:78:4: unknown field Technology in struct literal of type issue.MetaData
+make[1]: *** [build] Error 1
+make: *** [default] Error 2，请按照以下步骤进行修复：
+
+1. 对于c.Pkg.Syntax未定义问题：在Gosec中应该使用c.FileSet来获取文件集的信息，而不是直接访问c.Pkg.Syntax。修改检查逻辑，使用ast.NewPackage和c.FileSet来解析包文件。
+
+2. 对于MetaData字段问题：将Cwe、Category和Technology等信息移动到Metadata嵌套结构中，这是Gosec v2的正确用法。这些字段应该放在Metadata字段内。
+
+3. 确保正确导入所有需要的包，包括"go/types"和"go/parser"，用于解析Go代码。
+
+4. 修改后的MetaData初始化应该使用嵌套的Metadata结构体来设置Cwe等信息，而不是直接设置在顶层。
+
+5. 检查规则的其他部分是否仍然符合Gosec v2的API规范，特别是对于节点类型匹配和问题报告的部分。
+
+【修改策略】
+
+1. 将文件解析逻辑改为使用c.FileSet和parser.ParseFile
+2. 重组MetaData结构，将分类信息放入Metadata字段
+3. 更新导入语句包含必要的包
+4. 保留核心检测逻辑不变，只调整API调用方式
+5. 保持相同的检测标准和消息内容
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:46:16
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:46:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:30:58: cannot use c (variable of type *gosec.Context) as string value in argument to w.upgraderCall.Contains
+rules/GC001.go:30:64: invalid operation: w.upgraderCall.Contains(sel.Name + ".CheckOrigin", c) == nil (mismatched types bool and untyped nil)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheck struct {
+	issue.MetaData
+	upgraderCall gosec.CallList
+	assignCheck  gosec.CallList
+}
+
+func (w *websocketOriginCheck) ID() string {
+	return w.MetaData.ID
+}
+
+func (w *websocketOriginCheck) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if _, ok := n.(*ast.ImportSpec); ok {
+		return nil, nil
+	}
+
+	if assign, ok := n.(*ast.AssignStmt); ok {
+		for _, expr := range assign.Lhs {
+			if selector, ok := expr.(*ast.SelectorExpr); ok {
+				if sel, ok := selector.X.(*ast.Ident); ok {
+					if w.upgraderCall.Contains(sel.Name+".CheckOrigin", c) == nil {
+						return c.NewIssue(n, w.ID(), w.What, w.Severity, w.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+
+	if node := w.upgraderCall.ContainsPkgCallExpr(n, c, false); node != nil {
+		hasCheckOrigin := checksForOriginCheck(node, c)
+
+		if !hasCheckOrigin {
+			return c.NewIssue(n, w.ID(), w.What, w.Severity, w.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func checksForOriginCheck(node ast.Node, c *gosec.Context) bool {
+	if compLit, ok := node.(*ast.CompositeLit); ok {
+		for _, elt := range compLit.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				if ident, ok := kv.Key.(*ast.Ident); ok && ident.Name == "CheckOrigin" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func NewWebsocketOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	upgraderCall := gosec.NewCallList()
+	upgraderCall.Add("github.com/gorilla/websocket", "Upgrader.Upgrade")
+
+	return &websocketOriginCheck{
+		upgraderCall: upgraderCall,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "Potential CSRF vulnerability in websocket upgrade - missing Origin header check",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil), (*ast.AssignStmt)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: websocket-missing-origin-check
+  patterns:
+  - pattern-inside: |
+      import ("github.com/gorilla/websocket")
+      ...
+  - patterns:
+    - pattern-not-inside: |
+        $UPGRADER = websocket.Upgrader{..., CheckOrigin: $FN ,...}
+        ...
+    - pattern-not-inside: |
+        $UPGRADER.CheckOrigin = $FN2
+        ...
+    - pattern: |
+        $UPGRADER.Upgrade(...)
+  message: >-
+    The Origin header in the HTTP WebSocket handshake is used to guarantee that the
+    connection accepted by the WebSocket is from a trusted origin domain. Failure to enforce can
+    lead to Cross Site Request Forgery (CSRF). As per "gorilla/websocket" documentation: "A CheckOrigin function
+    should carefully validate the request origin to prevent cross-site request forgery."
+  languages: [go]
+  severity: WARNING
+  metadata:
+    category: security
+    cwe:
+    - 'CWE-352: Cross-Site Request Forgery (CSRF)'
+    owasp:
+    - A01:2021 - Broken Access Control
+    references:
+    - https://pkg.go.dev/github.com/gorilla/websocket#Upgrader
+    technology:
+    - gorilla
+    confidence: MEDIUM
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+            </origin_rule>
+            <example>
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 15:47:14
+Attempt: 2
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:47:14Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:33:56: cannot use c (variable of type *gosec.Context) as string value in argument to w.assignCheck.Contains
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type websocketOriginCheck struct {
+	issue.MetaData
+	upgradeCall gosec.CallList
+	initCheck   gosec.CallList
+	assignCheck gosec.CallList
+}
+
+func (w *websocketOriginCheck) ID() string {
+	return w.MetaData.ID
+}
+
+func (w *websocketOriginCheck) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	switch node := n.(type) {
+	case *ast.CompositeLit:
+		if w.initCheck.ContainsPkgCallExpr(node, c, false) != nil {
+			if !checksForOriginCheck(node) {
+				return c.NewIssue(n, w.ID(), w.What, w.Severity, w.Confidence), nil
+			}
+		}
+	case *ast.AssignStmt:
+		for _, expr := range node.Lhs {
+			if selector, ok := expr.(*ast.SelectorExpr); ok {
+				if ident, ok := selector.X.(*ast.Ident); ok &&
+					w.assignCheck.Contains(ident.Name+".CheckOrigin", c) {
+					return nil, nil
+				}
+			}
+		}
+	case *ast.CallExpr:
+		if w.upgradeCall.ContainsPkgCallExpr(node, c, false) != nil {
+			return c.NewIssue(n, w.ID(), w.What, w.Severity, w.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func checksForOriginCheck(node *ast.CompositeLit) bool {
+	for _, elt := range node.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			if ident, ok := kv.Key.(*ast.Ident); ok && ident.Name == "CheckOrigin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func NewWebsocketOriginCheck(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	upgradeCall := gosec.NewCallList()
+	upgradeCall.Add("github.com/gorilla/websocket", "Upgrader.Upgrade")
+
+	initCheck := gosec.NewCallList()
+	initCheck.Add("github.com/gorilla/websocket", "Upgrader")
+
+	assignCheck := gosec.NewCallList()
+	assignCheck.Add("github.com/gorilla/websocket", "Upgrader.CheckOrigin")
+
+	return &websocketOriginCheck{
+		upgradeCall: upgradeCall,
+		initCheck:   initCheck,
+		assignCheck: assignCheck,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Medium,
+			What:       "Potential CSRF vulnerability in websocket upgrade - missing Origin header check",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil), (*ast.CompositeLit)(nil), (*ast.AssignStmt)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:46:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:30:58: cannot use c (variable of type *gosec.Context) as string value in argument to w.upgraderCall.Contains
+rules/GC001.go:30:64: invalid operation: w.upgraderCall.Contains(sel.Name + ".CheckOrigin", c) == nil (mismatched types bool and untyped nil)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T07:46:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:30:58: cannot use c (variable of type *gosec.Context) as string value in argument to w.upgraderCall.Contains
+rules/GC001.go:30:64: invalid operation: w.upgraderCall.Contains(sel.Name + ".CheckOrigin", c) == nil (mismatched types bool and untyped nil)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2，请按照以下步骤进行修复：
+
+1. 删除未使用的"go/types"导入：移除代码中导入列表中未使用的"go/types"包
+2. 修改错误的CallList使用方法：
+   - 将w.upgraderCall.Contains()改为w.upgraderCall.ContainsPkgCallExpr()
+   - 添加相应的包路径参数来处理CheckOrigin字段的检查
+   - 创建单独的CallList实例来检查CheckOrigin赋值语句
+3. 修复逻辑判断错误：
+   - 将nil比较改为布尔值判断
+   - 使用正确的方法签名来匹配Gosec的CallList API
+4. 改进检查逻辑：
+   - 显式添加对websocket.Upgrader结构体中CheckOrigin字段的校验
+   - 正确处理赋值语句中对CheckOrigin字段的赋值检测
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,1732 @@
+Timestamp: 2025-07-22 16:12:07
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp_mnp19ax/rule.yml:2
+2  | - id: singular-field
+3  |   message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+4  |   pattern: |
+5  |     @$X ...
+6  |     private $TYPE $FIELD;
+7  |     ...
+8  |   patterns:
+9  |     - pattern-not: |
+10 |         @... lombok.Setter ...
+11 |     - pattern-not: |
+12 |         @... lombok.Getter ...
+13 |     - pattern-not: |
+14 |         @... java.lang.Deprecated ...
+15 |     - pattern-not: |
+16 |         @... lombok.experimental.Delegate ...
+17 |     - pattern-not: |
+18 |         @... javafx.fxml.FXML ...
+19 |     - pattern-not: |
+20 |         @... lombok.Builder ...
+21 |     - pattern-not: |
+22 |         @... lombok.EqualsAndHashCode ...
+23 |     - pattern-not: |
+24 |         @... lombok.Data ...
+25 |     - pattern-not: |
+26 |         @... lombok.Value ...
+27 |     - pattern-not: final
+28 |     - pattern-not: static
+29 |   languages:
+30 |     - java
+31 |   severity: WARNING
+32 |   metadata:
+33 |     category: design
+34 |     cwe:
+35 |       - "CWE-563: Assignment to Variable without Use"
+36 |     references:
+37 |       - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: singular-field
+  message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+  pattern: |
+    @$X ...
+    private $TYPE $FIELD;
+    ...
+  patterns:
+    - pattern-not: |
+        @... lombok.Setter ...
+    - pattern-not: |
+        @... lombok.Getter ...
+    - pattern-not: |
+        @... java.lang.Deprecated ...
+    - pattern-not: |
+        @... lombok.experimental.Delegate ...
+    - pattern-not: |
+        @... javafx.fxml.FXML ...
+    - pattern-not: |
+        @... lombok.Builder ...
+    - pattern-not: |
+        @... lombok.EqualsAndHashCode ...
+    - pattern-not: |
+        @... lombok.Data ...
+    - pattern-not: |
+        @... lombok.Value ...
+    - pattern-not: final
+    - pattern-not: static
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe:
+      - "CWE-563: Assignment to Variable without Use"
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTBodyDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFieldDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTInitializer;
+import net.sourceforge.pmd.lang.java.ast.ASTLambdaExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.DataflowResult;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.ReachingDefinitionSet;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaPropertyUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+/**
+ * A singular field is a field that may be converted to a local variable.
+ * This means, that in every method the field is used, there is no path
+ * that uses the value that the field has before the method is called.
+ * In other words, the field is overwritten before any read.
+ *
+ * @author Eric Olander
+ * @author Wouter Zelle
+ * @author Clément Fournier
+ * @since Created on April 17, 2005, 9:49 PM
+ */
+public class SingularFieldRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> INVALIDATING_CLASS_ANNOT = setOf(
+        "lombok.Builder",
+        "lombok.EqualsAndHashCode",
+        "lombok.Getter",
+        "lombok.Setter",
+        "lombok.Data",
+        "lombok.Value"
+    );
+
+    private static final PropertyDescriptor<List<String>> IGNORED_FIELD_ANNOTATIONS =
+        JavaPropertyUtil.ignoredAnnotationsDescriptor(
+            "lombok.Setter",
+            "lombok.Getter",
+            "java.lang.Deprecated",
+            "lombok.experimental.Delegate",
+            "javafx.fxml.FXML"
+        );
+
+    public SingularFieldRule() {
+        super(ASTTypeDeclaration.class);
+        definePropertyDescriptor(IGNORED_FIELD_ANNOTATIONS);
+    }
+
+    @Override
+    public Object visitJavaNode(JavaNode node, Object data) {
+        ASTTypeDeclaration enclosingType = (ASTTypeDeclaration) node;
+        if (JavaAstUtils.hasAnyAnnotation(enclosingType, INVALIDATING_CLASS_ANNOT)) {
+            return null;
+        }
+
+        DataflowResult dataflow = null;
+        for (ASTFieldDeclaration fieldDecl : enclosingType.getDeclarations(ASTFieldDeclaration.class)) {
+            if (!isPrivateNotFinal(fieldDecl)
+                || JavaAstUtils.hasAnyAnnotation(fieldDecl, getProperty(IGNORED_FIELD_ANNOTATIONS))) {
+                continue;
+            }
+            for (ASTVariableId varId : fieldDecl.getVarIds()) {
+                if (dataflow == null) { //compute lazily
+                    dataflow = DataflowPass.getDataflowResult(node.getRoot());
+                }
+                if (isSingularField(enclosingType, varId, dataflow)) {
+                    asCtx(data).addViolation(varId, varId.getName());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * This method is only relevant for this rule. It will be removed in the future.
+     *
+     * @deprecated This method will be removed. Don't use it.
+     */
+    @Deprecated //(since = "7.1.0", forRemoval = true)
+    public static boolean mayBeSingular(ModifierOwner varId) {
+        return isPrivateNotFinal(varId);
+    }
+
+    private static boolean isPrivateNotFinal(ModifierOwner varId) {
+        return varId.getEffectiveVisibility().isAtMost(Visibility.V_PRIVATE)
+                // We ignore final variables for a reason:
+                // - if they're static they are there to share a value and that is not a mistake
+                // - if they're not static then if this rule matches, then so does FinalFieldCouldBeStatic,
+                // and that rule has the better fix.
+                && !varId.hasModifiers(JModifier.FINAL);
+    }
+
+    private boolean isSingularField(ASTTypeDeclaration fieldOwner, ASTVariableId varId, DataflowResult dataflow) {
+        if (JavaAstUtils.isNeverUsed(varId)) {
+            return false; // don't report unused field
+        }
+
+        boolean isStaticField = varId.isStatic();
+        //Check usages for validity & group them by scope
+        //They're valid if they don't escape the scope of their method, eg by being in a nested class or lambda
+        Map<ASTBodyDeclaration, List<ASTNamedReferenceExpr>> usagesByScope = new HashMap<>();
+        for (ASTNamedReferenceExpr usage : varId.getLocalUsages()) {
+            if (usage.getEnclosingType() != fieldOwner
+                || !isStaticField && !JavaAstUtils.isThisFieldAccess(usage)) {
+                return false; // give up
+            }
+            ASTBodyDeclaration enclosing = getEnclosingBodyDecl(fieldOwner, usage);
+            if (hasEnclosingLambda(enclosing, usage)) {
+                return false;
+            }
+            usagesByScope.computeIfAbsent(enclosing, k -> new ArrayList<>()).add(usage);
+        }
+
+        // the field is singular if it is used as a local var in every method.
+        for (ASTBodyDeclaration method : usagesByScope.keySet()) {
+            if (method != null && usagesObserveValueBeforeMethodCall(usagesByScope.get(method), dataflow)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private @Nullable ASTBodyDeclaration getEnclosingBodyDecl(ASTTypeDeclaration enclosingType, ASTNamedReferenceExpr usage) {
+        ASTBodyDeclaration decl = usage.ancestors()
+                                       .takeWhile(it -> it != enclosingType)
+                                       .first(ASTBodyDeclaration.class);
+        if (decl instanceof ASTFieldDeclaration
+            || decl instanceof ASTInitializer) {
+            // then the usage is logically part of the ctors.
+            return enclosingType;
+        }
+        return decl;
+    }
+
+    private boolean hasEnclosingLambda(JavaNode stop, ASTNamedReferenceExpr usage) {
+        return usage.ancestors()
+                    .takeWhile(it -> it != stop)
+                    .any(it -> it instanceof ASTLambdaExpression);
+    }
+
+    private boolean usagesObserveValueBeforeMethodCall(List<ASTNamedReferenceExpr> usages, DataflowResult dataflow) {
+        for (ASTNamedReferenceExpr usage : usages) {
+            if (JavaAstUtils.isVarAccessStrictlyWrite(usage)) {
+                continue;
+            }
+            ReachingDefinitionSet reaching = dataflow.getReachingDefinitions(usage);
+            if (reaching.containsInitialFieldValue()) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:13:00
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpafr257zi.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@$X ...
+private $TYPE $FIELD;
+...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular-field
+  message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+  patterns:
+    - pattern: |
+        @$X ...
+        private $TYPE $FIELD;
+        ...
+    - pattern-not: |
+        @... lombok.Setter ...
+    - pattern-not: |
+        @... lombok.Getter ...
+    - pattern-not: |
+        @... java.lang.Deprecated ...
+    - pattern-not: |
+        @... lombok.experimental.Delegate ...
+    - pattern-not: |
+        @... javafx.fxml.FXML ...
+    - pattern-not: |
+        @... lombok.Builder ...
+    - pattern-not: |
+        @... lombok.EqualsAndHashCode ...
+    - pattern-not: |
+        @... lombok.Data ...
+    - pattern-not: |
+        @... lombok.Value ...
+    - pattern-not: final
+    - pattern-not: static
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe:
+      - "CWE-563: Assignment to Variable without Use"
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp_mnp19ax/rule.yml:2
+2  | - id: singular-field
+3  |   message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+4  |   pattern: |
+5  |     @$X ...
+6  |     private $TYPE $FIELD;
+7  |     ...
+8  |   patterns:
+9  |     - pattern-not: |
+10 |         @... lombok.Setter ...
+11 |     - pattern-not: |
+12 |         @... lombok.Getter ...
+13 |     - pattern-not: |
+14 |         @... java.lang.Deprecated ...
+15 |     - pattern-not: |
+16 |         @... lombok.experimental.Delegate ...
+17 |     - pattern-not: |
+18 |         @... javafx.fxml.FXML ...
+19 |     - pattern-not: |
+20 |         @... lombok.Builder ...
+21 |     - pattern-not: |
+22 |         @... lombok.EqualsAndHashCode ...
+23 |     - pattern-not: |
+24 |         @... lombok.Data ...
+25 |     - pattern-not: |
+26 |         @... lombok.Value ...
+27 |     - pattern-not: final
+28 |     - pattern-not: static
+29 |   languages:
+30 |     - java
+31 |   severity: WARNING
+32 |   metadata:
+33 |     category: design
+34 |     cwe:
+35 |       - "CWE-563: Assignment to Variable without Use"
+36 |     references:
+37 |       - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+
+1. 将顶层`pattern`和`patterns`合并到一个统一的`patterns`结构下
+2. 将主匹配模式和所有排除模式(pattern-not)统一放在patterns列表中
+3. 确保只有一个顶级模式匹配结构（要么是pattern要么是patterns，不能同时存在）
+4. 将主pattern从顶层移动到patterns列表的第一个元素
+5. 保持所有pattern-not排除条件不变，作为patterns列表的后续元素
+6. 确保修改后的规则语法符合Semgrep schema规范
+"""
+
+```yaml
+rules:
+- id: singular-field
+  message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+  patterns:
+    - pattern: |
+        @$X ...
+        private $TYPE $FIELD;
+        ...
+    - pattern-not: |
+        @... lombok.Setter ...
+    - pattern-not: |
+        @... lombok.Getter ...
+    - pattern-not: |
+        @... java.lang.Deprecated ...
+    - pattern-not: |
+        @... lombok.experimental.Delegate ...
+    - pattern-not: |
+        @... javafx.fxml.FXML ...
+    - pattern-not: |
+        @... lombok.Builder ...
+    - pattern-not: |
+        @... lombok.EqualsAndHashCode ...
+    - pattern-not: |
+        @... lombok.Data ...
+    - pattern-not: |
+        @... lombok.Value ...
+    - pattern-not: final
+    - pattern-not: static
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe:
+      - "CWE-563: Assignment to Variable without Use"
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:13:49
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpm4dh_zne.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@... lombok.Setter ...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular-field
+  message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+  patterns:
+    - pattern: |
+        @$ANNOTATION
+        private $TYPE $FIELD;
+    - pattern-not: |
+        @... lombok.Setter ...
+    - pattern-not: |
+        @... lombok.Getter ...
+    - pattern-not: |
+        @... java.lang.Deprecated ...
+    - pattern-not: |
+        @... lombok.experimental.Delegate ...
+    - pattern-not: |
+        @... javafx.fxml.FXML ...
+    - pattern-not: |
+        @... lombok.Builder ...
+    - pattern-not: |
+        @... lombok.EqualsAndHashCode ...
+    - pattern-not: |
+        @... lombok.Data ...
+    - pattern-not: |
+        @... lombok.Value ...
+    - pattern-not: final
+    - pattern-not: static
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe:
+      - "CWE-563: Assignment to Variable without Use"
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpafr257zi.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@$X ...
+private $TYPE $FIELD;
+...
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+【修改策略】
+为解决以下错误：Invalid pattern for Java: Stdlib.Parsing.Parse_error，请按照以下步骤进行修复：
+
+1. 修改主pattern的语法，使其符合Java语法规范
+2. 明确匹配私有字段声明的完整模式，去除不明确的省略号(...)
+3. 规范模式中的元变量使用方式，添加类型约束
+4. 确保模式可以精确匹配私有字段声明语句
+5. 保持排除条件(pattern-not)不变
+6. 验证修改后的模式是否能正确解析Java语法
+
+```yaml
+rules:
+- id: singular-field
+  message: "Singular field found. This field could be converted to a local variable as it's always overwritten before any read."
+  patterns:
+    - pattern: |
+        @$ANNOTATION
+        private $TYPE $FIELD;
+    - pattern-not: |
+        @... lombok.Setter ...
+    - pattern-not: |
+        @... lombok.Getter ...
+    - pattern-not: |
+        @... java.lang.Deprecated ...
+    - pattern-not: |
+        @... lombok.experimental.Delegate ...
+    - pattern-not: |
+        @... javafx.fxml.FXML ...
+    - pattern-not: |
+        @... lombok.Builder ...
+    - pattern-not: |
+        @... lombok.EqualsAndHashCode ...
+    - pattern-not: |
+        @... lombok.Data ...
+    - pattern-not: |
+        @... lombok.Value ...
+    - pattern-not: final
+    - pattern-not: static
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe:
+      - "CWE-563: Assignment to Variable without Use"
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#singularfield
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:53:44
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpk50hgvgv/rule.yml:24
+24 |   - metavariable-analysis:
+25 |       metavariable: $FIELD
+26 |       analyzer: dataflow
+27 |       message: |
+28 |         Field `$FIELD` may be converted to a local variable as it's always overwritten before any read.
+29 |   message: There is a singular field `$FIELD` that could be converted to a local variable
+
+Additional properties are not allowed ('message' was unexpected)
+Additional properties are not allowed ('metavariable-analysis' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: singular_field
+  patterns:
+  - pattern: |
+      private $TYPE $FIELD;
+  - pattern-not: |
+      private final $TYPE $FIELD;
+  - pattern-not-inside: |
+      @$ANNOTATION
+      ...
+      private $TYPE $FIELD;
+      ...
+      where:
+        $ANNOTATION in ["lombok.Setter", "lombok.Getter", "java.lang.Deprecated", "lombok.experimental.Delegate", "javafx.fxml.FXML"]
+  - pattern-not-inside: |
+      @$ANNOTATION
+      class $CLASS {
+          ...
+          private $TYPE $FIELD;
+          ...
+      }
+      where:
+        $ANNOTATION in ["lombok.Builder", "lombok.EqualsAndHashCode", "lombok.Getter", "lombok.Setter", "lombok.Data", "lombok.Value"]
+  - metavariable-analysis:
+      metavariable: $FIELD
+      analyzer: dataflow
+      message: |
+        Field `$FIELD` may be converted to a local variable as it's always overwritten before any read.
+  message: There is a singular field `$FIELD` that could be converted to a local variable
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: efficiency
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    confidence: MEDIUM
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTBodyDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFieldDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTInitializer;
+import net.sourceforge.pmd.lang.java.ast.ASTLambdaExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.DataflowResult;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.ReachingDefinitionSet;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaPropertyUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+/**
+ * A singular field is a field that may be converted to a local variable.
+ * This means, that in every method the field is used, there is no path
+ * that uses the value that the field has before the method is called.
+ * In other words, the field is overwritten before any read.
+ *
+ * @author Eric Olander
+ * @author Wouter Zelle
+ * @author Clément Fournier
+ * @since Created on April 17, 2005, 9:49 PM
+ */
+public class SingularFieldRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> INVALIDATING_CLASS_ANNOT = setOf(
+        "lombok.Builder",
+        "lombok.EqualsAndHashCode",
+        "lombok.Getter",
+        "lombok.Setter",
+        "lombok.Data",
+        "lombok.Value"
+    );
+
+    private static final PropertyDescriptor<List<String>> IGNORED_FIELD_ANNOTATIONS =
+        JavaPropertyUtil.ignoredAnnotationsDescriptor(
+            "lombok.Setter",
+            "lombok.Getter",
+            "java.lang.Deprecated",
+            "lombok.experimental.Delegate",
+            "javafx.fxml.FXML"
+        );
+
+    public SingularFieldRule() {
+        super(ASTTypeDeclaration.class);
+        definePropertyDescriptor(IGNORED_FIELD_ANNOTATIONS);
+    }
+
+    @Override
+    public Object visitJavaNode(JavaNode node, Object data) {
+        ASTTypeDeclaration enclosingType = (ASTTypeDeclaration) node;
+        if (JavaAstUtils.hasAnyAnnotation(enclosingType, INVALIDATING_CLASS_ANNOT)) {
+            return null;
+        }
+
+        DataflowResult dataflow = null;
+        for (ASTFieldDeclaration fieldDecl : enclosingType.getDeclarations(ASTFieldDeclaration.class)) {
+            if (!isPrivateNotFinal(fieldDecl)
+                || JavaAstUtils.hasAnyAnnotation(fieldDecl, getProperty(IGNORED_FIELD_ANNOTATIONS))) {
+                continue;
+            }
+            for (ASTVariableId varId : fieldDecl.getVarIds()) {
+                if (dataflow == null) { //compute lazily
+                    dataflow = DataflowPass.getDataflowResult(node.getRoot());
+                }
+                if (isSingularField(enclosingType, varId, dataflow)) {
+                    asCtx(data).addViolation(varId, varId.getName());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * This method is only relevant for this rule. It will be removed in the future.
+     *
+     * @deprecated This method will be removed. Don't use it.
+     */
+    @Deprecated //(since = "7.1.0", forRemoval = true)
+    public static boolean mayBeSingular(ModifierOwner varId) {
+        return isPrivateNotFinal(varId);
+    }
+
+    private static boolean isPrivateNotFinal(ModifierOwner varId) {
+        return varId.getEffectiveVisibility().isAtMost(Visibility.V_PRIVATE)
+                // We ignore final variables for a reason:
+                // - if they're static they are there to share a value and that is not a mistake
+                // - if they're not static then if this rule matches, then so does FinalFieldCouldBeStatic,
+                // and that rule has the better fix.
+                && !varId.hasModifiers(JModifier.FINAL);
+    }
+
+    private boolean isSingularField(ASTTypeDeclaration fieldOwner, ASTVariableId varId, DataflowResult dataflow) {
+        if (JavaAstUtils.isNeverUsed(varId)) {
+            return false; // don't report unused field
+        }
+
+        boolean isStaticField = varId.isStatic();
+        //Check usages for validity & group them by scope
+        //They're valid if they don't escape the scope of their method, eg by being in a nested class or lambda
+        Map<ASTBodyDeclaration, List<ASTNamedReferenceExpr>> usagesByScope = new HashMap<>();
+        for (ASTNamedReferenceExpr usage : varId.getLocalUsages()) {
+            if (usage.getEnclosingType() != fieldOwner
+                || !isStaticField && !JavaAstUtils.isThisFieldAccess(usage)) {
+                return false; // give up
+            }
+            ASTBodyDeclaration enclosing = getEnclosingBodyDecl(fieldOwner, usage);
+            if (hasEnclosingLambda(enclosing, usage)) {
+                return false;
+            }
+            usagesByScope.computeIfAbsent(enclosing, k -> new ArrayList<>()).add(usage);
+        }
+
+        // the field is singular if it is used as a local var in every method.
+        for (ASTBodyDeclaration method : usagesByScope.keySet()) {
+            if (method != null && usagesObserveValueBeforeMethodCall(usagesByScope.get(method), dataflow)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private @Nullable ASTBodyDeclaration getEnclosingBodyDecl(ASTTypeDeclaration enclosingType, ASTNamedReferenceExpr usage) {
+        ASTBodyDeclaration decl = usage.ancestors()
+                                       .takeWhile(it -> it != enclosingType)
+                                       .first(ASTBodyDeclaration.class);
+        if (decl instanceof ASTFieldDeclaration
+            || decl instanceof ASTInitializer) {
+            // then the usage is logically part of the ctors.
+            return enclosingType;
+        }
+        return decl;
+    }
+
+    private boolean hasEnclosingLambda(JavaNode stop, ASTNamedReferenceExpr usage) {
+        return usage.ancestors()
+                    .takeWhile(it -> it != stop)
+                    .any(it -> it instanceof ASTLambdaExpression);
+    }
+
+    private boolean usagesObserveValueBeforeMethodCall(List<ASTNamedReferenceExpr> usages, DataflowResult dataflow) {
+        for (ASTNamedReferenceExpr usage : usages) {
+            if (JavaAstUtils.isVarAccessStrictlyWrite(usage)) {
+                continue;
+            }
+            ReachingDefinitionSet reaching = dataflow.getReachingDefinitions(usage);
+            if (reaching.containsInitialFieldValue()) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:54:24
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu6725jim.singular_field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@$ANNOTATION
+...
+private $TYPE $FIELD;
+...
+where:
+  $ANNOTATION in ["lombok.Setter", "lombok.Getter", "java.lang.Deprecated", "lombok.experimental.Delegate", "javafx.fxml.FXML"]
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular_field
+  patterns:
+  - pattern: |
+      private $TYPE $FIELD;
+  - pattern-not: |
+      private final $TYPE $FIELD;
+  - pattern-not-inside: |
+      @$ANNOTATION
+      ...
+      private $TYPE $FIELD;
+      ...
+      where:
+        $ANNOTATION in ["lombok.Setter", "lombok.Getter", "java.lang.Deprecated", "lombok.experimental.Delegate", "javafx.fxml.FXML"]
+  - pattern-not-inside: |
+      @$ANNOTATION
+      class $CLASS {
+          ...
+          private $TYPE $FIELD;
+          ...
+      }
+      where:
+        $ANNOTATION in ["lombok.Builder", "lombok.EqualsAndHashCode", "lombok.Getter", "lombok.Setter", "lombok.Data", "lombok.Value"]
+  metavariable-pattern:
+    metavariable: $FIELD
+    pattern: |
+      $FIELD
+  message: There is a singular field `$FIELD` that could be converted to a local variable
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: efficiency
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    confidence: MEDIUM
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpk50hgvgv/rule.yml:24
+24 |   - metavariable-analysis:
+25 |       metavariable: $FIELD
+26 |       analyzer: dataflow
+27 |       message: |
+28 |         Field `$FIELD` may be converted to a local variable as it's always overwritten before any read.
+29 |   message: There is a singular field `$FIELD` that could be converted to a local variable
+
+Additional properties are not allowed ('message' was unexpected)
+Additional properties are not allowed ('metavariable-analysis' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpk50hgvgv/rule.yml:24
+24 |   - metavariable-analysis:
+25 |       metavariable: $FIELD
+26 |       analyzer: dataflow
+27 |       message: |
+28 |         Field `$FIELD` may be converted to a local variable as it's always overwritten before any read.
+29 |   message: There is a singular field `$FIELD` that could be converted to a local variable
+
+Additional properties are not allowed ('message' was unexpected)
+Additional properties are not allowed ('metavariable-analysis' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将metavariable-analysis移动到patterns列表之后，作为顶级属性而不是patterns的子项
+2. 移除metavariable-analysis内部多余的message字段，保留顶层的message即可
+3. 确保metavariable-analysis的结构符合Semgrep规范，使用正确的字段名为metavariable-regex或metavariable-pattern
+4. 检查dataflow analyzer是否在支持的范围内，必要时调整为更基础的taint模式
+5. 添加必要的where条件保证约束正确性
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:55:32
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp7gkjyo50.singular_field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@lombok.Setter
+...
+private $TYPE $FIELD;
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular_field
+  patterns:
+  - pattern: |
+      private $TYPE $FIELD;
+  - pattern-not: |
+      private final $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Setter
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Getter
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @java.lang.Deprecated
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.experimental.Delegate
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @javafx.fxml.FXML
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Builder
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.EqualsAndHashCode
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.Data
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.Value
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  message: There is a singular field `$FIELD` that could be converted to a local variable
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: efficiency
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    confidence: MEDIUM
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu6725jim.singular_field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@$ANNOTATION
+...
+private $TYPE $FIELD;
+...
+where:
+  $ANNOTATION in ["lombok.Setter", "lombok.Getter", "java.lang.Deprecated", "lombok.experimental.Delegate", "javafx.fxml.FXML"]
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpu6725jim.singular_field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@$ANNOTATION
+...
+private $TYPE $FIELD;
+...
+where:
+  $ANNOTATION in ["lombok.Setter", "lombok.Getter", "java.lang.Deprecated", "lombok.experimental.Delegate", "javafx.fxml.FXML"]
+
+----- end pattern -----
+
+请按照以下步骤进行修复：
+1. 将复杂的pattern-not-inside条件拆分为多个独立的pattern-not-inside规则
+2. 确保每个pattern的语法符合Java语法规范，添加必要的语法结构
+3. 对于注解匹配，使用更精确的模式匹配语法
+4. 添加必要的模式限定符确保模式完整性
+5. 重构where条件为更简单的形式或使用pattern-either组合
+
+【修改策略】
+```yaml
+rules:
+- id: singular_field
+  patterns:
+  - pattern: |
+      private $TYPE $FIELD;
+  - pattern-not: |
+      private final $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Setter
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Getter
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @java.lang.Deprecated
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.experimental.Delegate
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @javafx.fxml.FXML
+      ...
+      private $TYPE $FIELD;
+  - pattern-not-inside: |
+      @lombok.Builder
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.EqualsAndHashCode
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.Data
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  - pattern-not-inside: |
+      @lombok.Value
+      class $CLASS { ... private $TYPE $FIELD; ... }
+  message: There is a singular field `$FIELD` that could be converted to a local variable
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory: efficiency
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    confidence: MEDIUM
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:11:45
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp2r3qhqlm.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $MODIFIERS $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular-field
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $MODIFIERS $TYPE $FIELD;
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $MODIFIERS
+      regex: (?!.*final).*private
+  - pattern-not-inside: |
+      class $CLASS {
+        @$ANNOTATION(...)
+        ...
+      }
+  - metavariable-regex: 
+      metavariable: $ANNOTATION
+      regex: (lombok\.Setter|lombok\.Getter|java\.lang\.Deprecated|lombok\.experimental\.Delegate|javafx\.fxml\.FXML)
+  - pattern-not-inside: |
+      class $CLASS {
+        @$ANNOTATION
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $ANNOTATION
+      regex: (lombok\.Builder|lombok\.EqualsAndHashCode|lombok\.Getter|lombok\.Setter|lombok\.Data|lombok\.Value)
+  - pattern-not: |
+      this.$FIELD
+  message: |
+    Field $FIELD may be converted to a local variable as it's only written to before any read in each method.
+    Consider making it a local variable to reduce class complexity.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - efficiency
+    cwe:
+    - 'CWE-1110: Incomplete Design Documentation'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: LOW
+    technology:
+    - Java
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTBodyDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFieldDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTInitializer;
+import net.sourceforge.pmd.lang.java.ast.ASTLambdaExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.DataflowResult;
+import net.sourceforge.pmd.lang.java.rule.internal.DataflowPass.ReachingDefinitionSet;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaPropertyUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+/**
+ * A singular field is a field that may be converted to a local variable.
+ * This means, that in every method the field is used, there is no path
+ * that uses the value that the field has before the method is called.
+ * In other words, the field is overwritten before any read.
+ *
+ * @author Eric Olander
+ * @author Wouter Zelle
+ * @author Clément Fournier
+ * @since Created on April 17, 2005, 9:49 PM
+ */
+public class SingularFieldRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> INVALIDATING_CLASS_ANNOT = setOf(
+        "lombok.Builder",
+        "lombok.EqualsAndHashCode",
+        "lombok.Getter",
+        "lombok.Setter",
+        "lombok.Data",
+        "lombok.Value"
+    );
+
+    private static final PropertyDescriptor<List<String>> IGNORED_FIELD_ANNOTATIONS =
+        JavaPropertyUtil.ignoredAnnotationsDescriptor(
+            "lombok.Setter",
+            "lombok.Getter",
+            "java.lang.Deprecated",
+            "lombok.experimental.Delegate",
+            "javafx.fxml.FXML"
+        );
+
+    public SingularFieldRule() {
+        super(ASTTypeDeclaration.class);
+        definePropertyDescriptor(IGNORED_FIELD_ANNOTATIONS);
+    }
+
+    @Override
+    public Object visitJavaNode(JavaNode node, Object data) {
+        ASTTypeDeclaration enclosingType = (ASTTypeDeclaration) node;
+        if (JavaAstUtils.hasAnyAnnotation(enclosingType, INVALIDATING_CLASS_ANNOT)) {
+            return null;
+        }
+
+        DataflowResult dataflow = null;
+        for (ASTFieldDeclaration fieldDecl : enclosingType.getDeclarations(ASTFieldDeclaration.class)) {
+            if (!isPrivateNotFinal(fieldDecl)
+                || JavaAstUtils.hasAnyAnnotation(fieldDecl, getProperty(IGNORED_FIELD_ANNOTATIONS))) {
+                continue;
+            }
+            for (ASTVariableId varId : fieldDecl.getVarIds()) {
+                if (dataflow == null) { //compute lazily
+                    dataflow = DataflowPass.getDataflowResult(node.getRoot());
+                }
+                if (isSingularField(enclosingType, varId, dataflow)) {
+                    asCtx(data).addViolation(varId, varId.getName());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * This method is only relevant for this rule. It will be removed in the future.
+     *
+     * @deprecated This method will be removed. Don't use it.
+     */
+    @Deprecated //(since = "7.1.0", forRemoval = true)
+    public static boolean mayBeSingular(ModifierOwner varId) {
+        return isPrivateNotFinal(varId);
+    }
+
+    private static boolean isPrivateNotFinal(ModifierOwner varId) {
+        return varId.getEffectiveVisibility().isAtMost(Visibility.V_PRIVATE)
+                // We ignore final variables for a reason:
+                // - if they're static they are there to share a value and that is not a mistake
+                // - if they're not static then if this rule matches, then so does FinalFieldCouldBeStatic,
+                // and that rule has the better fix.
+                && !varId.hasModifiers(JModifier.FINAL);
+    }
+
+    private boolean isSingularField(ASTTypeDeclaration fieldOwner, ASTVariableId varId, DataflowResult dataflow) {
+        if (JavaAstUtils.isNeverUsed(varId)) {
+            return false; // don't report unused field
+        }
+
+        boolean isStaticField = varId.isStatic();
+        //Check usages for validity & group them by scope
+        //They're valid if they don't escape the scope of their method, eg by being in a nested class or lambda
+        Map<ASTBodyDeclaration, List<ASTNamedReferenceExpr>> usagesByScope = new HashMap<>();
+        for (ASTNamedReferenceExpr usage : varId.getLocalUsages()) {
+            if (usage.getEnclosingType() != fieldOwner
+                || !isStaticField && !JavaAstUtils.isThisFieldAccess(usage)) {
+                return false; // give up
+            }
+            ASTBodyDeclaration enclosing = getEnclosingBodyDecl(fieldOwner, usage);
+            if (hasEnclosingLambda(enclosing, usage)) {
+                return false;
+            }
+            usagesByScope.computeIfAbsent(enclosing, k -> new ArrayList<>()).add(usage);
+        }
+
+        // the field is singular if it is used as a local var in every method.
+        for (ASTBodyDeclaration method : usagesByScope.keySet()) {
+            if (method != null && usagesObserveValueBeforeMethodCall(usagesByScope.get(method), dataflow)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private @Nullable ASTBodyDeclaration getEnclosingBodyDecl(ASTTypeDeclaration enclosingType, ASTNamedReferenceExpr usage) {
+        ASTBodyDeclaration decl = usage.ancestors()
+                                       .takeWhile(it -> it != enclosingType)
+                                       .first(ASTBodyDeclaration.class);
+        if (decl instanceof ASTFieldDeclaration
+            || decl instanceof ASTInitializer) {
+            // then the usage is logically part of the ctors.
+            return enclosingType;
+        }
+        return decl;
+    }
+
+    private boolean hasEnclosingLambda(JavaNode stop, ASTNamedReferenceExpr usage) {
+        return usage.ancestors()
+                    .takeWhile(it -> it != stop)
+                    .any(it -> it instanceof ASTLambdaExpression);
+    }
+
+    private boolean usagesObserveValueBeforeMethodCall(List<ASTNamedReferenceExpr> usages, DataflowResult dataflow) {
+        for (ASTNamedReferenceExpr usage : usages) {
+            if (JavaAstUtils.isVarAccessStrictlyWrite(usage)) {
+                continue;
+            }
+            ReachingDefinitionSet reaching = dataflow.getReachingDefinitions(usage);
+            if (reaching.containsInitialFieldValue()) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:12:34
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp7xakjgea.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  @$ANNOTATION2
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: singular-field
+  patterns:
+  - pattern: |
+      class $CLASS {
+        ...
+        private $TYPE $FIELD;
+        ...
+      }
+  - pattern-not: |
+      class $CLASS {
+        ...
+        private final $TYPE $FIELD;
+        ...
+      }
+  - pattern-not-inside: |
+      @$ANNOTATION1
+      class $CLASS { ... }
+  - pattern-not-inside: |
+      class $CLASS {
+        @$ANNOTATION2
+        ...
+      }
+  - metavariable-regex:
+      metavariable: $ANNOTATION1
+      regex: (lombok\.Builder|lombok\.EqualsAndHashCode|lombok\.Data|lombok\.Value)
+  - metavariable-regex:
+      metavariable: $ANNOTATION2
+      regex: (lombok\.Setter|lombok\.Getter|java\.lang\.Deprecated|lombok\.experimental\.Delegate|javafx\.fxml\.FXML)
+  - pattern-not: $THIS.$FIELD
+  message: |
+    Field $FIELD may be converted to a local variable as it's only written to before any read in each method.
+    Consider making it a local variable to reduce class complexity.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - efficiency
+    cwe:
+    - 'CWE-1110: Incomplete Design Documentation'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: LOW
+    technology:
+    - Java
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp2r3qhqlm.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $MODIFIERS $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp2r3qhqlm.singular-field:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $MODIFIERS $TYPE $FIELD;
+  ...
+}
+
+----- end pattern -----
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+
+1. 修正Java类模式语法：Semgrep的Java模式需要更具体的类定义语法，需改为标准Java类声明格式，包含完整的类体和花括号。
+
+2. 明确字段声明模式：将泛式的字段声明模式改为具体的字段声明格式，使用正确的Java修饰符和类型语法。
+
+3. 修复pattern-not-inside语法：确保注解排除模式使用正确的注解语法格式@注解名。
+
+4. 验证正则表达式：检查所有metavariable-regex是否使用正确的正则语法，特别是特殊字符的转义。
+
+5. 拆分复杂规则：将多重条件的复杂规则拆分为多个简单pattern组合的模式，使用pattern-either或patterns组合。
+
+6. 测试模式有效性：在修改后使用semgrep --validate确保规则语法正确。
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,2190 @@
+Timestamp: 2025-07-22 16:08:15
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpbv37iy28/rule.yml:13
+13 |   - compute:
+14 |       vars:
+15 |         stmtCount: |
+16 |           int stmtCount = [...].descendants(Statement.class).count();
+17 |         labelCount: |
+18 |           int labelCount = [...].getBranches()
+19 |               .map(SwitchBranch::getLabel)
+20 |               .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+21 |         density: $stmtCount / ($labelCount * 1.0)
+22 |   - metavariable-comparison:
+
+{'compute': {'vars': {'stmtCount': 'int stmtCount = [...].descendants(Statement.class).count();\n', 'labelCount': 'int labelCount = [...].getBranches()\n    .map(SwitchBranch::getLabel)\n    .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());\n', 'density': '$stmtCount / ($labelCount * 1.0)'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: high-switch-density
+  patterns:
+  - pattern: |
+      $SWITCH { $...BODIES }
+  - pattern-not: $SWITCH { ... }
+  - metavariable-pattern:
+      metavariable: $SWITCH
+      patterns:
+      - pattern-either:
+        - pattern: switch (...) { ... }
+        - pattern: switch (...) -> { ... }
+  - compute:
+      vars:
+        stmtCount: |
+          int stmtCount = [...].descendants(Statement.class).count();
+        labelCount: |
+          int labelCount = [...].getBranches()
+              .map(SwitchBranch::getLabel)
+              .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+        density: $stmtCount / ($labelCount * 1.0)
+  - metavariable-comparison:
+      metavariable: $density
+      comparison: $density >= 10
+  message: >-
+    High switch density (${density}). When the switch density is high, 
+    consider using subclasses or State Pattern to improve code structure.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    cwe: "CWE-1120: Excessive Code Complexity"
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.properties.NumericConstraints.positive;
+
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchBranch;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchLike;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.rule.internal.CommonPropertyDescriptors;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+/**
+ * Switch Density - This is the number of statements over the number of
+ * cases within a switch. The higher the value, the more work each case
+ * is doing.
+ *
+ * <p>Its my theory, that when the Switch Density is high, you should start
+ * looking at Subclasses or State Pattern to alleviate the problem.</p>
+ *
+ * @author David Dixon-Peugh
+ * @author Clément Fournier
+ */
+public class SwitchDensityRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Integer> REPORT_LEVEL =
+            CommonPropertyDescriptors.reportLevelProperty()
+                    .desc("Threshold above which a switch statement or expression is reported")
+                    .require(positive())
+                    .defaultValue(10)
+                    .build();
+
+    public SwitchDensityRule() {
+        super(ASTSwitchStatement.class, ASTSwitchExpression.class);
+        definePropertyDescriptor(REPORT_LEVEL);
+    }
+
+    @Override
+    public Object visit(ASTSwitchStatement node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    @Override
+    public Object visit(ASTSwitchExpression node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    public Void visitSwitchLike(ASTSwitchLike node, Object data) {
+        // note: this does not cross find boundaries.
+        int stmtCount = node.descendants(ASTStatement.class).count();
+        int labelCount = node.getBranches()
+                .map(ASTSwitchBranch::getLabel)
+                .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+
+        // note: if labelCount is zero, double division will produce +Infinity or NaN, not ArithmeticException
+        double density = stmtCount / (double) labelCount;
+        if (density >= getProperty(REPORT_LEVEL)) {
+            asCtx(data).addViolation(node);
+        }
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:08:58
+Attempt: 2
+Error: [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppt5j83jm/rule.yml:
+	expected '<document start>', but found ('<block mapping start>',)
+	  in "<file>", line 9, column 1
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+【修改策略】
+1. 移除不支持的compute模块，改用纯模式匹配
+2. 使用pattern-either处理switch语句和switch表达式两种情况
+3. 通过多个独立pattern统计statement和case数量
+4. 使用metavariable-comparison进行数值比较
+5. 简化密度计算为简单的除法表达式
+
+# 转换后的 Semgrep 规则
+rules:
+- id: high-switch-density
+  message: >-
+    High switch density (${density}). When the switch density is high,
+    consider using subclasses or State Pattern to improve code structure.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        switch ($_) {
+          $...CASES
+        }
+    - pattern: |
+        switch ($_) -> {
+          $...CASES
+        }
+  - focus-metavariable: $...CASES
+  - pattern: |
+      case $_: $...STMTS
+  - metavariable-regex:
+      metavariable: $...STMTS
+      regex: (?s).+
+  - metavariable-comparison:
+      metavariable: $...CASES
+      comparisons:
+      - "length($...STMTS) / (length($...CASES) * 1.0) >= 10"
+  metadata:
+    category: design
+    cwe: "CWE-1120: Excessive Code Complexity"
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpbv37iy28/rule.yml:13
+13 |   - compute:
+14 |       vars:
+15 |         stmtCount: |
+16 |           int stmtCount = [...].descendants(Statement.class).count();
+17 |         labelCount: |
+18 |           int labelCount = [...].getBranches()
+19 |               .map(SwitchBranch::getLabel)
+20 |               .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+21 |         density: $stmtCount / ($labelCount * 1.0)
+22 |   - metavariable-comparison:
+
+{'compute': {'vars': {'stmtCount': 'int stmtCount = [...].descendants(Statement.class).count();\n', 'labelCount': 'int labelCount = [...].getBranches()\n    .map(SwitchBranch::getLabel)\n    .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());\n', 'density': '$stmtCount / ($labelCount * 1.0)'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpbv37iy28/rule.yml:13
+13 |   - compute:
+14 |       vars:
+15 |         stmtCount: |
+16 |           int stmtCount = [...].descendants(Statement.class).count();
+17 |         labelCount: |
+18 |           int labelCount = [...].getBranches()
+19 |               .map(SwitchBranch::getLabel)
+20 |               .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+21 |         density: $stmtCount / ($labelCount * 1.0)
+22 |   - metavariable-comparison:
+
+{'compute': {'vars': {'stmtCount': 'int stmtCount = [...].descendants(Statement.class).count();\n', 'labelCount': 'int labelCount = [...].getBranches()\n    .map(SwitchBranch::getLabel)\n    .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());\n', 'density': '$stmtCount / ($labelCount * 1.0)'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 修改compute语法：Semgrep不再支持compute功能，需要改用metavariable-regex或者pattern-propagators来实现类似功能
+2. 将计算逻辑拆分到多个独立pattern中：不能用Java表达式直接计算，需要通过模式匹配获取元素计数
+3. 使用metavariable-regex代替变量计算：对于数值比较，可以使用metavariable-regex来提取并比较数值
+4. 简化密度计算逻辑：用更简单的模式匹配代替复杂的Java表达式链式调用
+5. 使用focus-metavariable来定位关键元素：替换原来的节点遍历逻辑
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 16:09:36
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp6tv8668w/rule.yml:23
+23 |     - metavariable-comparison:
+24 |         metavariable: $...CASES
+25 |         comparisons:
+26 |           - "length($...STMTS) / (length($...CASES) * 1.0) >= 10"
+27 |   metadata:
+
+{'metavariable-comparison': {'metavariable': '$...CASES', 'comparisons': ['length($...STMTS) / (length($...CASES) * 1.0) >= 10']}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: high-switch-density
+  message: High switch density (${density}). When the switch density is high, consider using subclasses or State Pattern to improve code structure.
+  languages:
+    - java
+  severity: WARNING
+  patterns:
+    - pattern-either:
+      - pattern: |
+          switch ($_) {
+            $...CASES
+          }
+      - pattern: |
+          switch ($_) -> {
+            $...CASES
+          }
+    - focus-metavariable: $...CASES
+    - pattern: |
+        case $_: $...STMTS
+    - metavariable-regex:
+        metavariable: $...STMTS
+        regex: (?s).+
+    - metavariable-comparison:
+        metavariable: $...CASES
+        comparisons:
+          - "length($...STMTS) / (length($...CASES) * 1.0) >= 10"
+  metadata:
+    category: design
+    cwe: "CWE-1120: Excessive Code Complexity"
+    technology:
+      - Java
+    references:
+      - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            [ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppt5j83jm/rule.yml:
+	expected '<document start>', but found ('<block mapping start>',)
+	  in "<file>", line 9, column 1
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：[ERROR] Invalid YAML file /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppt5j83jm/rule.yml:
+	expected '<document start>', but found ('<block mapping start>',)
+	  in "<file>", line 9, column 1
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 修复YAML格式问题：确保规则以proper YAML格式开始，移除策略说明部分的Markdown标记
+2. 检查缩进一致性：所有嵌套层级使用2个空格缩进，不要混用空格和tab
+3. 确保patterns作为顶级元素：patterns应该直接位于rule下，不要被其他元素包裹
+4. 移除注释和不必要的内容：纯YAML文件不应包含Markdown格式的内容
+5. 验证YAML结构：使用YAML验证器检查基本语法正确性
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:20:44
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4x5mv8dl.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($TEST) {
+    $BODY
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch ($TEST) {
+          $BODY
+      }
+  - pattern-inside: |
+      class $CLASS {
+          ... 
+          $METHOD
+          ...
+      }
+  - metavariable-regex:
+      metavariable: $BODY
+      regex: (.*[\r\n]+){10,}
+  message: Switch density is too high (exceeds 10 statements per case). Consider refactoring using Subclasses or State Pattern.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1124: Excessively Complex Data Interaction Logic'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: LOW
+    owasp:
+    - A3:2017-Sensitive Data Exposure
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensityrule
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.properties.NumericConstraints.positive;
+
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchBranch;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchLike;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.rule.internal.CommonPropertyDescriptors;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+/**
+ * Switch Density - This is the number of statements over the number of
+ * cases within a switch. The higher the value, the more work each case
+ * is doing.
+ *
+ * <p>Its my theory, that when the Switch Density is high, you should start
+ * looking at Subclasses or State Pattern to alleviate the problem.</p>
+ *
+ * @author David Dixon-Peugh
+ * @author Clément Fournier
+ */
+public class SwitchDensityRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Integer> REPORT_LEVEL =
+            CommonPropertyDescriptors.reportLevelProperty()
+                    .desc("Threshold above which a switch statement or expression is reported")
+                    .require(positive())
+                    .defaultValue(10)
+                    .build();
+
+    public SwitchDensityRule() {
+        super(ASTSwitchStatement.class, ASTSwitchExpression.class);
+        definePropertyDescriptor(REPORT_LEVEL);
+    }
+
+    @Override
+    public Object visit(ASTSwitchStatement node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    @Override
+    public Object visit(ASTSwitchExpression node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    public Void visitSwitchLike(ASTSwitchLike node, Object data) {
+        // note: this does not cross find boundaries.
+        int stmtCount = node.descendants(ASTStatement.class).count();
+        int labelCount = node.getBranches()
+                .map(ASTSwitchBranch::getLabel)
+                .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+
+        // note: if labelCount is zero, double division will produce +Infinity or NaN, not ArithmeticException
+        double density = stmtCount / (double) labelCount;
+        if (density >= getProperty(REPORT_LEVEL)) {
+            asCtx(data).addViolation(node);
+        }
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:21:19
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp5py_ud6t.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($X) {
+    $...CASES
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: switch-density
+  message: Switch density is too high (exceeds 10 statements per case). Consider refactoring using Subclasses or State Pattern.
+  languages: [java]
+  severity: WARNING
+  patterns:
+  - pattern: |
+      switch ($X) {
+          $...CASES
+      }
+  - focus-metavariable: $...CASES
+  - pattern-regex: (case[^;]*:|default:)(\s*[^}]*){10,}
+  metadata:
+    category: design
+    subcategory: [complexity]
+    cwe: ["CWE-1124: Excessively Complex Data Interaction Logic"]
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: LOW
+    owasp: ["A3:2017-Sensitive Data Exposure"]
+    technology: [Java]
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensityrule
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4x5mv8dl.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($TEST) {
+    $BODY
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4x5mv8dl.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($TEST) {
+    $BODY
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+
+1. 使用正确的Java switch语法模式匹配：
+   - 替换当前模式为标准的Java switch语句模式（包括`case`等关键字）
+   - 确保模式语法符合Java语言规范
+
+2. 修改body匹配方式：
+   - 使用`pattern-either`替代简单的body匹配
+   - 为switch case分支添加更精确的模式匹配
+
+3. 添加case分支计数约束：
+   - 引入新的模式约束来计算语句与case的比例
+   - 添加类似原规则的比例阈值检查（默认10）
+
+4. 修复元变量使用：
+   - 确保$BODY,$TEST等元变量在模式中有明确定义
+   - 避免在正则表达式中过度使用通配符
+
+5. 添加边界条件处理：
+   - 处理没有任何case的情况
+   - 处理default case的特殊情况
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:50:59
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmplyvf7yyd.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  ...
+  $SWITCH($EXPR) {
+    $BODY
+  }
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      class $CLASS {
+        ...
+        $SWITCH($EXPR) {
+          $BODY
+        }
+        ...
+      }
+  - metavariable-pattern:
+      metavariable: $BODY
+      pattern: |
+        $STATEMENTS
+  - pattern-inside: |
+      class $CLASS {
+        ...
+        $SWITCH($EXPR) {
+          $BODY
+        }
+        ...
+      }
+  message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+  fix: |
+    // Consider refactoring high-density switch to subclasses or state pattern
+  severity: WARNING
+  languages:
+  - java
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1112: Incomplete Documentation of Switch Cases'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.properties.NumericConstraints.positive;
+
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchBranch;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchLike;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.rule.internal.CommonPropertyDescriptors;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+/**
+ * Switch Density - This is the number of statements over the number of
+ * cases within a switch. The higher the value, the more work each case
+ * is doing.
+ *
+ * <p>Its my theory, that when the Switch Density is high, you should start
+ * looking at Subclasses or State Pattern to alleviate the problem.</p>
+ *
+ * @author David Dixon-Peugh
+ * @author Clément Fournier
+ */
+public class SwitchDensityRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Integer> REPORT_LEVEL =
+            CommonPropertyDescriptors.reportLevelProperty()
+                    .desc("Threshold above which a switch statement or expression is reported")
+                    .require(positive())
+                    .defaultValue(10)
+                    .build();
+
+    public SwitchDensityRule() {
+        super(ASTSwitchStatement.class, ASTSwitchExpression.class);
+        definePropertyDescriptor(REPORT_LEVEL);
+    }
+
+    @Override
+    public Object visit(ASTSwitchStatement node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    @Override
+    public Object visit(ASTSwitchExpression node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    public Void visitSwitchLike(ASTSwitchLike node, Object data) {
+        // note: this does not cross find boundaries.
+        int stmtCount = node.descendants(ASTStatement.class).count();
+        int labelCount = node.getBranches()
+                .map(ASTSwitchBranch::getLabel)
+                .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+
+        // note: if labelCount is zero, double division will produce +Infinity or NaN, not ArithmeticException
+        double density = stmtCount / (double) labelCount;
+        if (density >= getProperty(REPORT_LEVEL)) {
+            asCtx(data).addViolation(node);
+        }
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:51:34
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpad62d5el/rule.yml:2
+2  | - id: switch-density
+3  |   mode: taint
+4  |   pattern-sources:
+5  |   - pattern: |
+6  |       switch($EXPR) {
+7  |         $CASES
+8  |       }
+9  |   - patterns:
+10 |     - pattern: |
+11 |         switch($_) {
+12 |           $CASES
+13 |         }
+14 |     - metavariable-comparison:
+15 |         metavariable: $DENSITY
+16 |         comparison: "$DENSITY >= 10"
+17 |   message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+18 |   fix: |
+19 |     // Consider refactoring high-density switch to subclasses or state pattern
+20 |   languages:
+21 |   - java
+22 |   severity: WARNING
+23 |   metadata:
+24 |     category: design
+25 |     subcategory:
+26 |     - complexity
+27 |     cwe:
+28 |     - 'CWE-1112: Incomplete Documentation of Switch Cases'
+29 |     confidence: MEDIUM
+30 |     likelihood: LOW
+31 |     impact: MEDIUM
+32 |     technology:
+33 |     - Java
+34 |     references:
+35 |     - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+
+One of these properties is missing: 'pattern-sinks'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: switch-density
+  mode: taint
+  pattern-sources:
+  - pattern: |
+      switch($EXPR) {
+        $CASES
+      }
+  - patterns:
+    - pattern: |
+        switch($_) {
+          $CASES
+        }
+    - metavariable-comparison:
+        metavariable: $DENSITY
+        comparison: "$DENSITY >= 10"
+  message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+  fix: |
+    // Consider refactoring high-density switch to subclasses or state pattern
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1112: Incomplete Documentation of Switch Cases'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmplyvf7yyd.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  ...
+  $SWITCH($EXPR) {
+    $BODY
+  }
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmplyvf7yyd.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  ...
+  $SWITCH($EXPR) {
+    $BODY
+  }
+  ...
+}
+
+----- end pattern -----
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings。，请按照以下步骤进行修复：
+1. 修改原始模式中的`$SWITCH`语法错误，Semgrep需要使用Java标准语法`switch`
+2. 移除无效的`...`省略号模式，使用具体的AST模式匹配
+3. 将`$BODY`替换为具体模式或者使用`<...>`表示任意内容
+4. 确保switch语句模式符合Java语法规范，使用完整的case/default结构
+5. 如果需要统计statement密度，应该使用mode: taint等更精确的模式匹配
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:52:27
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpn4k137_8.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch($_) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch($_) {
+        ...
+      }
+  - metavariable-comparison:
+      metavariable: $DENSITY
+      comparison: "$DENSITY >= 10"
+  message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+  severity: WARNING
+  languages:
+  - java
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1112: 不完整的Switch Cases文档'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpad62d5el/rule.yml:2
+2  | - id: switch-density
+3  |   mode: taint
+4  |   pattern-sources:
+5  |   - pattern: |
+6  |       switch($EXPR) {
+7  |         $CASES
+8  |       }
+9  |   - patterns:
+10 |     - pattern: |
+11 |         switch($_) {
+12 |           $CASES
+13 |         }
+14 |     - metavariable-comparison:
+15 |         metavariable: $DENSITY
+16 |         comparison: "$DENSITY >= 10"
+17 |   message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+18 |   fix: |
+19 |     // Consider refactoring high-density switch to subclasses or state pattern
+20 |   languages:
+21 |   - java
+22 |   severity: WARNING
+23 |   metadata:
+24 |     category: design
+25 |     subcategory:
+26 |     - complexity
+27 |     cwe:
+28 |     - 'CWE-1112: Incomplete Documentation of Switch Cases'
+29 |     confidence: MEDIUM
+30 |     likelihood: LOW
+31 |     impact: MEDIUM
+32 |     technology:
+33 |     - Java
+34 |     references:
+35 |     - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+
+One of these properties is missing: 'pattern-sinks'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpad62d5el/rule.yml:2
+2  | - id: switch-density
+3  |   mode: taint
+4  |   pattern-sources:
+5  |   - pattern: |
+6  |       switch($EXPR) {
+7  |         $CASES
+8  |       }
+9  |   - patterns:
+10 |     - pattern: |
+11 |         switch($_) {
+12 |           $CASES
+13 |         }
+14 |     - metavariable-comparison:
+15 |         metavariable: $DENSITY
+16 |         comparison: "$DENSITY >= 10"
+17 |   message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+18 |   fix: |
+19 |     // Consider refactoring high-density switch to subclasses or state pattern
+20 |   languages:
+21 |   - java
+22 |   severity: WARNING
+23 |   metadata:
+24 |     category: design
+25 |     subcategory:
+26 |     - complexity
+27 |     cwe:
+28 |     - 'CWE-1112: Incomplete Documentation of Switch Cases'
+29 |     confidence: MEDIUM
+30 |     likelihood: LOW
+31 |     impact: MEDIUM
+32 |     technology:
+33 |     - Java
+34 |     references:
+35 |     - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+
+One of these properties is missing: 'pattern-sinks'
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 移除`mode: taint`模式，因为该规则不需要污点分析
+2. 改用标准的`patterns`语法结构替代`pattern-sources`
+3. 添加完整的pattern表达式来匹配switch语句
+4. 使用`metavariable-comparison`时需要确保比较的元变量已定义
+5. 保持原规则的核心检测逻辑，即检查switch语句的case密度
+
+【修改策略】
+```yaml
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch($_) {
+        $CASES
+      }
+  - metavariable-comparison:
+      metavariable: $DENSITY
+      comparison: "$DENSITY >= 10"
+  message: Switch density is too high (statements per case). Consider refactoring to use subclasses or state pattern.
+  severity: WARNING
+  languages:
+  - java
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1112: Incomplete Documentation of Switch Cases'
+    confidence: MEDIUM
+    likelihood: LOW
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:09:48
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpll_6ycw7.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($X) {
+  $CASE_CASES;
+  $...;
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch ($X) {
+        $CASE_CASES;
+        $...;
+      }
+  - pattern-not: switch ($X) { }
+  - metavariable-regex:
+      metavariable: $CASE_CASES
+      regex: case
+  - metavariable-comparison:
+      metavariable: $STATEMENT_COUNT
+      comparison: $STATEMENT_COUNT / $CASE_COUNT >= $THRESHOLD
+  message: High switch density (%STATEMENT_COUNT% statements / %CASE_COUNT% cases = %DENSITY%). Consider refactoring to subclasses or state pattern.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1114: Inappropriate Parse-Exception Handling'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.properties.NumericConstraints.positive;
+
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchBranch;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchLike;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.rule.internal.CommonPropertyDescriptors;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+/**
+ * Switch Density - This is the number of statements over the number of
+ * cases within a switch. The higher the value, the more work each case
+ * is doing.
+ *
+ * <p>Its my theory, that when the Switch Density is high, you should start
+ * looking at Subclasses or State Pattern to alleviate the problem.</p>
+ *
+ * @author David Dixon-Peugh
+ * @author Clément Fournier
+ */
+public class SwitchDensityRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Integer> REPORT_LEVEL =
+            CommonPropertyDescriptors.reportLevelProperty()
+                    .desc("Threshold above which a switch statement or expression is reported")
+                    .require(positive())
+                    .defaultValue(10)
+                    .build();
+
+    public SwitchDensityRule() {
+        super(ASTSwitchStatement.class, ASTSwitchExpression.class);
+        definePropertyDescriptor(REPORT_LEVEL);
+    }
+
+    @Override
+    public Object visit(ASTSwitchStatement node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    @Override
+    public Object visit(ASTSwitchExpression node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    public Void visitSwitchLike(ASTSwitchLike node, Object data) {
+        // note: this does not cross find boundaries.
+        int stmtCount = node.descendants(ASTStatement.class).count();
+        int labelCount = node.getBranches()
+                .map(ASTSwitchBranch::getLabel)
+                .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+
+        // note: if labelCount is zero, double division will produce +Infinity or NaN, not ArithmeticException
+        double density = stmtCount / (double) labelCount;
+        if (density >= getProperty(REPORT_LEVEL)) {
+            asCtx(data).addViolation(node);
+        }
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:10:26
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpcj8_sdvi.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($EXPR) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch ($EXPR) {
+        ...
+      }
+  - pattern-inside: |
+      switch ($EXPR) {
+        $...CASES;
+      }
+  - metavariable-pattern:
+      metavariable: $...CASES
+      pattern: |
+        case $X:
+          $...STMT;
+  - focus-metavariable: $...STMT
+  - metavariable-comparison:
+      metavariable: $THRESHOLD
+      comparison: "count($...STMT) / count($...CASES) >= 10"
+  message: High switch density (contains >=10 statements per case). Consider refactoring to subclasses or state pattern.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1114: Inappropriate Parse-Exception Handling'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpll_6ycw7.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($X) {
+  $CASE_CASES;
+  $...;
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpll_6ycw7.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($X) {
+  $CASE_CASES;
+  $...;
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully。
+请按照以下步骤进行修复：
+1. 修正pattern语法错误。当前pattern使用了无效的`$...;`语法，在Java模式中应使用`...`来表示任意代码块。
+2. 移除无效的metavariable-regex和metavariable-comparison，改用patterns组合来匹配case语句并计算结果。
+3. 重构规则结构，明确区分pattern（匹配switch语句）和pattern-inside（限定case范围），确保语法正确。
+4. 添加fix-regex来处理消息模板中的变量替换，或者改用metavariable-pattern来捕获具体值。
+5. 调整patterns顺序以确保语义合理性，先匹配switch结构再验证case条件和复杂度。
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:11:04
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp44lxxtae.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($EXPR) {
+  $...BODY;
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch ($EXPR) {
+        $...BODY;
+      }
+  - pattern-inside: $...BODY
+  - pattern-either:
+    - pattern: |
+        case $X:
+          $...STMT;
+          break;
+    - pattern: |
+        case $X:
+          $...STMT;$...OTHER
+    - pattern: |
+        default:
+          $...STMT;
+  - metavariable-comparison:
+      metavariable: $...STMT
+      comparison: "count($...STMT) >= 10"
+  message: High switch density (contains complex case blocks). Consider refactoring to subclasses or state pattern.
+  languages: [java]
+  severity: WARNING
+  metadata:
+    category: design
+    subcategory:
+    - complexity
+    cwe:
+    - 'CWE-1114: Inappropriate Parse-Exception Handling'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpcj8_sdvi.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($EXPR) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpcj8_sdvi.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($EXPR) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修正pattern语法错误。Java的switch语句模式中应该使用具体的语法元素而非简单的"..."
+2. 分离case语句匹配和语句计数逻辑到不同的patterns中，避免在单个pattern中处理复杂逻辑
+3. 使用pattern-either来处理不同的case语法形式（带break/不带break/default等）
+4. 确保metavariable-comparison使用的计数变量是有效捕获的
+5. 简化message模板，去除依赖运行时计算的值展示
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:52:25
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp3i8_sl2k.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...B
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: switch-density
+  patterns:
+  - pattern: |
+      switch ($E) {
+        $...B
+      }
+  - pattern: |
+      switch ($E) {
+        $...B
+      } -> $X;
+  - metavariable-regex:
+      metavariable: $B
+      regex: (case|default)
+  - metavariable-regex:
+      metavariable: $E
+      regex: .+
+  - metavariable-regex:
+      metavariable: $X
+      regex: .+
+  message: Switch density is too high ({{ $STMT_COUNT / $LABEL_COUNT }} >= {{ $REPORT_LEVEL }}). Consider using subclasses or State Pattern.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: design
+    technology:
+    - Java
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+    cwe:
+    - 'CWE-1110: Incomplete Design Documentation'
+    confidence: MEDIUM
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.design;
+
+import static net.sourceforge.pmd.properties.NumericConstraints.positive;
+
+import net.sourceforge.pmd.lang.java.ast.ASTStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchBranch;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchLike;
+import net.sourceforge.pmd.lang.java.ast.ASTSwitchStatement;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.rule.internal.CommonPropertyDescriptors;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+/**
+ * Switch Density - This is the number of statements over the number of
+ * cases within a switch. The higher the value, the more work each case
+ * is doing.
+ *
+ * <p>Its my theory, that when the Switch Density is high, you should start
+ * looking at Subclasses or State Pattern to alleviate the problem.</p>
+ *
+ * @author David Dixon-Peugh
+ * @author Clément Fournier
+ */
+public class SwitchDensityRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Integer> REPORT_LEVEL =
+            CommonPropertyDescriptors.reportLevelProperty()
+                    .desc("Threshold above which a switch statement or expression is reported")
+                    .require(positive())
+                    .defaultValue(10)
+                    .build();
+
+    public SwitchDensityRule() {
+        super(ASTSwitchStatement.class, ASTSwitchExpression.class);
+        definePropertyDescriptor(REPORT_LEVEL);
+    }
+
+    @Override
+    public Object visit(ASTSwitchStatement node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    @Override
+    public Object visit(ASTSwitchExpression node, Object data) {
+        return visitSwitchLike(node, data);
+    }
+
+    public Void visitSwitchLike(ASTSwitchLike node, Object data) {
+        // note: this does not cross find boundaries.
+        int stmtCount = node.descendants(ASTStatement.class).count();
+        int labelCount = node.getBranches()
+                .map(ASTSwitchBranch::getLabel)
+                .sumBy(label -> label.isDefault() || label.isPatternLabel() ? 1 : label.getExprList().count());
+
+        // note: if labelCount is zero, double division will produce +Infinity or NaN, not ArithmeticException
+        double density = stmtCount / (double) labelCount;
+        if (density >= getProperty(REPORT_LEVEL)) {
+            asCtx(data).addViolation(node);
+        }
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:53:04
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpgjhnuf3g.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...BODY
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: switch-density
+  message: Switch density is too high (density >= {{threshold}}). Consider using subclasses or State Pattern.
+  languages: [java]
+  severity: WARNING
+  patterns:
+  - pattern-inside: |
+      switch ($E) {
+        $...BODY
+      }
+  - pattern-inside: |
+      switch ($E) {
+        $...BODY
+      } -> $EXPR;
+  - pattern-either:
+    - pattern: |
+        case $C:
+          $...STMT;
+    - pattern: |
+        default:
+          $...STMT;
+  - focus-metavariable: $BODY
+  - pattern-not: |
+      case $C:
+  - pattern-not: |
+      default:
+  - metavariable-pattern:
+      metavariable: $E
+      pattern: $X
+  - metavariable-pattern:
+      metavariable: $EXPR
+      pattern: $Y
+  - metavariable-pattern:
+      metavariable: $C
+      pattern: $Z
+  metadata:
+    category: design
+    technology: [Java]
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+    cwe: ['CWE-1110: Incomplete Design Documentation']
+    confidence: MEDIUM
+    threshold: 10
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp3i8_sl2k.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...B
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为了解决以下错误：
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp3i8_sl2k.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...B
+}
+
+----- end pattern -----
+
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+
+请按照以下步骤进行修复：
+
+1. 修改pattern语法：将通用的switch语句模式改为具体的Java语法模式，使用`pattern-inside`来匹配switch结构
+2. 添加metavariable约束：明确$E和$B的类型约束，使用`metavariable-pattern`替代通用的`metavariable-regex`
+3. 分离switch语句和switch表达式：将两种不同的switch形式分成独立的pattern
+4. 添加计数逻辑：需要使用focus-metavariable配合pattern-not/regex来统计语句和case数量
+5. 修正条件判断：添加表达式来计算密度并比较阈值
+
+最终的修复方案应该考虑使用多个patterns组合来实现原来的功能检测，而不是尝试用单个pattern完成所有工作。
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:53:39
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmptzbtb0jk.switch-density:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+switch ($EXPR) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: switch-density
+  message: Switch density is too high (density >= {{threshold}}). Consider using subclasses or State Pattern.
+  languages: [java]
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        switch ($EXPR) {
+          ...
+        }
+    - pattern: |
+        switch ($EXPR) {
+          ...
+        } -> $RESULT;
+  - focus-metavariable: $EXPR
+  - metavariable-pattern:
+      metavariable: $EXPR
+      pattern: $X
+  - metavariable-pattern:
+      metavariable: $RESULT
+      pattern: $Y
+  - pattern-not: |
+      case $C:
+  - pattern-not: |
+      default:
+  metadata:
+    category: design
+    technology: [Java]
+    references:
+    - https://pmd.github.io/latest/pmd_rules_java_design.html#switchdensity
+    cwe: ['CWE-1110: Incomplete Design Documentation']
+    confidence: MEDIUM
+    threshold: 10
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpgjhnuf3g.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...BODY
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpgjhnuf3g.switch-density:
+ Invalid pattern for Java: Failure: no pattern found
+----- pattern -----
+switch ($E) {
+  $...BODY
+}
+
+----- end pattern -----
+
+请按照以下步骤进行修复：
+
+1. 将pattern-inside改为pattern，因为pattern-inside只能作为辅助匹配模式，不能作为主要匹配模式
+2. 简化switch语句匹配模式，移除不必要的body匹配，改为更基础的语法匹配
+3. 使用pattern-either明确区分switch语句和switch表达式两种语法结构
+4. 添加metavariable-type约束来确保匹配正确的Java语法元素
+5. 重构条件判断逻辑，使用多个patterns组合来实现语句和case的计数
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

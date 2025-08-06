@@ -1,0 +1,492 @@
+Timestamp: 2025-07-24 23:42:14
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-65)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,9-31)
+ERROR: isPrimitiveType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,23-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,33-51)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location of this
+ *    file, to include going backwards in the directory with '../'.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-023
+ *       owasp-a01
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.frameworks.spring.SpringRequestParameter
+
+class TaintedFileConfig extends TaintTracking::Configuration {
+  TaintedFileConfig() { this = "TaintedFileConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method method, Parameter p |
+      p = method.getAParameter() and
+      (
+        SpringRequestParameter::isRequestParam(p) or
+        SpringRequestParameter::isPathVariable(p) or
+        SpringRequestParameter::isRequestHeader(p) or
+        SpringRequestParameter::isCookieValue(p) or
+        SpringRequestParameter::isModelAttribute(p) or
+        SpringRequestParameter::isRequestBody(p)
+      ) and
+      not p.getType().isPrimitiveType() and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "File") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileReader") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") or
+        cc.getConstructedType().hasQualifiedName("javax.xml.transform", "StreamSource")
+      ) and
+      sink.asExpr() = cc.getAnArgument()
+    )
+    or
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().hasQualifiedName("java.nio.file", "Paths", "get") or
+        ma.getMethod().hasQualifiedName("org.springframework.util", "ResourceUtils", "getFile") or
+        ma.getMethod().hasQualifiedName("org.apache.commons.io", "FileUtils", "openOutputStream") or
+        (ma.getMethod().getName() = "getResource" or ma.getMethod().getName() = "getResourceAsStream")
+      ) and
+      sink.asExpr() = ma.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFileConfig conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potentially tainted file path from user input"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: tainted-file-path
+  languages:
+  - java
+  severity: ERROR
+  message: >-
+    Detected user input controlling a file path. An attacker could control the location of this
+    file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled
+    variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...)
+    to only retrieve the file name from the path.
+  options:
+    interfile: true
+  metadata:
+    cwe:
+    - 'CWE-23: Relative Path Traversal'
+    owasp:
+    - A01:2021 - Broken Access Control
+    references:
+    - https://owasp.org/www-community/attacks/Path_Traversal
+    category: security
+    technology:
+    - java
+    - spring
+    subcategory:
+    - vuln
+    impact: HIGH
+    likelihood: MEDIUM
+    confidence: HIGH
+    interfile: true
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ(...) $TYPE $SOURCE,...) {
+            ...
+          }
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ $TYPE $SOURCE,...) {
+            ...
+          }
+    - metavariable-regex:
+        metavariable: $TYPE
+        regex: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+    - metavariable-regex:
+        metavariable: $REQ
+        regex: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+    - focus-metavariable: $SOURCE
+  pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: new File(...)
+      - pattern: new java.io.File(...)
+      - pattern: new FileReader(...)
+      - pattern: new java.io.FileReader(...)
+      - pattern: new FileInputStream(...)
+      - pattern: new java.io.FileInputStream(...)
+      - pattern: (Paths $PATHS).get(...)
+      - patterns:
+        - pattern: |
+            $CLASS.$FUNC(...)
+        - metavariable-regex:
+            metavariable: $FUNC
+            regex: ^(getResourceAsStream|getResource)$
+      - patterns:
+        - pattern-either:
+          - pattern: new ClassPathResource($FILE, ...)
+          - pattern: ResourceUtils.getFile($FILE, ...)
+          - pattern: new FileOutputStream($FILE, ...)
+          - pattern: new java.io.FileOutputStream($FILE, ...)
+          - pattern: new StreamSource($FILE, ...)
+          - pattern: new javax.xml.transform.StreamSource($FILE, ...)
+          - pattern: FileUtils.openOutputStream($FILE, ...)
+        - focus-metavariable: $FILE
+  pattern-sanitizers:
+  - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 23:43:27
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::FunctionalConfiguration (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-71)
+ERROR: could not resolve module FlowSources (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,7-18)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-30)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,12-30)
+ERROR: could not resolve type DataFlow::PathGraph (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-25)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,57-75)
+ERROR: TaintedFileConfig.extends is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,30-31)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location of this
+ *    file, to include going backwards in the directory with '../'.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-023
+ *       owasp-a01
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.SpringController
+
+class TaintedFileConfig extends TaintTracking::FunctionalConfiguration {
+  TaintedFileConfig() { this = "TaintedFileConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method method, Parameter p |
+      p = method.getAParameter() and
+      FlowSources::remoteFlowSource(p) and
+      not p.getType() instanceof PrimitiveType and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "File") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileReader") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") or
+        cc.getConstructedType().hasQualifiedName("javax.xml.transform", "StreamSource")
+      ) and
+      sink.asExpr() = cc.getAnArgument()
+    )
+    or
+    exists(DataFlow::Callable c |
+      (
+        c.hasQualifiedName("java.nio.file", "Paths", "get") or
+        c.hasQualifiedName("org.springframework.util", "ResourceUtils", "getFile") or
+        c.hasQualifiedName("org.apache.commons.io", "FileUtils", "openOutputStream") or
+        (c.getName() = "getResource" or c.getName() = "getResourceAsStream")
+      ) and
+      sink.asExpr() = c.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(DataFlow::Callable c |
+      c.hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      sanitizer.asExpr() = c
+    )
+  }
+}
+
+from DataFlow::PathGraph pg, DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFileConfig conf
+where conf.hasFlowPath(source, sink, pg)
+select sink.getNode(), source, sink, "Potentially tainted file path from user input"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-65)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,9-31)
+ERROR: isPrimitiveType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,23-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,33-51)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-65)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,9-31)
+ERROR: could not resolve module SpringRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,9-31)
+ERROR: isPrimitiveType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,23-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,33-51)，请按照以下步骤进行修复：
+1. 替换SpringRequestParameter模块：
+   - 删除`import semmle.code.java.frameworks.spring.SpringRequestParameter`
+   - 替换为使用`import semmle.code.java.dataflow.FlowSources`中的`remoteFlowSource`作为替代方案
+
+2. 修复isPrimitiveType错误：
+   - 替换`not p.getType().isPrimitiveType()`
+   - 使用`not p.getType() instanceof PrimitiveType`
+
+3. 替换废弃的类型Configuration：
+   - 将`class TaintedFileConfig extends TaintTracking::Configuration`
+   - 替换为`class TaintedFileConfig extends TaintTracking::FunctionalConfiguration`
+
+4. 替换废弃的类型MethodAccess：
+   - 将所有`MethodAccess`使用替换为`DataFlow::Callables`
+   - 修改相关的方法调用逻辑
+
+5. 替换废弃的类型PathNode：
+   - 将`DataFlow::PathNode`替换为`DataFlow::PathGraph`
+   - 更新对应的查询路径语法
+
+6. 更新最终的查询语句：
+   - 使用新的`hasFlowPath`语法替换旧的方式
+   - 确保选择语句与新API兼容
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 23:44:45
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-60)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,9-26)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,9-26)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,9-26)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,9-26)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,9-26)
+ERROR: getAnArgument() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,25-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,33-61)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,7-37)
+ERROR: Expr::Expr is incompatible with Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,26-27)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location of this
+ *    file, to include going backwards in the directory with '../'.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-023
+ *       owasp-a01
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringAnnotations
+
+class TaintedFileConfig extends TaintTracking::Configuration {
+  TaintedFileConfig() { this = "TaintedFileConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method method, Parameter p |
+      p = method.getAParameter() and
+      (
+        SpringAnnotations::isRequestParam(p) or
+        SpringAnnotations::isPathVariable(p) or
+        SpringAnnotations::isRequestHeader(p) or
+        SpringAnnotations::isCookieValue(p) or
+        SpringAnnotations::isRequestBody(p)
+      ) and
+      not p.getType() instanceof PrimitiveType and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "File") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileReader") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") or
+        cc.getConstructedType().hasQualifiedName("javax.xml.transform", "StreamSource")
+      ) and
+      sink.asExpr() = cc.getAnArgument()
+    )
+    or
+    exists(Method m |
+      (
+        m.hasQualifiedName("java.nio.file", "Paths", "get") or
+        m.hasQualifiedName("org.springframework.util", "ResourceUtils", "getFile") or
+        m.hasQualifiedName("org.apache.commons.io", "FileUtils", "openOutputStream") or
+        (m.getName() = "getResource" or m.getName() = "getResourceAsStream")
+      ) and
+      sink.asExpr() = m.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Method m |
+      m.hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      sanitizer.asExpr() = m
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintedFileConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, source, "Potentially tainted file path from user input"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::FunctionalConfiguration (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-71)
+ERROR: could not resolve module FlowSources (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,7-18)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-30)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,12-30)
+ERROR: could not resolve type DataFlow::PathGraph (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-25)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,57-75)
+ERROR: TaintedFileConfig.extends is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,30-31)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+"""
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::FunctionalConfiguration (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-71)
+ERROR: could not resolve module FlowSources (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,7-18)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-30)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,12-30)
+ERROR: could not resolve type DataFlow::PathGraph (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-25)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,57-75)
+ERROR: TaintedFileConfig.extends is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,30-31)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,22-33)，请按照以下步骤进行修复：
+1. 修正Configuration继承：
+   - 将`extends TaintTracking::FunctionalConfiguration` 
+   - 替换为`extends TaintTracking::Configuration`
+   - 并移除构造函数中的字符串赋值`this = "TaintedFileConfig"`
+
+2. 修正FlowSources导入：
+   - 删除`import semmle.code.java.dataflow.FlowSources`
+   - 使用直接的方法参数检查来替代
+
+3. 修正Callable相关代码：
+   - 将`DataFlow::Callable`替换为`Method`或`Constructor`
+   - 保持原有的方法调用逻辑不变
+
+4. 修正PathGraph相关代码：
+   - 使用标准的路径查询语法
+   - 移除`DataFlow::PathGraph`引用
+
+5. 移除已弃用的PathNode：
+   - 使用`DataFlow::Node`替换`DataFlow::PathNode`
+   - 更新查询语句参数
+
+6. 修正查询语句：
+   - 使用标准的`hasFlowPath`语法
+   - 确保所有方法都被正确使用
+
+7. 修正Spring参数检测：
+   - 使用直接注解检查替代FlowSources
+   - 添加对常见Spring注解的检查逻辑
+"""```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

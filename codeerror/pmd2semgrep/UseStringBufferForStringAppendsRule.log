@@ -1,0 +1,485 @@
+Timestamp: 2025-07-22 19:52:38
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkfbn2ga5/rule.yml:2
+2  | - id: use-stringbuffer-for-string-appends
+3  |   message: |
+4  |     Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+5  |   languages:
+6  |   - java
+7  |   severity: WARNING
+8  |   pattern: |
+9  |     $TYPE $VAR = ...;
+10 |     ...
+11 |     ($LOOP_STMT) {
+12 |       ... $VAR = $VAR + ...;
+13 |       ... $VAR += ...;
+14 |     }
+15 |   patterns:
+16 |   - pattern: $TYPE $VAR = ...;
+17 |   - pattern-inside: |
+18 |       ($LOOP_STMT) {
+19 |         ...
+20 |       }
+21 |   - pattern-either:
+22 |     - pattern: $VAR = $VAR + ...;
+23 |     - pattern: $VAR += ...;
+24 |   - metavariable-filter:
+25 |       metavariable: $TYPE
+26 |       regex: String
+27 |   metadata:
+28 |     category: performance
+29 |     subcategory: efficiency
+30 |     cwe: "CWE-489: Leftover Debug Code"
+31 |     confidence: MEDIUM
+32 |     likelihood: MEDIUM
+33 |     impact: LOW
+34 |     technology:
+35 |     - Java
+36 |     references:
+37 |     - https://cwe.mitre.org/data/definitions/489.html
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: use-stringbuffer-for-string-appends
+  message: |
+    Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+  languages:
+  - java
+  severity: WARNING
+  pattern: |
+    $TYPE $VAR = ...;
+    ...
+    ($LOOP_STMT) {
+      ... $VAR = $VAR + ...;
+      ... $VAR += ...;
+    }
+  patterns:
+  - pattern: $TYPE $VAR = ...;
+  - pattern-inside: |
+      ($LOOP_STMT) {
+        ...
+      }
+  - pattern-either:
+    - pattern: $VAR = $VAR + ...;
+    - pattern: $VAR += ...;
+  - metavariable-filter:
+      metavariable: $TYPE
+      regex: String
+  metadata:
+    category: performance
+    subcategory: efficiency
+    cwe: "CWE-489: Leftover Debug Code"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/489.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.performance;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import net.sourceforge.pmd.lang.ast.Node;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.AccessType;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignmentExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTLoopStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+
+public class UseStringBufferForStringAppendsRule extends AbstractJavaRulechainRule {
+
+    public UseStringBufferForStringAppendsRule() {
+        super(ASTVariableId.class);
+    }
+
+    /**
+     * This method is used to check whether user appends string directly instead of using StringBuffer or StringBuilder
+     * @param node This is the expression of part of java code to be checked.
+     * @param data This is the data to return.
+     * @return Object This returns the data passed in. If violation happens, violation is added to data.
+     */
+    @Override
+    public Object visit(ASTVariableId node, Object data) {
+        if (!TypeTestUtil.isA(String.class, node) || node.isForeachVariable()) {
+            return data;
+        }
+
+        // Remember how often the variable has been used on the right hand side
+        int usageCounter = 0;
+
+        List<ASTNamedReferenceExpr> possibleViolations = new ArrayList<>();
+
+        for (ASTNamedReferenceExpr usage : node.getLocalUsages()) {
+            if ((node.isField() || node.isFormalParameter())
+                && isNotWithinLoop(usage)) {
+                // ignore if the field or formal parameter is *not* used within loops
+                continue;
+            }
+
+            boolean isSimpleAssignment = false;
+            if (usage.getParent() instanceof ASTAssignmentExpression) {
+                ASTAssignmentExpression assignment = (ASTAssignmentExpression) usage.getParent();
+                // it is either a compound (a += x)
+                if (assignment.isCompound()) {
+                    usageCounter++;
+                }
+
+                int usageOnRightHandSide =
+                    JavaAstUtils.flattenOperands(assignment.getRightOperand())
+                                .filterIs(ASTNamedReferenceExpr.class)
+                                .filterMatching(ASTNamedReferenceExpr::getReferencedSym, node.getSymbol())
+                                .count();
+
+                // or maybe a append in some way (a = a + x)
+                // or a combination (a += a + x)
+                usageCounter += usageOnRightHandSide;
+
+                isSimpleAssignment = !assignment.isCompound() && usageOnRightHandSide == 0;
+            }
+
+            if (usage.getAccessType() == AccessType.WRITE && !isSimpleAssignment) {
+                if (isWithinLoop(usage)) {
+                    // always report appends within a loop
+                    asCtx(data).addViolation(usage);
+                } else {
+                    possibleViolations.add(usage);
+                }
+            }
+        }
+
+        // only report, if it is used more than once
+        // then all usage locations are reported
+        if (usageCounter > 1) {
+            possibleViolations.forEach(v -> asCtx(data).addViolation(v));
+        }
+
+        return data;
+    }
+
+    private boolean isNotWithinLoop(Node name) {
+        return name.ancestors(ASTLoopStatement.class).isEmpty();
+    }
+
+    private boolean isWithinLoop(Node name) {
+        return !isNotWithinLoop(name);
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:53:09
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpnuvor9i1/rule.yml:18
+18 |   - metavariable-filter:
+19 |       metavariable: $TYPE
+20 |       regex: String
+21 |   metadata:
+
+{'metavariable-filter': {'metavariable': '$TYPE', 'regex': 'String'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: use-stringbuffer-for-string-appends
+  message: |
+    Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern: $TYPE $VAR = ...;
+  - pattern-inside: |
+      ($LOOP_STMT) {
+        ...
+      }
+  - pattern-either:
+    - pattern: $VAR = $VAR + ...;
+    - pattern: $VAR += ...;
+  - metavariable-filter:
+      metavariable: $TYPE
+      regex: String
+  metadata:
+    category: performance
+    subcategory: efficiency
+    cwe: "CWE-489: Leftover Debug Code"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/489.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkfbn2ga5/rule.yml:2
+2  | - id: use-stringbuffer-for-string-appends
+3  |   message: |
+4  |     Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+5  |   languages:
+6  |   - java
+7  |   severity: WARNING
+8  |   pattern: |
+9  |     $TYPE $VAR = ...;
+10 |     ...
+11 |     ($LOOP_STMT) {
+12 |       ... $VAR = $VAR + ...;
+13 |       ... $VAR += ...;
+14 |     }
+15 |   patterns:
+16 |   - pattern: $TYPE $VAR = ...;
+17 |   - pattern-inside: |
+18 |       ($LOOP_STMT) {
+19 |         ...
+20 |       }
+21 |   - pattern-either:
+22 |     - pattern: $VAR = $VAR + ...;
+23 |     - pattern: $VAR += ...;
+24 |   - metavariable-filter:
+25 |       metavariable: $TYPE
+26 |       regex: String
+27 |   metadata:
+28 |     category: performance
+29 |     subcategory: efficiency
+30 |     cwe: "CWE-489: Leftover Debug Code"
+31 |     confidence: MEDIUM
+32 |     likelihood: MEDIUM
+33 |     impact: LOW
+34 |     technology:
+35 |     - Java
+36 |     references:
+37 |     - https://cwe.mitre.org/data/definitions/489.html
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+--> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkfbn2ga5/rule.yml:2
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 删除顶层的 `pattern` 字段（第8-14行），因为 Semgrep 规则中 `pattern` 和 `patterns` 是互斥的，不能同时使用
+2. 将原 `pattern` 内容拆解整合到 `patterns` 结构中，使用 `pattern-inside` 和 `pattern-either` 的组合来实现相同逻辑
+3. 保留 `metavariable-filter` 对 $TYPE 的类型检查，确保只匹配 String 类型变量
+4. 重新组织 patterns 结构，确保：
+   - 变量声明检查（原第16行）作为初始模式
+   - 循环结构检查（原第17-20行）作为包含上下文
+   - 字符串拼接操作检查（原第22-23行）作为模式选择
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:53:50
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpk3_mhqha.use-stringbuffer-for-string-appends:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+String $VAR = ...;
+...
+($LOOP_STMT) {
+  ... $VAR = $VAR + ...;
+  ... $VAR += ...;
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: use-stringbuffer-for-string-appends
+  message: |
+    Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern: |
+      String $VAR = ...;
+      ...
+      ($LOOP_STMT) {
+        ... $VAR = $VAR + ...;
+        ... $VAR += ...;
+      }
+  metadata:
+    category: performance
+    subcategory: efficiency
+    cwe: "CWE-489: Leftover Debug Code"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/489.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpnuvor9i1/rule.yml:18
+18 |   - metavariable-filter:
+19 |       metavariable: $TYPE
+20 |       regex: String
+21 |   metadata:
+
+{'metavariable-filter': {'metavariable': '$TYPE', 'regex': 'String'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+--> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpnuvor9i1/rule.yml:18
+
+{'metavariable-filter': {'metavariable': '$TYPE', 'regex': 'String'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将 `metavariable-filter` 从 patterns 列表中移出，改为作为同级字段直接放在规则顶层
+2. 确保 `metavariable-filter` 的结构符合 Semgrep 规范，使用 `pattern` 作为过滤条件而非直接使用 `regex`
+3. 修正后的 `metavariable-filter` 应该指定它所应用的特定模式（使用 `patterns` 时）
+4. 或者考虑使用 `pattern-regex` 替代 `metavariable-filter` 来进行类型匹配
+```yaml
+# 转换后的 Semgrep 规则
+rules:
+- id: use-stringbuffer-for-string-appends
+  message: |
+    Detected string concatenation in loops, consider using StringBuffer or StringBuilder for better performance.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern: |
+      $TYPE $VAR = ...;
+      ...
+      ($LOOP_STMT) {
+        ... $VAR = $VAR + ...;
+        ... $VAR += ...;
+      }
+  - metavariable-type:
+      metavariable: $TYPE
+      type: java.lang.String
+  metadata:
+    category: performance
+    subcategory: efficiency
+    cwe: "CWE-489: Leftover Debug Code"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/489.html
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

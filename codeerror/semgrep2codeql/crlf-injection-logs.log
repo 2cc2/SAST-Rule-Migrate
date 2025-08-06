@@ -1,0 +1,1401 @@
+Timestamp: 2025-07-24 15:46:28
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,46-68)
+ERROR: could not resolve type LogLevelType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,85-97)
+ERROR: could not resolve type LoggerType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,46-56)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-58)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,58-76)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class LoggerConfiguration extends DataFlow::Configuration {
+  LoggerConfiguration() { this = "LoggerConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getParameter") and
+      ma.getQualifier().getType() instanceof TypeHttpServletRequest and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("trace|debug|info|warn|error") or
+       (ma.getMethod().getName() = "log" and ma.getArgument(0).getType() instanceof LogLevelType)) and
+      ma.getQualifier().getType() instanceof LoggerType and
+      sink.asExpr() = ma.getAnArgument()
+    )
+  }
+}
+
+from LoggerConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF Injection in logging from untrusted source."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: crlf-injection-logs
+  message: >-
+    When data from an untrusted source is put into a logger and not neutralized correctly,
+    an attacker could forge log entries or include malicious content.
+  metadata:
+    cwe:
+    - "CWE-93: Improper Neutralization of CRLF Sequences ('CRLF Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#CRLF_INJECTION_LOGS
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  severity: WARNING
+  languages: [java]
+  patterns:
+      # Enumerate possible enclosing scopes that define request and logger
+  - pattern-either:
+          # Logger is defined as a field on a class
+    - patterns:
+      - pattern-inside: |
+          class $CLASS {
+            ...
+            Logger $LOG = ...;
+            ...
+          }
+      - pattern-either:
+        - pattern-inside: |
+            $X $METHOD(...,HttpServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...,ServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              HttpServletRequest $REQ = ...;
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              ServletRequest $REQ = ...;
+              ...
+            }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          HttpServletRequest $REQ = ...;
+          ...
+        }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          ServletRequest $REQ = ...;
+          ...
+        }
+  - pattern-either:
+          # Enumerate possible injection sites
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.$LEVEL(<... $VAL ...>);
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.log($LEVEL,<... $VAL ...>);
+    - pattern: |
+        $LOG.$LEVEL(<... $REQ.getParameter(...) ...>);
+    - pattern: |
+        $LOG.log($LEVEL,<... $REQ.getParameter(...) ...>);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:47:24
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,37-53)
+ERROR: getEnclosingCall() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,16-32)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,77-93)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,39-55)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,39-55)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,58-76)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class LoggerConfiguration extends TaintTracking::Configuration {
+  LoggerConfiguration() { this = "LoggerConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e |
+      e = source.asExpr() and
+      exists(Call ma |
+        ma = e.(Call) and
+        ma.getCallee().hasName("getParameter") and
+        ma.getQualifier().getType().hasQualifiedName("javax.servlet.http", "HttpServletRequest")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Expr e |
+      e = sink.asExpr() and
+      exists(Call ma |
+        ma = e.getEnclosingCall() and
+        (
+          ma.getCallee().getName().matches("trace|debug|info|warn|error") or
+          (ma.getCallee().getName() = "log" and ma.getArgument(0).getType().hasQualifiedName("java.util.logging", "Level"))
+        ) and
+        (
+          ma.getQualifier().getType().hasQualifiedName("org.apache.logging.log4j", "Logger") or
+          ma.getQualifier().getType().hasQualifiedName("java.util.logging", "Logger")
+        )
+      )
+    )
+  }
+}
+
+from LoggerConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF Injection in logging from untrusted source."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,46-68)
+ERROR: could not resolve type LogLevelType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,85-97)
+ERROR: could not resolve type LoggerType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,46-56)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-58)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,58-76)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,46-68)
+ERROR: could not resolve type LogLevelType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,85-97)
+ERROR: could not resolve type LoggerType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,46-56)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-58)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,58-76)，请按照以下步骤进行修复：
+1. 替换TypeHttpServletRequest为javax.servlet.http.HttpServletRequest类型的检查，使用hasQualifiedName方法来验证
+2. 移除LogLevelType检查，直接匹配log方法的第一个参数类型为Level类
+3. 替换LoggerType为org.apache.logging.log4j.Logger或java.util.logging.Logger类型的检查，根据实际使用的日志框架决定
+4. 替换Configuration为TaintTracking::Configuration，这是新的推荐用法
+5. 替换所有MethodAccess为Expr，并使用asCall()方法转型
+6. 替换PathNode为DataFlow::PathNode，保持类型一致性
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:48:26
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-43)
+ERROR: getUnderlyingType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,37-54)
+ERROR: getEnclosingExpr() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,16-32)
+ERROR: getUnderlyingType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,77-94)
+ERROR: getUnderlyingType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,39-56)
+ERROR: getUnderlyingType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,39-56)
+ERROR: could not resolve type TaintTracking::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,31-54)
+ERROR: could not resolve type TaintTracking::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,63-86)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,35-63)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Logging
+
+class LoggerConfiguration extends TaintTracking::Configuration {
+  LoggerConfiguration() { this = "LoggerConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e |
+      e = source.asExpr() and
+      exists(Call ma |
+        ma = e.(Call) and
+        ma.getCallee().hasName("getParameter") and
+        ma.getQualifier().getType().getUnderlyingType().hasQualifiedName("javax.servlet.http", "HttpServletRequest")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Expr e |
+      e = sink.asExpr() and
+      exists(Call ma |
+        ma = e.getEnclosingExpr().(Call) and
+        (
+          ma.getCallee().getName().matches("trace|debug|info|warn|error") or
+          (ma.getCallee().getName() = "log" and ma.getArgument(0).getType().getUnderlyingType().hasQualifiedName("java.util.logging", "Level"))
+        ) and
+        (
+          ma.getQualifier().getType().getUnderlyingType().hasQualifiedName("org.apache.logging.log4j", "Logger") or
+          ma.getQualifier().getType().getUnderlyingType().hasQualifiedName("java.util.logging", "Logger")
+        )
+      )
+    )
+  }
+}
+
+from LoggerConfiguration cfg, TaintTracking::PathNode source, TaintTracking::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF Injection in logging from untrusted source."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,37-53)
+ERROR: getEnclosingCall() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,16-32)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,77-93)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,39-55)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,39-55)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,58-76)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,37-53)
+ERROR: getEnclosingCall() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,16-32)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,77-93)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,39-55)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,39-55)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,31-49)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,58-76)，请按照以下步骤进行修复：
+1. 使用RefType类型代替Type进行类型检查，RefType类有hasQualifiedName方法
+2. 替换getEnclosingCall()为getEnclosingExpr().(Call)，获取包围的表达式并转型为Call
+3. 保持使用TaintTracking::Configuration，这是正确的类型
+4. 替换DataFlow::PathNode为TaintTracking::PathNode，保持一致的类型
+5. 添加必要的import语句：import semmle.code.java.frameworks.Logging
+6. 使用RefType的getUnderlyingType()方法获取基础类型后再进行类型检查
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:30:12
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-43)
+ERROR: could not resolve type LoggingMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-25)
+ERROR: could not resolve type TypeServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,26-44)
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,26-48)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-60)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,3-4)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,3-4)
+WARNING: unused variable 'badMethod' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,13-22)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Logging
+
+class RequestParamToLogSink extends DataFlow::Configuration {
+  RequestParamToLogSink() { this = "RequestParamToLogSink" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName().matches("getParameter%") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(LoggingMethod lm |
+      lm.getACall() = sink.asExpr()
+    )
+  }
+}
+
+from Method badMethod, RequestParamToLogSink config, DataFlow::Node source, DataFlow::Node sink
+where
+  config.hasFlow(source, sink) and
+  exists(Parameter p | p = source.asParameter()) and
+  p.getType() instanceof TypeServletRequest or
+  p.getType() instanceof TypeHttpServletRequest
+select sink, "Potential CRLF injection in logs via untrusted request parameter"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: crlf-injection-logs
+  message: >-
+    When data from an untrusted source is put into a logger and not neutralized correctly,
+    an attacker could forge log entries or include malicious content.
+  metadata:
+    cwe:
+    - "CWE-93: Improper Neutralization of CRLF Sequences ('CRLF Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#CRLF_INJECTION_LOGS
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  severity: WARNING
+  languages: [java]
+  patterns:
+      # Enumerate possible enclosing scopes that define request and logger
+  - pattern-either:
+          # Logger is defined as a field on a class
+    - patterns:
+      - pattern-inside: |
+          class $CLASS {
+            ...
+            Logger $LOG = ...;
+            ...
+          }
+      - pattern-either:
+        - pattern-inside: |
+            $X $METHOD(...,HttpServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...,ServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              HttpServletRequest $REQ = ...;
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              ServletRequest $REQ = ...;
+              ...
+            }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          HttpServletRequest $REQ = ...;
+          ...
+        }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          ServletRequest $REQ = ...;
+          ...
+        }
+  - pattern-either:
+          # Enumerate possible injection sites
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.$LEVEL(<... $VAL ...>);
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.log($LEVEL,<... $VAL ...>);
+    - pattern: |
+        $LOG.$LEVEL(<... $REQ.getParameter(...) ...>);
+    - pattern: |
+        $LOG.log($LEVEL,<... $REQ.getParameter(...) ...>);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:31:05
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.logging.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-40)
+ERROR: could not resolve module javax.servlet.ServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-36)
+ERROR: could not resolve module javax.servlet.http.HttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-19)
+ERROR: could not resolve type HttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,29-47)
+ERROR: could not resolve type ServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,29-43)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,11-23)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.logging.Logging
+import javax.servlet.ServletRequest
+import javax.servlet.http.HttpServletRequest
+
+class RequestParamToLogSink extends TaintTracking::Configuration {
+  RequestParamToLogSink() { this = "RequestParamToLogSink" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr ma |
+      ma.(MethodAccess).getMethod().getName().matches("getParameter%") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Logging::LoggingCall lm |
+      lm.getACall() = sink.asExpr()
+    )
+  }
+}
+
+from RequestParamToLogSink config, DataFlow::Node source, DataFlow::Node sink
+where
+  config.hasFlow(source, sink) and
+  exists(Parameter p |
+    p = source.asParameter() and
+    (p.getType() instanceof HttpServletRequest or
+     p.getType() instanceof ServletRequest)
+  )
+select sink, "Potential CRLF injection in logs via untrusted request parameter"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-43)
+ERROR: could not resolve type LoggingMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-25)
+ERROR: could not resolve type TypeServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,26-44)
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,26-48)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-60)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,3-4)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,3-4)
+WARNING: unused variable 'badMethod' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,13-22)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-43)
+ERROR: could not resolve type LoggingMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-25)
+ERROR: could not resolve type TypeServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,26-44)
+ERROR: could not resolve type TypeHttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,26-48)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-60)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,3-4)
+ERROR: could not resolve variable p (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,3-4)
+WARNING: unused variable 'badMethod' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,13-22)，请按照以下步骤进行修复：
+1. 替换deprecated的Configuration类为TaintTracking::Configuration
+2. 替换MethodAccess为Expr，并更新相关条件判断逻辑
+3. 导入正确的Logging库路径：import semmle.code.java.logging.Logging
+4. 替换LoggingMethod为Logging::LoggingCall
+5. 使用正确的Servlet请求类型判断：source.asParameter().getType() instanceof HttpServletRequest或ServletRequest
+6. 修正变量p的定义，在where子句前正确声明变量p
+7. 移除未使用的badMethod变量
+8. 确保所有类型导入都已正确处理，包括HttpServletRequest和ServletRequest对应的java标准库路径
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:31:47
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.logging.Logger (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-39)
+ERROR: could not resolve type Logger (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,57-63)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+ERROR: The cast type Callable is incompatible with the expression type Expr::Expr. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,11-19)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.logging.Logger
+
+class RequestParamToLogSink extends TaintTracking::Configuration {
+  RequestParamToLogSink() { this = "RequestParamToLogSink" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr ma |
+      ma.(Callable).getName().matches("getParameter%") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess logCall |
+      logCall.getMethod().getDeclaringType() instanceof Logger and
+      sink.asExpr() = logCall
+    )
+  }
+}
+
+from RequestParamToLogSink config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential CRLF injection in logs via untrusted request parameter"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.logging.Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-40)
+ERROR: could not resolve module javax.servlet.ServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-36)
+ERROR: could not resolve module javax.servlet.http.HttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module Logging (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-19)
+ERROR: could not resolve type HttpServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,29-47)
+ERROR: could not resolve type ServletRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,29-43)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,11-23)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.logging.Logger
+
+class RequestParamToLogSink extends TaintTracking::Configuration {
+  RequestParamToLogSink() { this = "RequestParamToLogSink" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr ma |
+      ma.(Callable).getName().matches("getParameter%") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess logCall |
+      logCall.getMethod().getDeclaringType() instanceof Logger and
+      sink.asExpr() = logCall
+    )
+  }
+}
+
+from RequestParamToLogSink config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential CRLF injection in logs via untrusted request parameter"
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:52:31
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getCaller() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,63-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,6-18)
+ERROR: 'logLevel' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,45-60)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+import java
+
+// Define logger types
+class Logger extends RefType {
+  Logger() {
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+
+// Define request types
+class ServletRequest extends RefType {
+  ServletRequest() {
+    this.hasQualifiedName("javax.servlet", "ServletRequest") or
+    this.hasQualifiedName("javax.servlet", "HttpServletRequest")
+  }
+}
+
+// Find logger calls with request parameters
+from MethodAccess logCall, Method getParam, string logLevel
+where
+  // Match logger method calls (info, warn, error, etc.)
+  (logCall.getMethod().getName().matches("%log%") or logCall.getMethod().getName().matches("%info%") or
+   logCall.getMethod().getName().matches("%warn%") or logCall.getMethod().getName().matches("%error%")) and
+  logCall.getMethod().getDeclaringType() instanceof Logger and
+  // Match request.getParameter() calls
+  getParam.getDeclaringType() instanceof ServletRequest and
+  getParam.getName() = "getParameter" and
+  // Check if the request parameter flows into the logger call
+  (getParam.getCaller() = logCall.getAnArgument() or getParam.getACall().getResult() = logCall.getAnArgument())
+select logCall, "Potentially unsafe logging of HTTP request parameter, may be vulnerable to CRLF injection."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: crlf-injection-logs
+  message: >-
+    When data from an untrusted source is put into a logger and not neutralized correctly,
+    an attacker could forge log entries or include malicious content.
+  metadata:
+    cwe:
+    - "CWE-93: Improper Neutralization of CRLF Sequences ('CRLF Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#CRLF_INJECTION_LOGS
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  severity: WARNING
+  languages: [java]
+  patterns:
+      # Enumerate possible enclosing scopes that define request and logger
+  - pattern-either:
+          # Logger is defined as a field on a class
+    - patterns:
+      - pattern-inside: |
+          class $CLASS {
+            ...
+            Logger $LOG = ...;
+            ...
+          }
+      - pattern-either:
+        - pattern-inside: |
+            $X $METHOD(...,HttpServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...,ServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              HttpServletRequest $REQ = ...;
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              ServletRequest $REQ = ...;
+              ...
+            }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          HttpServletRequest $REQ = ...;
+          ...
+        }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          ServletRequest $REQ = ...;
+          ...
+        }
+  - pattern-either:
+          # Enumerate possible injection sites
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.$LEVEL(<... $VAL ...>);
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.log($LEVEL,<... $VAL ...>);
+    - pattern: |
+        $LOG.$LEVEL(<... $REQ.getParameter(...) ...>);
+    - pattern: |
+        $LOG.log($LEVEL,<... $REQ.getParameter(...) ...>);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:53:19
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type ServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,37-60)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,22-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,33-51)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+// Define logger types
+class Logger extends RefType {
+  Logger() {
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+
+// Define logger methods as sinks
+class LoggerMethod extends Method {
+  LoggerMethod() {
+    this.getDeclaringType() instanceof Logger and
+    (
+      this.getName().matches("%log%") or
+      this.getName().matches("%info%") or
+      this.getName().matches("%warn%") or
+      this.getName().matches("%error%")
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "CRLFInjectionLogsConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asParameter() instanceof ServletRequestParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCallee() instanceof LoggerMethod and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, Config conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), 
+  "Potentially unsafe logging of HTTP request parameter, may be vulnerable to CRLF injection."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getCaller() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,63-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,6-18)
+ERROR: 'logLevel' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,45-60)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getCaller() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,63-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,6-18)
+ERROR: 'logLevel' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,45-60)，请按照以下步骤进行修复：
+1. 将MethodAccess替换为新的API：MethodAccess已弃用，应使用Call或MethodCall等替代类型来匹配方法调用
+2. 修改数据流分析方式：不要直接使用getCaller()和getACall()，改用CodeQL的数据流追踪库(TaintTracking)来检测请求参数是否流入日志方法
+3. 移除未使用的logLevel变量：删除select语句中未绑定的logLevel变量声明
+4. 完整的数据流分析应包含：
+   - 定义请求参数作为源(source)
+   - 定义日志方法作为汇聚点(sink)
+   - 配置合理的污染传播规则
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:54:15
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Config (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,39-60)
+ERROR: could not resolve module Servlets (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,52-60)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,33-51)
+ERROR: CRLFInjectionLogsConfig.extends is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,36-37)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+// Define logger types
+class Logger extends RefType {
+  Logger() {
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+
+// Define logger methods as sinks
+class LoggerMethod extends Method {
+  LoggerMethod() {
+    this.getDeclaringType() instanceof Logger and
+    (
+      this.getName().matches("%log%") or
+      this.getName().matches("%info%") or
+      this.getName().matches("%warn%") or
+      this.getName().matches("%error%")
+    )
+  }
+}
+
+class CRLFInjectionLogsConfig extends TaintTracking::Config {
+  CRLFInjectionLogsConfig() { this = "CRLFInjectionLogsConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType() instanceof Servlets::ServletRequest and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCallee() instanceof LoggerMethod and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, CRLFInjectionLogsConfig conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(),
+  "Potentially unsafe logging of HTTP request parameter, may be vulnerable to CRLF injection."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type ServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,37-60)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,22-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,33-51)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type ServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,37-60)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,22-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,33-51)，请按照以下步骤进行修复：
+1. 替换ServletRequestParameter为正确的类型：使用ServletRequest.getParameter()方法调用作为污染源
+2. 更新弃用的Configuration类：使用新的TaintTracking::Config替代旧的TaintTracking::Configuration
+3. 替换PathNode为新的API：使用DataFlow::PathGraph中的Source和Sink节点类型替代旧PathNode
+4. 完善数据流分析配置：
+   - 正确定义污染源为ServletRequest.getParameter()方法的返回值
+   - 确保日志方法调用作为正确的汇聚点
+   - 使用新的路径查询语法显示污染路径
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 21:40:23
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.CrlInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-46)
+ERROR: could not resolve module semmle.code.java.LoggerAPI (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-34)
+ERROR: could not resolve type LoggerMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,34-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,28-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,24-42)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,51-69)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.security.CrlInjection
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.LoggerAPI
+
+class LoggerParameter extends DataFlow::Node {
+  LoggerParameter() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName().matches("getParameter%") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class LoggerSink extends DataFlow::Node {
+  LoggerSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod() instanceof LoggerMethod or ma.getMethod().getName().matches("log")) and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class LoggerConfig extends TaintTracking::Configuration {
+  LoggerConfig() { this = "LoggerConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LoggerParameter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof LoggerSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from LoggerConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF injection in logs from untrusted source"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: crlf-injection-logs
+  message: >-
+    When data from an untrusted source is put into a logger and not neutralized correctly,
+    an attacker could forge log entries or include malicious content.
+  metadata:
+    cwe:
+    - "CWE-93: Improper Neutralization of CRLF Sequences ('CRLF Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#CRLF_INJECTION_LOGS
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  severity: WARNING
+  languages: [java]
+  patterns:
+      # Enumerate possible enclosing scopes that define request and logger
+  - pattern-either:
+          # Logger is defined as a field on a class
+    - patterns:
+      - pattern-inside: |
+          class $CLASS {
+            ...
+            Logger $LOG = ...;
+            ...
+          }
+      - pattern-either:
+        - pattern-inside: |
+            $X $METHOD(...,HttpServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...,ServletRequest $REQ,...) {
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              HttpServletRequest $REQ = ...;
+              ...
+            }
+        - pattern-inside: |
+            $X $METHOD(...) {
+              ...
+              ServletRequest $REQ = ...;
+              ...
+            }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          HttpServletRequest $REQ = ...;
+          ...
+        }
+    - pattern-inside: |
+        $X $METHOD(...) {
+          ...
+          Logger $LOG = ...;
+          ...
+          ServletRequest $REQ = ...;
+          ...
+        }
+  - pattern-either:
+          # Enumerate possible injection sites
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.$LEVEL(<... $VAL ...>);
+    - pattern: |
+        String $VAL = $REQ.getParameter(...);
+        ...
+        $LOG.log($LEVEL,<... $VAL ...>);
+    - pattern: |
+        $LOG.$LEVEL(<... $REQ.getParameter(...) ...>);
+    - pattern: |
+        $LOG.log($LEVEL,<... $REQ.getParameter(...) ...>);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 21:41:21
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,24-33)
+ERROR: could not resolve module DataFlow2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,52-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,28-57)
+Rule Content:
+/**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking2
+
+class Logger extends RefType {
+  Logger() { 
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+
+predicate isLoggerMethod(Method m) {
+  m.getDeclaringType() instanceof Logger
+}
+
+class LoggerParameter extends DataFlow::Node {
+  LoggerParameter() {
+    exists(Expr ma |
+      ma.(Call).getCallee().getName().matches("getParameter%") and
+      ma.(Call).getCallee().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class LoggerSink extends DataFlow::Node {
+  LoggerSink() {
+    exists(Expr ma |
+      (isLoggerMethod(ma.(Call).getCallee()) or ma.(Call).getCallee().getName().matches("log")) and
+      this.asExpr() = ma.(Call).getArgument(0)
+    )
+  }
+}
+
+class LoggerConfig extends TaintTracking2::Configuration {
+  LoggerConfig() { this = "LoggerConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LoggerParameter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof LoggerSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from LoggerConfig cfg, DataFlow2::PathNode source, DataFlow2::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF injection in logs from untrusted source"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.CrlInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-46)
+ERROR: could not resolve module semmle.code.java.LoggerAPI (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-34)
+ERROR: could not resolve type LoggerMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,34-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,28-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,24-42)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,51-69)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.CrlInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-46)
+ERROR: could not resolve module semmle.code.java.LoggerAPI (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-34)
+ERROR: could not resolve type LoggerMethod (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,34-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,28-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,24-42)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,51-69)，请按照以下步骤进行修复：
+1. 移除不存在的模块导入：删除`import semmle.code.java.security.CrlInjection`和`import semmle.code.java.LoggerAPI`这两行导入语句。
+2. 实现自定义LoggerMethod识别逻辑：创建一个新的谓词来识别Logger相关方法，替换原有的LoggerMethod检查。
+3. 替换过时的MethodAccess类型：使用Expr类型替代MethodAccess，并结合getEnclosingCall()方法来获取方法调用信息。
+4. 更新Configuration使用方式：将继承自TaintTracking::Configuration改为使用TaintTracking2::Configuration类。
+5. 更新PathNode使用方式：将所有DataFlow::PathNode替换为DataFlow2::PathNode。
+6. 添加必要的自定义Logger相关定义：需要创建自定义的Logger类和相关方法识别逻辑，可以用如下代码补充：
+```ql
+class Logger extends RefType {
+  Logger() { 
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+```
+```ql
+predicate isLoggerMethod(Method m) {
+  m.getDeclaringType() instanceof Logger
+}
+"""
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

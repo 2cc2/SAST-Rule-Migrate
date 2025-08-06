@@ -1,0 +1,1314 @@
+Timestamp: 2025-07-24 14:08:11
+Attempt: 1
+Error: A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+Rule Content:
+/**
+ * @name SQL query construction via string concatenation
+ * @description Constructing SQL queries via string concatenation can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jdbc.Jdbc
+
+/** Detects methods where string concatenation is used to construct SQL queries. */
+predicate isSqlStringConcatenationMethod(Method method, Variable sqlParam, Expr queryExpr) {
+  exists(MethodAccess prepareStmt |
+    prepareStmt.getMethod().getName() = "prepareStatement" and
+    prepareStmt.getQualifier() = JdbcSession::getConnection() and
+    prepareStmt.getAnArgument() = queryExpr and
+    queryExpr instanceof AddExpr and
+    (
+      exists(queryExpr.getAnOperand() |
+        TaintTracking::localTaint(_, _, sqlParam.getAnAccess(), _) and
+        sqlParam.getParent() = method.getAParameter()
+      )
+      or
+      exists(Variable v |
+        v.getAnAccess() = queryExpr.getAnOperand() and
+        TaintTracking::localTaint(_, _, sqlParam.getAnAccess(), v.getAnAssignedValue())
+      )
+    ) and
+    exists(MethodAccess executeQuery |
+      executeQuery.getMethod().getName() = "executeQuery" and
+      executeQuery.getQualifier().getType().getName() = "PreparedStatement"
+    )
+  )
+}
+
+from Method method, Variable sqlParam, Expr queryExpr
+where
+  isSqlStringConcatenationMethod(method, sqlParam, queryExpr)
+select queryExpr, "In " + method.getName() + ", " + sqlParam.getName() + 
+  " is used to construct a SQL query via string concatenation."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: find-sql-string-concatenation
+  message: >-
+    In $METHOD, $X is used to construct a SQL query via string concatenation.
+  languages: [java]
+  severity: ERROR
+  pattern-either:
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        Session $SESSION = ...;
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        Session $SESSION = ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  metadata:
+    category: security
+    technology:
+    - jboss
+    confidence: MEDIUM
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            /**
+ * @name Building a command line with string concatenation
+ * @description Using concatenated strings in a command line is vulnerable to malicious
+ *              insertion of special characters in the strings.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision high
+ * @id java/concatenated-command-line
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ */
+
+import java
+import semmle.code.java.security.CommandLineQuery
+import semmle.code.java.security.ExternalProcess
+
+/**
+ * Strings that are known to be sane by some simple local analysis. Such strings
+ * do not need to be escaped, because the programmer can predict what the string
+ * has in it.
+ */
+predicate saneString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable var | var.getAnAccess() = expr and exists(var.getAnAssignedValue()) |
+    forall(Expr other | var.getAnAssignedValue() = other | saneString(other))
+  )
+}
+
+predicate builtFromUncontrolledConcat(Expr expr) {
+  exists(AddExpr concatExpr | concatExpr = expr |
+    builtFromUncontrolledConcat(concatExpr.getAnOperand())
+  )
+  or
+  exists(AddExpr concatExpr | concatExpr = expr |
+    exists(Expr arg | arg = concatExpr.getAnOperand() | not saneString(arg))
+  )
+  or
+  exists(Expr other | builtFromUncontrolledConcat(other) |
+    exists(Variable var | var.getAnAssignedValue() = other and var.getAnAccess() = expr)
+  )
+}
+
+from StringArgumentToExec argument
+where
+  builtFromUncontrolledConcat(argument) and
+  not execIsTainted(_, _, argument)
+select argument, "Command line is built with string concatenation."
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:09:06
+Attempt: 3
+Error: A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+Rule Content:
+/**
+ * @name SQL query construction via string concatenation
+ * @description Constructing SQL queries via string concatenation can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jdbc.Jdbc
+
+predicate isSqlStringConcatenationMethod(Method method, Variable sqlParam, Expr queryExpr) {
+  exists(MethodAccess prepareStmt |
+    prepareStmt.getMethod().getName() = "prepareStatement" and
+    prepareStmt.getQualifier() = JdbcSession::getConnection() and
+    prepareStmt.getAnArgument() = queryExpr and
+    queryExpr instanceof AddExpr and
+    (
+      exists(queryExpr.getAnOperand() |
+        TaintTracking::localTaint(_, _, sqlParam.getAnAccess(), _) and
+        sqlParam.getParent() = method.getAParameter()
+      )
+      or
+      exists(Variable v |
+        v.getAnAccess() = queryExpr.getAnOperand() and
+        TaintTracking::localTaint(_, _, sqlParam.getAnAccess(), v.getAnAssignedValue())
+      )
+    ) and
+    exists(MethodAccess executeQuery |
+      executeQuery.getMethod().getName() = "executeQuery" and
+      executeQuery.getQualifier().getType().getName() = "PreparedStatement"
+    )
+  )
+}
+
+from Method method, Variable sqlParam, Expr queryExpr
+where
+  isSqlStringConcatenationMethod(method, sqlParam, queryExpr)
+select queryExpr, "In " + method.getName() + ", " + sqlParam.getName() + 
+  " is used to construct a SQL query via string concatenation."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.，请按照以下步骤进行修复：
+1. 验证数据库路径是否正确：确认/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db是否是正确的CodeQL数据库路径
+2. 检查数据库是否完整：确保java-db目录包含完整的CodeQL数据库文件结构（通常包含log/、src/、db-java/等子目录）
+3. 重新创建数据库：如果需要，使用codeql database create命令重新创建数据库
+4. 验证数据库格式：使用codeql database upgrade命令确保数据库是最新格式
+5. 检查执行环境：确认运行查询时是否在正确的数据库路径下执行
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+         请确保包含 markdown 格式的 yaml 代码块（```go ... ```）
+================================================================================
+Timestamp: 2025-07-24 14:10:16
+Attempt: 1
+Error: A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+Rule Content:
+/**
+ * @name SQL query constructed with string concatenation
+ * @description Constructing SQL queries with string concatenation is vulnerable to SQL injection.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.SQLInjectionFlow
+
+predicate isSession(Expr expr) {
+  exists(RefType type | type.hasQualifiedName("org.hibernate", "Session") and expr.getType().getASupertype*() = type)
+}
+
+predicate usedInSQLQueryConstruction(Expr concatExpr, Expr param) {
+  exists(AddExpr add | add = concatExpr |
+    add.getAnOperand() = param.asExpr() 
+    or 
+    exists(AddExpr innerAdd | usedInSQLQueryConstruction(innerAdd, param) and add.getAnOperand() = innerAdd)
+  )
+}
+
+from Method method, Parameter param, Expr concatExpr, MethodAccess prepareStmt, MethodAccess executeQuery
+where
+  param.getType() instanceof TypeString and
+  usedInSQLQueryConstruction(concatExpr, param.getAnAccess()) and
+  exists(MethodAccess sessionConn | 
+    sessionConn.getMethod().getName() = "connection" and
+    isSession(sessionConn.getQualifier()) and
+    prepareStmt.getMethod().getName() = "prepareStatement" and
+    prepareStmt.getQualifier() = sessionConn and
+    prepareStmt.getArgument(0) = concatExpr and
+    executeQuery.getMethod().getName() = "executeQuery" and
+    exists(DataFlow::Node source, DataFlow::Node sink |
+      source.asExpr() = prepareStmt and
+      sink.asExpr() = executeQuery and
+      exists(SQLInjectionFlow::FlowPath flow | flow.getSource() = source and flow.getSink() = sink)
+    )
+  )
+select param, "In $@, this parameter is used to construct a SQL query via string concatenation.", method, method.getName()
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: find-sql-string-concatenation
+  message: >-
+    In $METHOD, $X is used to construct a SQL query via string concatenation.
+  languages: [java]
+  severity: ERROR
+  pattern-either:
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        Session $SESSION = ...;
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        Session $SESSION = ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  metadata:
+    category: security
+    technology:
+    - jboss
+    confidence: MEDIUM
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            /**
+ * @name Building a command line with string concatenation
+ * @description Using concatenated strings in a command line is vulnerable to malicious
+ *              insertion of special characters in the strings.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision high
+ * @id java/concatenated-command-line
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ */
+
+import java
+import semmle.code.java.security.CommandLineQuery
+import semmle.code.java.security.ExternalProcess
+
+/**
+ * Strings that are known to be sane by some simple local analysis. Such strings
+ * do not need to be escaped, because the programmer can predict what the string
+ * has in it.
+ */
+predicate saneString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable var | var.getAnAccess() = expr and exists(var.getAnAssignedValue()) |
+    forall(Expr other | var.getAnAssignedValue() = other | saneString(other))
+  )
+}
+
+predicate builtFromUncontrolledConcat(Expr expr) {
+  exists(AddExpr concatExpr | concatExpr = expr |
+    builtFromUncontrolledConcat(concatExpr.getAnOperand())
+  )
+  or
+  exists(AddExpr concatExpr | concatExpr = expr |
+    exists(Expr arg | arg = concatExpr.getAnOperand() | not saneString(arg))
+  )
+  or
+  exists(Expr other | builtFromUncontrolledConcat(other) |
+    exists(Variable var | var.getAnAssignedValue() = other and var.getAnAccess() = expr)
+  )
+}
+
+from StringArgumentToExec argument
+where
+  builtFromUncontrolledConcat(argument) and
+  not execIsTainted(_, _, argument)
+select argument, "Command line is built with string concatenation."
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:10:46
+Attempt: 2
+Error: A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+Rule Content:
+/**
+ * @name SQL query constructed with string concatenation
+ * @description Constructing SQL queries with string concatenation is vulnerable to SQL injection.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.SQLInjectionFlow
+
+predicate isSession(Expr expr) {
+  exists(RefType type | type.hasQualifiedName("org.hibernate", "Session") and expr.getType().getASupertype*() = type)
+}
+
+predicate usedInSQLQueryConstruction(Expr concatExpr, Expr param) {
+  exists(AddExpr add | add = concatExpr |
+    add.getAnOperand() = param.asExpr() 
+    or 
+    exists(AddExpr innerAdd | usedInSQLQueryConstruction(innerAdd, param) and add.getAnOperand() = innerAdd)
+  )
+}
+
+from Method method, Parameter param, Expr concatExpr, MethodAccess prepareStmt, MethodAccess executeQuery
+where
+  param.getType() instanceof TypeString and
+  usedInSQLQueryConstruction(concatExpr, param.getAnAccess()) and
+  exists(MethodAccess sessionConn | 
+    sessionConn.getMethod().getName() = "connection" and
+    isSession(sessionConn.getQualifier()) and
+    prepareStmt.getMethod().getName() = "prepareStatement" and
+    prepareStmt.getQualifier() = sessionConn and
+    prepareStmt.getArgument(0) = concatExpr and
+    executeQuery.getMethod().getName() = "executeQuery" and
+    exists(DataFlow::Node source, DataFlow::Node sink |
+      source.asExpr() = prepareStmt and
+      sink.asExpr() = executeQuery and
+      exists(SQLInjectionFlow::FlowPath flow | flow.getSource() = source and flow.getSink() = sink)
+    )
+  )
+select param, "In $@, this parameter is used to construct a SQL query via string concatenation.", method, method.getName()
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.，请按照以下步骤进行修复：
+1. 验证数据库路径是否正确，确认/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db是否为有效的CodeQL数据库目录
+2. 如果是新创建的数据库，确保已经正确执行了数据库创建命令：codeql database create
+3. 检查数据库目录结构，有效的CodeQL数据库应包含codeql-database.yml文件和src.zip等必要文件
+4. 如果数据库路径错误，使用正确的数据库路径重新运行分析命令
+5. 如果数据库不完整或损坏，考虑重新创建数据库
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:11:23
+Attempt: 3
+Error: A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+Rule Content:
+/**
+ * @name SQL query constructed with string concatenation
+ * @description Constructing SQL queries with string concatenation is vulnerable to SQL injection.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.SQLInjectionFlow
+
+predicate isSession(Expr expr) {
+  exists(RefType type | type.hasQualifiedName("org.hibernate", "Session") and expr.getType().getASupertype*() = type)
+}
+
+predicate usedInSQLQueryConstruction(Expr concatExpr, Expr param) {
+  exists(AddExpr add | add = concatExpr |
+    add.getAnOperand() = param.asExpr() 
+    or 
+    exists(AddExpr innerAdd | usedInSQLQueryConstruction(innerAdd, param) and add.getAnOperand() = innerAdd)
+  )
+}
+
+from Method method, Parameter param, Expr concatExpr, MethodAccess prepareStmt, MethodAccess executeQuery
+where
+  param.getType() instanceof TypeString and
+  usedInSQLQueryConstruction(concatExpr, param.getAnAccess()) and
+  exists(MethodAccess sessionConn | 
+    sessionConn.getMethod().getName() = "connection" and
+    isSession(sessionConn.getQualifier()) and
+    prepareStmt.getMethod().getName() = "prepareStatement" and
+    prepareStmt.getQualifier() = sessionConn and
+    prepareStmt.getArgument(0) = concatExpr and
+    executeQuery.getMethod().getName() = "executeQuery" and
+    exists(DataFlow::Node source, DataFlow::Node sink |
+      source.asExpr() = prepareStmt and
+      sink.asExpr() = executeQuery and
+      exists(SQLInjectionFlow::FlowPath flow | flow.getSource() = source and flow.getSink() = sink)
+    )
+  )
+select param, "In $@, this parameter is used to construct a SQL query via string concatenation.", method, method.getName()
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：A fatal error occurred: /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-db is not a recognized CodeQL database.，请按照以下步骤进行修复：
+1. 确认CodeQL数据库路径是否正确配置，检查路径中是否存在空格或特殊字符
+2. 使用`codeql database list`命令验证已注册的数据库，确认目标数据库是否在列表中
+3. 如果数据库未注册，使用`codeql database register-source`命令注册数据库
+4. 检查数据库目录结构是否完整，有效的CodeQL数据库应包含以下文件：
+   - codeql-database.yml
+   - src.zip
+   - log目录
+5. 如果数据库损坏，考虑重新创建数据库：
+   codeql database create java-db --language=java --command="mvn clean install"
+6. 确保使用的CodeQL CLI版本与数据库创建时使用的版本兼容
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:13:53
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-42)
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,10-38,12)
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-17)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,41-42)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,41-42)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,23-24)
+ERROR: getMethod() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,9-18)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,8-17)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,15-24)
+WARNING: unused variable 'expr' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,38-42)
+Rule Content:
+/**
+ * @name Constructing SQL query with string concatenation
+ * @description Using string concatenation to build SQL queries can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.QueryInjection
+
+/**
+ * Strings that are known to be safe by simple local analysis.
+ */
+predicate safeString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable v | v.getAnAccess() = expr and exists(v.getAnAssignedValue()) |
+    forall(Expr other | v.getAnAssignedValue() = other | safeString(other))
+  )
+}
+
+predicate builtFromUnsafeConcat(Expr expr) {
+  exists(AddExpr concat | concat = expr |
+    builtFromUnsafeConcat(concat.getAnOperand())
+  )
+  or
+  exists(AddExpr concat | concat = expr |
+    exists(Expr arg | arg = concat.getAnOperand() | not safeString(arg))
+  )
+  or
+  exists(Expr other | builtFromUnsafeConcat(other) |
+    exists(Variable v | v.getAnAssignedValue() = other and v.getAnAccess() = expr)
+  )
+}
+
+from Method method, Parameter param, StringLiteral query, Call call, Call prepareCall
+where
+  param.getType().hasName("String") and
+  param.getMethod() = method and
+  builtFromUnsafeConcat(query) and
+  exists(DataFlow::Node source, DataFlow::Node sink |
+    source.asParameter() = param and
+    sink.asExpr() = query and
+    DataFlow::localFlow(source, sink)
+  ) and
+  call.getMethod().getName() = "executeQuery" and
+  prepareCall.getMethod().getName() = "prepareStatement" and
+  prepareCall.getArgument(0) = query and
+  call.getQualifier() = prepareCall
+select query, "SQL query constructed with unsafe string concatenation of parameter $" + param.getName()
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: find-sql-string-concatenation
+  message: >-
+    In $METHOD, $X is used to construct a SQL query via string concatenation.
+  languages: [java]
+  severity: ERROR
+  pattern-either:
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        Session $SESSION = ...;
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        Session $SESSION = ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  metadata:
+    category: security
+    technology:
+    - jboss
+    confidence: MEDIUM
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            /**
+ * @name Building a command line with string concatenation
+ * @description Using concatenated strings in a command line is vulnerable to malicious
+ *              insertion of special characters in the strings.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision high
+ * @id java/concatenated-command-line
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ */
+
+import java
+import semmle.code.java.security.CommandLineQuery
+import semmle.code.java.security.ExternalProcess
+
+/**
+ * Strings that are known to be sane by some simple local analysis. Such strings
+ * do not need to be escaped, because the programmer can predict what the string
+ * has in it.
+ */
+predicate saneString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable var | var.getAnAccess() = expr and exists(var.getAnAssignedValue()) |
+    forall(Expr other | var.getAnAssignedValue() = other | saneString(other))
+  )
+}
+
+predicate builtFromUncontrolledConcat(Expr expr) {
+  exists(AddExpr concatExpr | concatExpr = expr |
+    builtFromUncontrolledConcat(concatExpr.getAnOperand())
+  )
+  or
+  exists(AddExpr concatExpr | concatExpr = expr |
+    exists(Expr arg | arg = concatExpr.getAnOperand() | not saneString(arg))
+  )
+  or
+  exists(Expr other | builtFromUncontrolledConcat(other) |
+    exists(Variable var | var.getAnAssignedValue() = other and var.getAnAccess() = expr)
+  )
+}
+
+from StringArgumentToExec argument
+where
+  builtFromUncontrolledConcat(argument) and
+  not execIsTainted(_, _, argument)
+select argument, "Command line is built with string concatenation."
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:14:54
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-42)
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,10-38,12)
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-17)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,41-42)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,41-42)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,23-24)
+ERROR: getParentScope() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,31-45)
+ERROR: could not resolve variable m (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,3-4)
+WARNING: unused variable 'expr' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,38-42)
+Rule Content:
+/**
+ * @name Constructing SQL query with string concatenation
+ * @description Using string concatenation to build SQL queries can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.QueryInjection
+
+/**
+ * Strings that are known to be safe by simple local analysis.
+ */
+predicate safeString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable v | v.getAnAccess() = expr and exists(v.getAnAssignedValue()) |
+    forall(Expr other | v.getAnAssignedValue() = other | safeString(other))
+  )
+}
+
+predicate builtFromUnsafeConcat(Expr expr) {
+  exists(AddExpr concat | concat = expr |
+    builtFromUnsafeConcat(concat.getAnOperand())
+  )
+  or
+  exists(AddExpr concat | concat = expr |
+    exists(Expr arg | arg = concat.getAnOperand() | not safeString(arg))
+  )
+  or
+  exists(Expr other | builtFromUnsafeConcat(other) |
+    exists(Variable v | v.getAnAssignedValue() = other and v.getAnAccess() = expr)
+  )
+}
+
+from Method method, Parameter param, Expr query, Call call, Call prepareCall
+where
+  param.getType().hasName("String") and
+  exists(Method m | m = param.getParentScope()) and
+  m = method and
+  builtFromUnsafeConcat(query) and
+  exists(DataFlow::Node source, DataFlow::Node sink |
+    source.asParameter() = param and
+    sink.asExpr() = query and
+    DataFlow::localFlow(source, sink)
+  ) and
+  call.getCallee().getName() = "executeQuery" and
+  prepareCall.getCallee().getName() = "prepareStatement" and
+  prepareCall.getArgument(0) = query and
+  call.getQualifier() = prepareCall
+select query, "SQL query constructed with unsafe string concatenation of parameter $" + param.getName()
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-42)
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,10-38,12)
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-17)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,41-42)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,41-42)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,23-24)
+ERROR: getMethod() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,9-18)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,8-17)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,15-24)
+WARNING: unused variable 'expr' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,38-42)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Constructing SQL query with string concatenation
+ * @description Using string concatenation to build SQL queries can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.QueryInjection
+
+/**
+ * Strings that are known to be safe by simple local analysis.
+ */
+predicate safeString(Expr expr) {
+  expr instanceof StringLiteral
+  or
+  expr instanceof NullLiteral
+  or
+  exists(Variable v | v.getAnAccess() = expr and exists(v.getAnAssignedValue()) |
+    forall(Expr other | v.getAnAssignedValue() = other | safeString(other))
+  )
+}
+
+predicate builtFromUnsafeConcat(Expr expr) {
+  exists(AddExpr concat | concat = expr |
+    builtFromUnsafeConcat(concat.getAnOperand())
+  )
+  or
+  exists(AddExpr concat | concat = expr |
+    exists(Expr arg | arg = concat.getAnOperand() | not safeString(arg))
+  )
+  or
+  exists(Expr other | builtFromUnsafeConcat(other) |
+    exists(Variable v | v.getAnAssignedValue() = other and v.getAnAccess() = expr)
+  )
+}
+
+from Method method, Parameter param, Expr query, Call call, Call prepareCall
+where
+  param.getType().hasName("String") and
+  exists(Method m | m = param.getParentScope()) and
+  m = method and
+  builtFromUnsafeConcat(query) and
+  exists(DataFlow::Node source, DataFlow::Node sink |
+    source.asParameter() = param and
+    sink.asExpr() = query and
+    DataFlow::localFlow(source, sink)
+  ) and
+  call.getCallee().getName() = "executeQuery" and
+  prepareCall.getCallee().getName() = "prepareStatement" and
+  prepareCall.getArgument(0) = query and
+  call.getQualifier() = prepareCall
+select query, "SQL query constructed with unsafe string concatenation of parameter $" + param.getName()
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:15:46
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getDeclaringMethod() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,9-27)
+Rule Content:
+/**
+ * @name Constructing SQL query with string concatenation
+ * @description Using string concatenation to build SQL queries can lead to SQL injection vulnerabilities.
+ * @kind problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision medium
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.QueryInjection
+
+/**
+ * Strings that are known to be safe by simple local analysis.
+ */
+predicate safeString(Expr e) {
+  e instanceof StringLiteral
+  or
+  e instanceof NullLiteral
+  or
+  exists(Variable v | v.getAnAccess() = e and exists(v.getAnAssignedValue()) |
+    forall(Expr other | v.getAnAssignedValue() = other | safeString(other))
+  )
+}
+
+predicate builtFromUnsafeConcat(Expr e) {
+  exists(AddExpr ae | ae = e |
+    builtFromUnsafeConcat(ae.getAnOperand())
+  )
+  or
+  exists(AddExpr ae | ae = e |
+    exists(Expr arg | arg = ae.getAnOperand() | not safeString(arg))
+  )
+  or
+  exists(Expr other | builtFromUnsafeConcat(other) |
+    exists(Variable v | v.getAnAssignedValue() = other and v.getAnAccess() = e)
+  )
+}
+
+from Method method, Parameter param, Expr query, Call call, Call prepareCall
+where
+  param.getType().hasName("String") and
+  param.getDeclaringMethod() = method and
+  builtFromUnsafeConcat(query) and
+  exists(DataFlow::Node source, DataFlow::Node sink |
+    source.asParameter() = param and
+    sink.asExpr() = query and
+    DataFlow::localFlow(source, sink)
+  ) and
+  call.getCallee().getName() = "executeQuery" and
+  prepareCall.getCallee().getName() = "prepareStatement" and
+  prepareCall.getArgument(0) = query and
+  call.getQualifier() = prepareCall
+select query, "SQL query constructed with unsafe string concatenation of parameter $" + param.getName()
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-42)
+ERROR: predicate aliases may not declare a return type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,10-38,12)
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-17)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,41-42)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,18-24)
+ERROR: unexpected input '|' expecting one of: '/' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,41-42)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,23-24)
+ERROR: getParentScope() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,31-45)
+ERROR: could not resolve variable m (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,3-4)
+WARNING: unused variable 'expr' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,38-42)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：
+ERROR: predicate aliases may not declare a return type
+ERROR: no viable parse for input 'AddExpr concat'
+ERROR: unexpected input 'concat'
+ERROR: unexpected input '|'
+ERROR: getParentScope() cannot be resolved for type Variable::Parameter
+ERROR: could not resolve variable m
+WARNING: unused variable 'expr'
+
+请按照以下步骤进行修复：
+1. 将predicate定义中的形式参数expr指定为正确类型，需要使用小写开头的变量名
+2. 将AddExpr concat改为使用小写变量名，如ae或addExpr
+3. 修正管道符|的使用方式，确保它在exists和forall子句中正确使用
+4. 替换param.getParentScope()为正确的获取Parameter对应Method的方法
+5. 删除未使用的变量expr或者使用它
+6. 确保所有变量使用前都已正确定义
+
+具体修改应包括：
+1. 将builtFromUnsafeConcat中的expr重命名为e或其他小写名称
+2. 将AddExpr concat改为addExpr或ae
+3. 检查所有exists和forall子句的语法是否正确
+4. 使用param.getDeclaringMethod()替代getParentScope()
+5. 删除未使用的expr参数或将其用于逻辑
+6. 确保m变量在使用前有确切定义
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:17:14
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-27)
+ERROR: could not resolve type BinaryAddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-25)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,48-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,33-51)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @id security/java/find-sql-string-concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-564
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       jboss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow::PathGraph
+
+class StringConcatenationConfiguration extends DataFlow::Configuration {
+  StringConcatenationConfiguration() { this = "StringConcatenationConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodParameter mp | source.asParameter() = mp and mp.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma | ma.getMethod().getName() = "prepareStatement" and sink.asExpr() = ma.getArgument(0))
+  }
+
+  override predicate isAdditionalFlowStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryAddExpr add |
+      (add.getLeftOperand() = node1.asExpr() and node2.asExpr() = add) or
+      (add.getRightOperand() = node1.asExpr() and node2.asExpr() = add)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, Method m
+where
+  exists(StringConcatenationConfiguration sc | sc.hasFlowPath(source, sink)) and
+  sink.getNode().asExpr().getEnclosingCallable() = m
+select sink.getNode(), source, sink, "In $@, $@ is used to construct a SQL query via string concatenation.",
+  m, "method", source.getNode(), "parameter"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: find-sql-string-concatenation
+  message: >-
+    In $METHOD, $X is used to construct a SQL query via string concatenation.
+  languages: [java]
+  severity: ERROR
+  pattern-either:
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        Session $SESSION = ...;
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  - pattern: |
+      $RETURN $METHOD(...,String $X,...){
+        ...
+        String $QUERY = ... + $X + ...;
+        ...
+        Session $SESSION = ...;
+        ...
+        PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY);
+        ...
+        ResultSet $RESULT = $PS.executeQuery();
+        ...
+      }
+  metadata:
+    category: security
+    technology:
+    - jboss
+    confidence: MEDIUM
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: HIGH
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:18:00
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,48-76)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,26-38)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isAdditionalFlowStep(Node node1, Node node2) (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,22-42)
+ERROR: class DataFlowImpl1::Configuration from this import conflicts with class TaintTrackingImpl::Configuration from TaintTrackingImpl.qll:58 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Global from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Global from TaintTracking.qll:81 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Make from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Make from TaintTracking.qll:101 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::GlobalWithState from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::GlobalWithState from TaintTracking.qll:108 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::MakeWithState from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::MakeWithState from TaintTracking.qll:134 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,1-16)
+ERROR: class TaintTrackingImpl::Configuration from this import conflicts with class DataFlowImpl1::Configuration from DataFlowImpl1.qll:53 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Global from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Global from DataFlow.qll:647 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Make from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Make from DataFlow.qll:663 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::GlobalWithState from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::GlobalWithState from DataFlow.qll:670 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::MakeWithState from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::MakeWithState from DataFlow.qll:691 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,1-21)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @id security/java/find-sql-string-concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-564
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       jboss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow
+import TaintTracking
+
+class StringConcatenationConfiguration extends TaintTracking::Configuration {
+  StringConcatenationConfiguration() { this = "StringConcatenationConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Expr ma | ma.(MethodAccess).getMethod().getName() = "prepareStatement" and 
+      sink.asExpr() = ma.getArgument(0))
+  }
+
+  override predicate isAdditionalFlowStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(AddExpr add |
+      (add.getLeftOperand() = node1.asExpr() and node2.asExpr() = add) or
+      (add.getRightOperand() = node1.asExpr() and node2.asExpr() = add)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, Method m
+where
+  exists(StringConcatenationConfiguration sc | sc.hasFlow(source, sink)) and
+  sink.asExpr().getEnclosingCallable() = m
+select sink, source, "In $@, $@ is used to construct a SQL query via string concatenation.",
+  m, "method", source, "parameter"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-27)
+ERROR: could not resolve type BinaryAddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-25)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,48-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,33-51)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-27)
+ERROR: could not resolve type BinaryAddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-25)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,48-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,33-51)，请按照以下步骤进行修复：
+1. 替换MethodParameter为Parameter类，位于java库中
+2. 替换BinaryAddExpr为AddExpr类，位于java库中
+3. 替换PathGraph导入为DataFlow模块，使用新的语法import DataFlow
+4. 替换Configuration类为TaintTracking::Configuration类
+5. 替换MethodAccess类为Expr类及其相关方法调用检测
+6. 替换PathNode为TaintTracking::PathNode类
+7. 重构查询主体部分，使用新的TaintTracking模块语法
+8. 更新所有相关方法的调用方式，适配新的类和方法名称
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

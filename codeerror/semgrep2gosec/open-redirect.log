@@ -1,0 +1,241 @@
+Timestamp: 2025-07-23 17:27:50
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T09:27:50Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+rules/GC001.go:37:62: undefined: token
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type openRedirect struct {
+	issue.MetaData
+	calls gosec.CallList
+}
+
+func (o *openRedirect) ID() string {
+	return o.MetaData.ID
+}
+
+func (o *openRedirect) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := o.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		if len(node.Args) > 2 {
+			urlArg := node.Args[2]
+			if ident, ok := urlArg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+						for _, expr := range assign.Rhs {
+							if call, ok := expr.(*ast.CallExpr); ok {
+								if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+									if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "fmt" {
+										if sel.Sel.Name == "Sprintf" || sel.Sel.Name == "Fprintf" || sel.Sel.Name == "Printf" {
+											return c.NewIssue(n, o.ID(), o.What, o.Severity, o.Confidence), nil
+										}
+									}
+								}
+							}
+							if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+								if _, ok := bin.X.(*ast.BasicLit); ok {
+									return c.NewIssue(n, o.ID(), o.What, o.Severity, o.Confidence), nil
+								}
+							}
+						}
+					}
+				}
+			}
+			if lit, ok := urlArg.(*ast.BasicLit); ok && !isStaticURL(lit.Value) {
+				return c.NewIssue(n, o.ID(), o.What, o.Severity, o.Confidence), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func isStaticURL(value string) bool {
+	// Check if the URL is static and doesn't contain dynamic parts
+	return true
+}
+
+func NewOpenRedirect(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("net/http", "Redirect")
+	return &openRedirect{
+		calls: calls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "An HTTP redirect found crafted from user-input leading to open redirect vulnerability (CWE-601: URL Redirection to Untrusted Site)",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+  - id: open-redirect
+    languages: [ go ]
+    severity: WARNING
+    message: An HTTP redirect was found to be crafted from user-input `$REQUEST`.
+      This can lead to open redirect vulnerabilities, potentially allowing attackers
+      to redirect users to malicious web sites. It is recommend where possible to
+      not allow user-input to craft the redirect URL. When user-input is necessary
+      to craft the request, it is recommended to follow OWASP best practices to
+      restrict the URL to domains in an allowlist.
+    options:
+      interfile: true
+    metadata:
+      cwe:
+        - "CWE-601: URL Redirection to Untrusted Site ('Open Redirect')"
+      references:
+        - https://knowledge-base.secureflag.com/vulnerabilities/unvalidated_redirects___forwards/open_redirect_go_lang.html
+      category: security
+      technology:
+        - go
+      confidence: HIGH
+      description: "An HTTP redirect was found to be crafted from user-input leading to an open redirect vulnerability"
+      subcategory:
+        - vuln
+      impact: MEDIUM
+      likelihood: MEDIUM
+      interfile: true
+    mode: taint
+    pattern-sources:
+      - label: INPUT
+        patterns:
+          - pattern-either:
+              - pattern: |
+                  ($REQUEST : *http.Request).$ANYTHING
+              - pattern: |
+                  ($REQUEST : http.Request).$ANYTHING
+          - metavariable-regex:
+              metavariable: $ANYTHING
+              regex: ^(BasicAuth|Body|Cookie|Cookies|Form|FormValue|GetBody|Host|MultipartReader|ParseForm|ParseMultipartForm|PostForm|PostFormValue|Referer|RequestURI|Trailer|TransferEncoding|UserAgent|URL)$
+      - label: CLEAN
+        requires: INPUT
+        patterns:
+          - pattern-either:
+              - pattern: |
+                  "$URLSTR" + $INPUT
+              - patterns:
+                  - pattern-either:
+                      - pattern: fmt.Fprintf($F, "$URLSTR", $INPUT, ...)
+                      - pattern: fmt.Sprintf("$URLSTR", $INPUT, ...)
+                      - pattern: fmt.Printf("$URLSTR", $INPUT, ...)
+          - metavariable-regex:
+              metavariable: $URLSTR
+              regex: .*//[a-zA-Z0-10]+\..*
+    pattern-sinks:
+      - requires: INPUT and not CLEAN
+        patterns:
+          - pattern: http.Redirect($W, $REQ, $URL, ...)
+          - focus-metavariable: $URL
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

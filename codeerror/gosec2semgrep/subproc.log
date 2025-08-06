@@ -1,0 +1,200 @@
+Timestamp: 2025-07-21 16:12:30
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp4i7blgfm/rule.yml:2
+2  | - id: subprocess-launched-with-variable
+3  |   pattern: |
+4  |     ($FUNC(..., $ARG, ...))
+5  |   patterns:
+6  |     - pattern-inside: |
+7  |         import (
+8  |           "os/exec"
+9  |           "syscall"
+10 |           "golang.org/x/sys/execabs"
+11 |         )
+12 |     - pattern-either:
+13 |         - pattern: exec.Command($ARG, ...)
+14 |         - pattern: exec.CommandContext($_, $ARG, ...)
+15 |         - pattern: syscall.Exec($ARG, ...)
+16 |         - pattern: syscall.ForkExec($ARG, ...)
+17 |         - pattern: syscall.StartProcess($ARG, ...)
+18 |         - pattern: execabs.Command($ARG, ...)
+19 |         - pattern: execabs.CommandContext($_, $ARG, ...)
+20 |     - metavariable-regex:
+21 |         metavariable: $ARG
+22 |         regex: "(?!^(?:`[^`]*`|\"[^\"]*\"|'[^']*'|[0-9]+)$).*"
+23 |   message: Subprocess launched with variable or potential tainted input
+24 |   languages: [go]
+25 |   severity: WARNING
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: subprocess-launched-with-variable
+  pattern: |
+    ($FUNC(..., $ARG, ...))
+  patterns:
+    - pattern-inside: |
+        import (
+          "os/exec"
+          "syscall"
+          "golang.org/x/sys/execabs"
+        )
+    - pattern-either:
+        - pattern: exec.Command($ARG, ...)
+        - pattern: exec.CommandContext($_, $ARG, ...)
+        - pattern: syscall.Exec($ARG, ...)
+        - pattern: syscall.ForkExec($ARG, ...)
+        - pattern: syscall.StartProcess($ARG, ...)
+        - pattern: execabs.Command($ARG, ...)
+        - pattern: execabs.CommandContext($_, $ARG, ...)
+    - metavariable-regex:
+        metavariable: $ARG
+        regex: "(?!^(?:`[^`]*`|\"[^\"]*\"|'[^']*'|[0-9]+)$).*"
+  message: Subprocess launched with variable or potential tainted input
+  languages: [go]
+  severity: WARNING
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            // (c) Copyright 2016 Hewlett Packard Enterprise Development LP
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type subprocess struct {
+	issue.MetaData
+	gosec.CallList
+}
+
+func (r *subprocess) ID() string {
+	return r.MetaData.ID
+}
+
+// TODO(gm) The only real potential for command injection with a Go project
+// is something like this:
+//
+// syscall.Exec("/bin/sh", []string{"-c", tainted})
+//
+// E.g. Input is correctly escaped but the execution context being used
+// is unsafe. For example:
+//
+// syscall.Exec("echo", "foobar" + tainted)
+func (r *subprocess) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := r.ContainsPkgCallExpr(n, c, false); node != nil {
+		args := node.Args
+		if r.isContext(n, c) {
+			args = args[1:]
+		}
+		for _, arg := range args {
+			if ident, ok := arg.(*ast.Ident); ok {
+				obj := c.Info.ObjectOf(ident)
+
+				// need to cast and check whether it is for a variable ?
+				_, variable := obj.(*types.Var)
+
+				// .. indeed it is a variable then processing is different than a normal
+				// field assignment
+				if variable {
+					// skip the check when the declaration is not available
+					if ident.Obj == nil {
+						continue
+					}
+					switch ident.Obj.Decl.(type) {
+					case *ast.AssignStmt:
+						_, assignment := ident.Obj.Decl.(*ast.AssignStmt)
+						if variable && assignment {
+							if !gosec.TryResolve(ident, c) {
+								return c.NewIssue(n, r.ID(), "Subprocess launched with variable", issue.Medium, issue.High), nil
+							}
+						}
+					case *ast.Field:
+						_, field := ident.Obj.Decl.(*ast.Field)
+						if variable && field {
+							// check if the variable exist in the scope
+							vv, vvok := obj.(*types.Var)
+
+							if vvok && vv.Parent().Lookup(ident.Name) == nil {
+								return c.NewIssue(n, r.ID(), "Subprocess launched with variable", issue.Medium, issue.High), nil
+							}
+						}
+					case *ast.ValueSpec:
+						_, valueSpec := ident.Obj.Decl.(*ast.ValueSpec)
+						if variable && valueSpec {
+							if !gosec.TryResolve(ident, c) {
+								return c.NewIssue(n, r.ID(), "Subprocess launched with variable", issue.Medium, issue.High), nil
+							}
+						}
+					}
+				}
+			} else if !gosec.TryResolve(arg, c) {
+				// the arg is not a constant or a variable but instead a function call or os.Args[i]
+				return c.NewIssue(n, r.ID(), "Subprocess launched with a potential tainted input or cmd arguments", issue.Medium, issue.High), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// isContext checks whether or not the node is a CommandContext call or not
+// This is required in order to skip the first argument from the check.
+func (r *subprocess) isContext(n ast.Node, ctx *gosec.Context) bool {
+	selector, indent, err := gosec.GetCallInfo(n, ctx)
+	if err != nil {
+		return false
+	}
+	if selector == "exec" && indent == "CommandContext" {
+		return true
+	}
+	return false
+}
+
+// NewSubproc detects cases where we are forking out to an external process
+func NewSubproc(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	rule := &subprocess{issue.MetaData{ID: id}, gosec.NewCallList()}
+	rule.Add("os/exec", "Command")
+	rule.Add("os/exec", "CommandContext")
+	rule.Add("syscall", "Exec")
+	rule.Add("syscall", "ForkExec")
+	rule.Add("syscall", "StartProcess")
+	rule.Add("golang.org/x/sys/execabs", "Command")
+	rule.Add("golang.org/x/sys/execabs", "CommandContext")
+	return rule, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </origin_rule>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

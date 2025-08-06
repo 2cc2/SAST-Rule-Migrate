@@ -1,0 +1,230 @@
+Timestamp: 2025-07-23 16:27:54
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:27:54Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type commandInjection struct {
+	issue.MetaData
+	stdinPipe gosec.CallList
+	write     gosec.CallList
+}
+
+func (c *commandInjection) ID() string {
+	return c.MetaData.ID
+}
+
+func (c *commandInjection) Match(n ast.Node, ctx *gosec.Context) (*issue.Issue, error) {
+	// Check if it's a Write call
+	if node := c.write.ContainsPkgCallExpr(n, ctx, false); node != nil {
+		// Verify the receiver is from StdinPipe
+		if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok {
+				if ident.Obj != nil {
+					// Find the assignment from StdinPipe
+					if assign, ok := ident.Obj.Decl.(*ast.AssignStmt); ok {
+						if call, ok := assign.Rhs[0].(*ast.CallExpr); ok {
+							if c.stdinPipe.ContainsPkgCallExpr(call, ctx, false) != nil {
+								// Check if the argument is not a static string/byte slice
+								for _, arg := range node.Args {
+									switch arg.(type) {
+									case *ast.BasicLit, *ast.UnaryExpr: // skip static literals
+										return nil, nil
+									case *ast.CallExpr: // skip functions like []byte("static")
+										return nil, nil
+									case *ast.BinaryExpr: // skip concatenations like "a"+"b"
+										return nil, nil
+									}
+								}
+								return ctx.NewIssue(n, c.ID(), c.What, c.Severity, c.Confidence), nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewCommandInjection(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	stdinPipeCalls := gosec.NewCallList()
+	stdinPipeCalls.Add("os/exec", "Cmd.StdinPipe")
+
+	writeCalls := gosec.NewCallList()
+	writeCalls.Add("io", "WriteCloser.Write")
+
+	return &commandInjection{
+		stdinPipe: stdinPipeCalls,
+		write:     writeCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.High,
+			Confidence: issue.Low,
+			What:       "Detected non-static command inside Write. If unverified user data can reach this call site, this is a code injection vulnerability.",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: dangerous-command-write
+  patterns:
+  - pattern: |
+      $CW.Write($BYTE)
+  - pattern-inside: |
+      $CW,$ERR := $CMD.StdinPipe()
+      ...
+  - pattern-not: |
+      $CW.Write("...")
+  - pattern-not: |
+      $CW.Write([]byte("..."))
+  - pattern-not: |
+      $CW.Write([]byte("..."+"..."))
+  - pattern-not-inside: |
+      $BYTE = []byte("...");
+      ...
+  - pattern-not-inside: |
+      $BYTE = []byte("..."+"...");
+      ...
+  - pattern-inside: |
+      import "os/exec"
+      ...
+  message: >-
+    Detected non-static command inside Write. Audit the input to '$CW.Write'.
+    If unverified user data can reach this call site, this is a code injection
+    vulnerability. A malicious actor can inject a malicious script to execute
+    arbitrary code.
+  severity: ERROR
+  languages: [go]
+  metadata:
+    cwe:
+    - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    category: security
+    technology:
+    - go
+    confidence: LOW
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

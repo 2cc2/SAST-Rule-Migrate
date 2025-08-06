@@ -1,0 +1,1072 @@
+Timestamp: 2025-07-22 18:39:03
+Attempt: 1
+Error: semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmph4cmr67g/rule.yml:2
+1  | rules:
+2  | - id: override-both-equals-and-hashcode
+3  |   message: >
+4  |     When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+5  |     otherwise it could lead to unexpected behavior when using hash-based collections.
+6  |   languages:
+7  |   - java
+8  |   severity: WARNING
+9  |   pattern: |
+10 |     class $CLASS {
+11 |       $TYPE $METHOD1(...) { ... }
+12 |       $TYPE $METHOD2(...) { ... }
+13 |       ...
+14 |     }
+15 |   pattern-not: |
+16 |     class $CLASS {
+17 |       @Override
+18 |       public boolean equals(Object $VAR) { ... }
+19 |       @Override
+20 |       public int hashCode() { ... }
+21 |       ...
+22 |     }
+23 |   pattern-not: |
+24 |     class $CLASS implements Comparable {
+25 |       ...
+26 |     }
+27 |   pattern-not-inside: |
+28 |     interface $INTERFACE {
+29 |       ...
+30 |     }
+31 |   metadata:
+32 |     category: correctness
+33 |     subcategory:
+34 |     - error-prone
+35 |     cwe:
+36 |     - 'CWE-581: Object Model Violation: Just One of Equals and Hashcode'
+37 |     confidence: MEDIUM
+38 |     likelihood: MEDIUM
+39 |     impact: MEDIUM
+40 |     references:
+41 |     - https://rules.sonarsource.com/java/RSPEC-1206
+42 |     - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern', 'pattern-not', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: override-both-equals-and-hashcode
+  message: >
+    When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+    otherwise it could lead to unexpected behavior when using hash-based collections.
+  languages:
+  - java
+  severity: WARNING
+  pattern: |
+    class $CLASS {
+      $TYPE $METHOD1(...) { ... }
+      $TYPE $METHOD2(...) { ... }
+      ...
+    }
+  pattern-not: |
+    class $CLASS {
+      @Override
+      public boolean equals(Object $VAR) { ... }
+      @Override
+      public int hashCode() { ... }
+      ...
+    }
+  pattern-not: |
+    class $CLASS implements Comparable {
+      ...
+    }
+  pattern-not-inside: |
+    interface $INTERFACE {
+      ...
+    }
+  metadata:
+    category: correctness
+    subcategory:
+    - error-prone
+    cwe:
+    - 'CWE-581: Object Model Violation: Just One of Equals and Hashcode'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    references:
+    - https://rules.sonarsource.com/java/RSPEC-1206
+    - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTClassDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTRecordDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+
+public class OverrideBothEqualsAndHashcodeRule extends AbstractJavaRulechainRule {
+
+    public OverrideBothEqualsAndHashcodeRule() {
+        super(ASTClassDeclaration.class,
+              ASTRecordDeclaration.class,
+              ASTAnonymousClassDeclaration.class);
+    }
+
+    private void visitTypeDecl(ASTTypeDeclaration node, Object data) {
+        if (TypeTestUtil.isA(Comparable.class, node)) {
+            return;
+        }
+        ASTMethodDeclaration equalsMethod = null;
+        ASTMethodDeclaration hashCodeMethod = null;
+        for (ASTMethodDeclaration m : node.getDeclarations(ASTMethodDeclaration.class)) {
+            if (JavaAstUtils.isEqualsMethod(m)) {
+                equalsMethod = m;
+                if (hashCodeMethod != null) {
+                    break; // shortcut
+                }
+            } else if (JavaAstUtils.isHashCodeMethod(m)) {
+                hashCodeMethod = m;
+                if (equalsMethod != null) {
+                    break; // shortcut
+                }
+            }
+        }
+
+        if (hashCodeMethod != null ^ equalsMethod != null) {
+            ASTMethodDeclaration nonNullNode =
+                equalsMethod == null ? hashCodeMethod : equalsMethod;
+            asCtx(data).addViolation(nonNullNode);
+        }
+    }
+
+    @Override
+    public Object visit(ASTAnonymousClassDeclaration node, Object data) {
+        visitTypeDecl(node, data);
+        return null;
+    }
+
+    @Override
+    public Object visit(ASTClassDeclaration node, Object data) {
+        if (node.isInterface()) {
+            return null;
+        }
+        visitTypeDecl(node, data);
+        return null;
+    }
+
+    @Override
+    public Object visit(ASTRecordDeclaration node, Object data) {
+        visitTypeDecl(node, data);
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:39:45
+Attempt: 2
+Error: semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpo336l6q5/rule.yml:2
+1  | rules:
+2  | - id: override-both-equals-and-hashcode
+3  |   message: >
+4  |     When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+5  |     otherwise it could lead to unexpected behavior when using hash-based collections.
+6  |   languages:
+7  |   - java
+8  |   severity: WARNING
+9  |   pattern-either:
+10 |     - pattern: |
+11 |         class $CLASS {
+12 |           $METHOD(...) { ... }
+13 |           ...
+14 |         }
+15 |         and not:
+16 |           - pattern: |
+17 |               @Override
+18 |               public boolean equals(Object $VAR) { ... }
+19 |           - pattern: |
+20 |               @Override
+21 |               public int hashCode() { ... }
+22 |     - pattern: |
+23 |         class $CLASS {
+24 |           $METHOD(...) { ... }
+25 |           ...
+26 |         }
+27 |         and not:
+28 |           - pattern: |
+29 |               @Override
+30 |               public int hashCode() { ... }
+31 |           - pattern: |
+32 |               @Override
+33 |               public boolean equals(Object $VAR) { ... }
+34 |   pattern-not-inside: |
+35 |     interface $INTERFACE { ... }
+36 |   pattern-not-inside: |
+37 |     class $CLASS implements Comparable { ... }
+38 |   metadata:
+39 |     category: correctness
+40 |     subcategory: error-prone
+41 |     cwe: "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+42 |     confidence: MEDIUM
+43 |     likelihood: MEDIUM
+44 |     impact: MEDIUM
+45 |     references:
+46 |       - https://rules.sonarsource.com/java/RSPEC-1206
+47 |       - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern-either', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: override-both-equals-and-hashcode
+  message: >
+    When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+    otherwise it could lead to unexpected behavior when using hash-based collections.
+  languages:
+  - java
+  severity: WARNING
+  pattern-either:
+    - pattern: |
+        class $CLASS {
+          $METHOD(...) { ... }
+          ...
+        }
+        and not:
+          - pattern: |
+              @Override
+              public boolean equals(Object $VAR) { ... }
+          - pattern: |
+              @Override
+              public int hashCode() { ... }
+    - pattern: |
+        class $CLASS {
+          $METHOD(...) { ... }
+          ...
+        }
+        and not:
+          - pattern: |
+              @Override
+              public int hashCode() { ... }
+          - pattern: |
+              @Override
+              public boolean equals(Object $VAR) { ... }
+  pattern-not-inside: |
+    interface $INTERFACE { ... }
+  pattern-not-inside: |
+    class $CLASS implements Comparable { ... }
+  metadata:
+    category: correctness
+    subcategory: error-prone
+    cwe: "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    references:
+      - https://rules.sonarsource.com/java/RSPEC-1206
+      - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmph4cmr67g/rule.yml:2
+1  | rules:
+2  | - id: override-both-equals-and-hashcode
+3  |   message: >
+4  |     When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+5  |     otherwise it could lead to unexpected behavior when using hash-based collections.
+6  |   languages:
+7  |   - java
+8  |   severity: WARNING
+9  |   pattern: |
+10 |     class $CLASS {
+11 |       $TYPE $METHOD1(...) { ... }
+12 |       $TYPE $METHOD2(...) { ... }
+13 |       ...
+14 |     }
+15 |   pattern-not: |
+16 |     class $CLASS {
+17 |       @Override
+18 |       public boolean equals(Object $VAR) { ... }
+19 |       @Override
+20 |       public int hashCode() { ... }
+21 |       ...
+22 |     }
+23 |   pattern-not: |
+24 |     class $CLASS implements Comparable {
+25 |       ...
+26 |     }
+27 |   pattern-not-inside: |
+28 |     interface $INTERFACE {
+29 |       ...
+30 |     }
+31 |   metadata:
+32 |     category: correctness
+33 |     subcategory:
+34 |     - error-prone
+35 |     cwe:
+36 |     - 'CWE-581: Object Model Violation: Just One of Equals and Hashcode'
+37 |     confidence: MEDIUM
+38 |     likelihood: MEDIUM
+39 |     impact: MEDIUM
+40 |     references:
+41 |     - https://rules.sonarsource.com/java/RSPEC-1206
+42 |     - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern', 'pattern-not', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Detected duplicate key
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern', 'pattern-not', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 检查YAML文件结构，确保所有键名都是唯一的（特别是检测到重复的键名列表中的项目）
+2. 确认规则只有一个顶层`rules:`数组，每个规则项使用单一的`-`开头
+3. 确保每个字段（id/languages/message等）在每个规则中只出现一次
+4. 特别检查metadata字段，确保它是统一的结构体而不是分散的字段
+5. 验证pattern系列字段（pattern/pattern-not/pattern-not-inside）是否正确嵌套，没有重复定义
+6. 使用YAML验证工具检查文件格式正确性
+7. 对于Java类匹配规则，考虑使用更精确的模式匹配语法：
+   - 用`method`模式单独匹配equals/hashCode方法
+   - 使用`class`模式包含整个类定义
+   - 确保模式变量($CLASS/$METHOD等)名称唯一
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:40:30
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpd8cgah7r.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  ...
+}
+and:
+  - or:
+      - pattern: |
+          @Override
+          public boolean equals(Object $VAR) { ... }
+      - pattern: |
+          @Override
+          public int hashCode() { ... }
+  - not:
+      - pattern: |
+          @Override
+          public boolean equals(Object $VAR) { ... }
+          ...
+          @Override
+          public int hashCode() { ... }
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: override-both-equals-and-hashcode
+  message: >
+    When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+    otherwise it could lead to unexpected behavior when using hash-based collections.
+  languages:
+  - java
+  severity: WARNING
+  pattern-either:
+    - pattern: |
+        class $CLASS {
+          ...
+        }
+        and:
+          - or:
+              - pattern: |
+                  @Override
+                  public boolean equals(Object $VAR) { ... }
+              - pattern: |
+                  @Override
+                  public int hashCode() { ... }
+          - not:
+              - pattern: |
+                  @Override
+                  public boolean equals(Object $VAR) { ... }
+                  ...
+                  @Override
+                  public int hashCode() { ... }
+  pattern-not-inside: |
+    interface $INTERFACE { ... }
+    class $CLASS implements Comparable { ... }
+  metadata:
+    category: correctness
+    subcategory: error-prone
+    cwe: "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    references:
+      - https://rules.sonarsource.com/java/RSPEC-1206
+      - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Detected duplicate key
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpo336l6q5/rule.yml:2
+1  | rules:
+2  | - id: override-both-equals-and-hashcode
+3  |   message: >
+4  |     When overriding Object.equals(), you must also override Object.hashCode() and vice versa,
+5  |     otherwise it could lead to unexpected behavior when using hash-based collections.
+6  |   languages:
+7  |   - java
+8  |   severity: WARNING
+9  |   pattern-either:
+10 |     - pattern: |
+11 |         class $CLASS {
+12 |           $METHOD(...) { ... }
+13 |           ...
+14 |         }
+15 |         and not:
+16 |           - pattern: |
+17 |               @Override
+18 |               public boolean equals(Object $VAR) { ... }
+19 |           - pattern: |
+20 |               @Override
+21 |               public int hashCode() { ... }
+22 |     - pattern: |
+23 |         class $CLASS {
+24 |           $METHOD(...) { ... }
+25 |           ...
+26 |         }
+27 |         and not:
+28 |           - pattern: |
+29 |               @Override
+30 |               public int hashCode() { ... }
+31 |           - pattern: |
+32 |               @Override
+33 |               public boolean equals(Object $VAR) { ... }
+34 |   pattern-not-inside: |
+35 |     interface $INTERFACE { ... }
+36 |   pattern-not-inside: |
+37 |     class $CLASS implements Comparable { ... }
+38 |   metadata:
+39 |     category: correctness
+40 |     subcategory: error-prone
+41 |     cwe: "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+42 |     confidence: MEDIUM
+43 |     likelihood: MEDIUM
+44 |     impact: MEDIUM
+45 |     references:
+46 |       - https://rules.sonarsource.com/java/RSPEC-1206
+47 |       - https://wiki.sei.cmu.edu/confluence/display/java/MET09-J.+Classes+that+define+an+equals%28%29+method+must+also+define+a+hashCode%28%29+method
+
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern-either', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Detected duplicate key
+Detected duplicate key name, one of ['id', 'languages', 'message', 'metadata', 'pattern-either', 'pattern-not-inside', 'severity'].
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 检查并移除重复的pattern-not-inside字段（第34-37行），合并两个排除条件到一个pattern-not-inside块中
+2. 重构pattern-either结构，确保内部模式使用正确的逻辑组合（当前两个分支实际上是等价的）
+3. 将Comparable接口检查合并到主模式中，使用pattern-not-inside只保留接口检查
+4. 确保每个顶级字段(id/message等)在规则中只出现一次
+5. 优化模式结构，使用更精确的方法匹配语法：
+   - 使用`method`模式单独匹配equals/hashCode方法
+   - 使用`class`模式作为容器
+6. 使用YAML格式验证工具验证修改后的文件格式正确性
+7. 考虑使用metavariable-regex对$CLASS和$METHOD进行更精确的类型约束
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:01:58
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpx_k1lnyi.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $METHODS
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: override-both-equals-and-hashcode
+  patterns:
+  - pattern: |
+      class $CLASS {
+        $METHODS
+      }
+  - metavariable-regex:
+      metavariable: $METHODS
+      regex: (.*(\b@Override\b.*\bhashCode\(\)|.*\b@Override\b.*\bequals\(Object)).*)
+  - pattern-not: |
+      class $CLASS {
+        $EQUALS
+        $HASHCODE
+        ...
+      }
+      where:
+        - (equivalences($EQUALS, ".*@Override.*equals\\(Object.*"))
+        - (equivalences($HASHCODE, ".*@Override.*hashCode\\(.*"))
+  message: >
+    A class that overrides equals() should also override hashCode(), and vice versa.
+    Failing to do so could lead to unexpected behavior when objects are used in
+    hash-based collections.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+    - error-prone
+    cwe:
+    - "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+    confidence: HIGH
+    likelihood: HIGH
+    impact: MEDIUM
+    references:
+    - https://cwe.mitre.org/data/definitions/581.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAnonymousClassDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTClassDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTRecordDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeDeclaration;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+
+public class OverrideBothEqualsAndHashcodeRule extends AbstractJavaRulechainRule {
+
+    public OverrideBothEqualsAndHashcodeRule() {
+        super(ASTClassDeclaration.class,
+              ASTRecordDeclaration.class,
+              ASTAnonymousClassDeclaration.class);
+    }
+
+    private void visitTypeDecl(ASTTypeDeclaration node, Object data) {
+        if (TypeTestUtil.isA(Comparable.class, node)) {
+            return;
+        }
+        ASTMethodDeclaration equalsMethod = null;
+        ASTMethodDeclaration hashCodeMethod = null;
+        for (ASTMethodDeclaration m : node.getDeclarations(ASTMethodDeclaration.class)) {
+            if (JavaAstUtils.isEqualsMethod(m)) {
+                equalsMethod = m;
+                if (hashCodeMethod != null) {
+                    break; // shortcut
+                }
+            } else if (JavaAstUtils.isHashCodeMethod(m)) {
+                hashCodeMethod = m;
+                if (equalsMethod != null) {
+                    break; // shortcut
+                }
+            }
+        }
+
+        if (hashCodeMethod != null ^ equalsMethod != null) {
+            ASTMethodDeclaration nonNullNode =
+                equalsMethod == null ? hashCodeMethod : equalsMethod;
+            asCtx(data).addViolation(nonNullNode);
+        }
+    }
+
+    @Override
+    public Object visit(ASTAnonymousClassDeclaration node, Object data) {
+        visitTypeDecl(node, data);
+        return null;
+    }
+
+    @Override
+    public Object visit(ASTClassDeclaration node, Object data) {
+        if (node.isInterface()) {
+            return null;
+        }
+        visitTypeDecl(node, data);
+        return null;
+    }
+
+    @Override
+    public Object visit(ASTRecordDeclaration node, Object data) {
+        visitTypeDecl(node, data);
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:02:39
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpvacuyno4.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$MODIFIERS class $CLASS {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: override-both-equals-and-hashcode
+  patterns:
+  - pattern-inside: |
+      $MODIFIERS class $CLASS {
+        ...
+      }
+  - pattern-either:
+    - pattern: |
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+    - pattern: |
+        @Override
+        public int hashCode() { ... }
+  - pattern-not-inside: |
+      $MODIFIERS class $CLASS {
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+        @Override
+        public int hashCode() { ... }
+        ...
+      }
+  message: >
+    A class that overrides equals() should also override hashCode(), and vice versa.
+    Failing to do so could lead to unexpected behavior when objects are used in
+    hash-based collections.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    subcategory:
+    - error-prone
+    cwe:
+    - "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+    confidence: HIGH
+    likelihood: HIGH
+    impact: MEDIUM
+    references:
+    - https://cwe.mitre.org/data/definitions/581.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpx_k1lnyi.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $METHODS
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpx_k1lnyi.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+class $CLASS {
+  $METHODS
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 解决模式语法问题：将简单的class声明模式改为完整的java类声明模式，添加java-specific的语法元素如可能的访问修饰符
+2. 修复模式组合逻辑：使用pattern-inside确保在类声明上下文中匹配，并将方法检查移到单独的pattern中
+3. 修改metavariable-regex的使用方式：将其转换为更精确的method匹配模式
+4. 重构条件逻辑：使用pattern-and/or来实现equals/hashCode的检测逻辑，避免复杂的where条件和metavariable-regex
+5. 修正模式否定检查：用pattern-not-inside来替换原有的否定模式，确保能正确识别同时实现两种方法的情况
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:03:20
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp7gyw_vxb.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+(public|protected|private)? class $CLASS {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: override-both-equals-and-hashcode
+  patterns:
+  - pattern-inside: |
+      (public|protected|private)? class $CLASS {
+        ...
+      }
+  - pattern-either:
+    - pattern: |
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+    - pattern: |
+        @Override
+        public int hashCode() { ... }
+  - pattern-not: |
+      (public|protected|private)? class $CLASS {
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+        @Override
+        public int hashCode() { ... }
+        ...
+      }
+  message: >
+    A class that overrides equals() should also override hashCode(), and vice versa.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: correctness
+    cwe: "CWE-581: Object Model Violation: Just One of Equals and Hashcode"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpvacuyno4.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$MODIFIERS class $CLASS {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpvacuyno4.override-both-equals-and-hashcode:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$MODIFIERS class $CLASS {
+  ...
+}
+
+----- end pattern -----
+
+请按照以下步骤进行修复：
+1. 修正模式语法：将$MODIFIERS改为具体的访问修饰符模式，如(public|protected|private)?
+2. 简化类声明模式：使用更精确的类声明语法，避免使用不明确的...
+3. 分离方法检测：将equals和hashCode方法的检测拆分为独立的pattern组合
+4. 优化否定条件：重构pattern-not-inside以更精确匹配两种情况共存
+5. 确保模式完整性：添加必要的语法元素如大括号等
+
+```yaml
+rules:
+- id: override-both-equals-and-hashcode
+  patterns:
+  - pattern-inside: |
+      (public|protected|private)? class $CLASS {
+        $METHODS
+      }
+  - pattern-either:
+    - pattern: |
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+    - pattern: |
+        @Override
+        public int hashCode() { ... }
+  - pattern-not-inside: |
+      (public|protected|private)? class $CLASS {
+        @Override
+        public boolean equals(Object $OBJ) { ... }
+        @Override
+        public int hashCode() { ... }
+      }
+  message: >
+    A class that overrides equals() should also override hashCode()
+  languages:
+  - java
+  severity: WARNING
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

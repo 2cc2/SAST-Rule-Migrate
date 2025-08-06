@@ -1,0 +1,284 @@
+Timestamp: 2025-07-23 16:32:00
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:32:00Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:5:2: "go/types" imported and not used
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type stringFormattedQuery struct {
+	issue.MetaData
+	dbCalls  gosec.CallList
+	queryCalls gosec.CallList
+	fmtCalls gosec.CallList
+}
+
+func (s *stringFormattedQuery) ID() string {
+	return s.MetaData.ID
+}
+
+func (s *stringFormattedQuery) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	// Check for database method calls
+	if dbNode := s.dbCalls.ContainsPkgCallExpr(n, c, false); dbNode != nil {
+		// Check for concatenated or formatted query arguments
+		for _, arg := range dbNode.Args {
+			switch arg := arg.(type) {
+			case *ast.BinaryExpr:
+				if arg.Op.String() == "+" {
+					return c.NewIssue(n, s.ID(), s.What, s.Severity, s.Confidence), nil
+				}
+			case *ast.CallExpr:
+				if fmtNode := s.fmtCalls.ContainsPkgCallExpr(arg, c, false); fmtNode != nil {
+					return c.NewIssue(n, s.ID(), s.What, s.Severity, s.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewStringFormattedQuery creates a new rule which detects string-formatted SQL queries
+func NewStringFormattedQuery(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	dbCalls := gosec.NewCallList()
+	dbCalls.Add("database/sql", "Exec")
+	dbCalls.Add("database/sql", "ExecContext")
+	dbCalls.Add("database/sql", "Query")
+	dbCalls.Add("database/sql", "QueryContext")
+	dbCalls.Add("database/sql", "QueryRow")
+	dbCalls.Add("database/sql", "QueryRowContext")
+
+	fmtCalls := gosec.NewCallList()
+	fmtCalls.Add("fmt", "Sprintf")
+	fmtCalls.Add("fmt", "Fprintf")
+	fmtCalls.Add("fmt", "Printf")
+
+	return &stringFormattedQuery{
+		dbCalls:  dbCalls,
+		fmtCalls: fmtCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.Low,
+			What:       "String-formatted SQL query detected. This could lead to SQL injection if the string is not sanitized properly. Audit this call to ensure the SQL is not manipulable by external data. Related CWEs: CWE-89, OWASP A01:2017, A03:2021",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: string-formatted-query
+  languages: [go]
+  message: >-
+    String-formatted SQL query detected. This could lead to SQL injection if
+    the string is not sanitized properly. Audit this call to ensure the
+    SQL is not manipulable by external data.
+  severity: WARNING
+  metadata:
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    source-rule-url: https://github.com/securego/gosec
+    category: security
+    technology:
+    - go
+    confidence: LOW
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+  patterns:
+  - metavariable-regex:
+        metavariable: $OBJ
+        regex: (?i).*(db|database)
+  - pattern-not-inside: |
+      $VAR = "..." + "..."
+      ...
+      $OBJ.$SINK(..., $VAR, ...)
+  - pattern-not: $OBJ.Exec("...")
+  - pattern-not: $OBJ.ExecContext($CTX, "...")
+  - pattern-not: $OBJ.Query("...")
+  - pattern-not: $OBJ.QueryContext($CTX, "...")
+  - pattern-not: $OBJ.QueryRow("...")
+  - pattern-not: $OBJ.QueryRow($CTX, "...")
+  - pattern-not: $OBJ.QueryRowContext($CTX, "...")
+  - pattern-either:
+    - pattern: $OBJ.Exec($X + ...)
+    - pattern: $OBJ.ExecContext($CTX, $X + ...)
+    - pattern: $OBJ.Query($X + ...)
+    - pattern: $OBJ.QueryContext($CTX, $X + ...)
+    - pattern: $OBJ.QueryRow($X + ...)
+    - pattern: $OBJ.QueryRow($CTX, $X + ...)
+    - pattern: $OBJ.QueryRowContext($CTX, $X + ...)
+    - pattern: $OBJ.Exec(fmt.$P("...", ...))
+    - pattern: $OBJ.ExecContext($CTX, fmt.$P("...", ...))
+    - pattern: $OBJ.Query(fmt.$P("...", ...))
+    - pattern: $OBJ.QueryContext($CTX, fmt.$P("...", ...))
+    - pattern: $OBJ.QueryRow(fmt.$P("...", ...))
+    - pattern: $OBJ.QueryRow($CTX, fmt.$U("...", ...))
+    - pattern: $OBJ.QueryRowContext($CTX, fmt.$P("...", ...))
+    - patterns:
+        - pattern-either:
+            - pattern: $QUERY = fmt.Fprintf($F, "$SQLSTR", ...)
+            - pattern: $QUERY = fmt.Sprintf("$SQLSTR", ...)
+            - pattern: $QUERY = fmt.Printf("$SQLSTR", ...)
+            - pattern: $QUERY = $X + ...
+        - pattern-either:
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.Query($QUERY, ...)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.ExecContext($CTX, $QUERY, ...)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.Exec($QUERY, ...)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.QueryRow($CTX, $QUERY)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.QueryRow($QUERY)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.QueryContext($CTX, $QUERY)
+                    ...
+                }
+            - pattern-inside: |
+                func $FUNC(...) {
+                    ...
+                    $OBJ.QueryRowContext($CTX, $QUERY, ...)
+                    ...
+                }
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

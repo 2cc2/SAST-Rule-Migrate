@@ -1,0 +1,714 @@
+Timestamp: 2025-07-24 15:41:50
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ExpressionLang (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-50)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,59-77)
+Rule Content:
+/**
+ * @name Expression Language Injection
+ * @description Detects dynamic Expression Language (EL) evaluation that could lead to code injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.ExpressionLang
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof RemoteFlowSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() in ["createValueExpression", "createMethodExpression", "buildConstraintViolationWithTemplate"] and
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") or
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.validation", "ConstraintValidatorContext")
+      ) and
+      sink.asExpr() = ma.getArgument(1)
+    )
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential EL injection: user input reaches expression evaluation ($@).",
+  source.getNode(), "user input"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: el-injection
+  metadata:
+    cwe:
+    - "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#EL_INJECTION
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+    confidence: LOW
+  message: >-
+    An expression is built with a dynamic value. The source of the value(s) should
+    be verified to avoid that unfiltered values fall into this risky code evaluation.
+  severity: WARNING
+  languages: [java]
+  patterns:
+  - pattern-either:
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createValueExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createValueExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...) {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $EF.createValueExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...,ExpressionFactory $EF,...) {
+          ...
+          $EF.createValueExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createMethodExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createMethodExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...) {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $EF.createMethodExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...,ExpressionFactory $EF,...) {
+          ...
+          $EF.createMethodExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(String $INPUT, ...) {
+          ...
+          $OBJECT.buildConstraintViolationWithTemplate($INPUT, ...);
+          ...
+        }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        $EF.createValueExpression($CTX,"...",...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        String $S = "...";
+        ...
+        $EF.createValueExpression($CTX,$S,...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        $EF.createMethodExpression($CTX,"...",...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        String $S = "...";
+        ...
+        $EF.createMethodExpression($CTX,$S,...);
+        ...
+      }
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:42:28
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.SecurityHelpers (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-49)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,15-23)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,59-77)
+Rule Content:
+/**
+ * @name Expression Language Injection
+ * @description Detects dynamic Expression Language (EL) evaluation that could lead to code injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.security.SecurityHelpers
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof RemoteFlowSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Expr arg |
+      m.hasName(["createValueExpression", "createMethodExpression", "buildConstraintViolationWithTemplate"]) and
+      (
+        m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") or
+        m.getDeclaringType().hasQualifiedName("javax.validation", "ConstraintValidatorContext")
+      ) and
+      arg = m.getACall().getArgument(1) and
+      sink.asExpr() = arg
+    )
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential EL injection: user input reaches expression evaluation ($@).",
+  source.getNode(), "user input"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ExpressionLang (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-50)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,59-77)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Expression Language Injection
+ * @description Detects dynamic Expression Language (EL) evaluation that could lead to code injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.security.SecurityHelpers
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof RemoteFlowSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Expr arg |
+      m.hasName(["createValueExpression", "createMethodExpression", "buildConstraintViolationWithTemplate"]) and
+      (
+        m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") or
+        m.getDeclaringType().hasQualifiedName("javax.validation", "ConstraintValidatorContext")
+      ) and
+      arg = m.getACall().getArgument(1) and
+      sink.asExpr() = arg
+    )
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential EL injection: user input reaches expression evaluation ($@).",
+  source.getNode(), "user input"
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:43:21
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type RemoteUserInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-27)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,59-77)
+Rule Content:
+/**
+ * @name Expression Language Injection
+ * @description Detects dynamic Expression Language (EL) evaluation that could lead to code injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(RemoteUserInput remote |
+      source.asParameter() = remote.asParameter()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["createValueExpression", "createMethodExpression", "buildConstraintViolationWithTemplate"]) and
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") or
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.validation", "ConstraintValidatorContext")
+      ) and
+      sink.asExpr() = ma.getArgument(1)
+    )
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential EL injection: user input reaches expression evaluation ($@).",
+  source.getNode(), "user input"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.SecurityHelpers (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-49)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,15-23)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,59-77)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.SecurityHelpers (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-49)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,15-23)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,59-77)，请按照以下步骤进行修复：
+1. 移除不再需要的SecurityHelpers模块导入
+2. 使用新的Source和Sink定义方式，替换RemoteFlowSource为具体的source定义
+3. 替换已弃用的Method.getACall()方法为Method.getAReference()或直接匹配方法调用
+4. 使用新的TaintTracking::Configuration类替代已弃用的Configuration
+5. 使用新的路径节点类型替代已弃用的PathNode
+6. 更新查询结构以符合最新的Codeql语法规范
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:25:29
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ExpressionLanguage (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-54)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,27-50)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,33-51)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects improper control of code generation (Expression Language injection).
+ * @kind problem
+ * @problem.severity warning
+ * @precision low
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       owasp-a3
+ *       cwe2022-top25
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.ExpressionLanguage
+
+class ELInjection extends DataFlow::Configuration {
+  ELInjection() { this = "ELInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      p.getType().getName() = "String" and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "createValueExpression" or
+       ma.getMethod().getName() = "createMethodExpression") and
+      ma.getMethod().getDeclaringType().getName() = "ExpressionFactory" and
+      sink.asExpr() = ma.getArgument(1)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "buildConstraintViolationWithTemplate" and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, ELInjection conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: el-injection
+  metadata:
+    cwe:
+    - "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#EL_INJECTION
+    category: security
+    technology:
+    - java
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: HIGH
+    confidence: LOW
+  message: >-
+    An expression is built with a dynamic value. The source of the value(s) should
+    be verified to avoid that unfiltered values fall into this risky code evaluation.
+  severity: WARNING
+  languages: [java]
+  patterns:
+  - pattern-either:
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createValueExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createValueExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...) {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $EF.createValueExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...,ExpressionFactory $EF,...) {
+          ...
+          $EF.createValueExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createMethodExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $X $METHOD(...) {
+            ...
+            $EF.createMethodExpression($CTX,$INPUT,...);
+            ...
+          }
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...) {
+          ...
+          ExpressionFactory $EF = ...;
+          ...
+          $EF.createMethodExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(...,ExpressionFactory $EF,...) {
+          ...
+          $EF.createMethodExpression($CTX,$INPUT,...);
+          ...
+        }
+    - pattern: |
+        $X $METHOD(String $INPUT, ...) {
+          ...
+          $OBJECT.buildConstraintViolationWithTemplate($INPUT, ...);
+          ...
+        }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        $EF.createValueExpression($CTX,"...",...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        String $S = "...";
+        ...
+        $EF.createValueExpression($CTX,$S,...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        $EF.createMethodExpression($CTX,"...",...);
+        ...
+      }
+  - pattern-not: |
+      $X $METHOD(...) {
+        ...
+        String $S = "...";
+        ...
+        $EF.createMethodExpression($CTX,$S,...);
+        ...
+      }
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:26:19
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.El (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,27-55)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects improper control of code generation (Expression Language injection).
+ * @kind problem
+ * @problem.severity warning
+ * @precision low
+ * @id java/el-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       owasp-a3
+ *       cwe2022-top25
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.El
+
+class ELInjection extends TaintTracking::Configuration {
+  ELInjection() { this = "ELInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      p.getType().getName() = "String" and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "createValueExpression" or
+       mc.getMethod().getName() = "createMethodExpression") and
+      mc.getMethod().getDeclaringType().getName() = "ExpressionFactory" and
+      sink.asExpr() = mc.getArgument(1)
+    ) or
+    exists(MethodCall mc |
+      mc.getMethod().getName() = "buildConstraintViolationWithTemplate" and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, ELInjection conf
+where conf.hasFlow(source, sink)
+select sink, "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ExpressionLanguage (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-54)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,27-50)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,33-51)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ExpressionLanguage (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-54)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,27-50)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,33-51)，请按照以下步骤进行修复：
+1. 移除无效的ExpressionLanguage模块导入，改用CodeQL标准库中的Java类和方法检测
+2. 将继承的DataFlow::Configuration替换为最新的TaintTracking::Configuration
+3. 将所有MethodAccess替换为MethodCall
+4. 将所有PathNode替换为TaintTracking::PathNode
+5. 更新查询中的方法调用和类型引用以匹配新的CodeQL API
+6. 确保所有导入路径使用正确的CodeQL标准库路径(codeql/java/ql/src/semmle/code)
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,355 @@
+Timestamp: 2025-07-22 19:16:26
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpt7s0d5k8.assignment-in-operand:
+ Invalid pattern for Java: `$OP$EXP' is neither a valid identifier in Java nor a valid meta-variable
+----- pattern -----
+if ($OP$EXP) { ... }
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: assignment-in-operand
+  patterns:
+    - pattern-either:
+      - pattern: |
+          if ($EXP = $VAL) { ... }
+      - pattern: |
+          if ($OP$EXP) { ... }
+      - pattern: |
+          while ($EXP = $VAL) { ... }
+      - pattern: |
+          while ($OP$EXP) { ... }
+      - pattern: |
+          for (...; $EXP = $VAL; ...) { ... }
+      - pattern: |
+          for (...; $OP$EXP; ...) { ... }
+  message: Avoid assignment or increment/decrement operators inside operand expressions (if/while/for conditions).
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: error-prone
+    subcategory:
+      - correctness
+    cwe:
+      - "CWE-481: Assigning instead of Comparing"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+      - java
+    references:
+      - https://cwe.mitre.org/data/definitions/481.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import static net.sourceforge.pmd.properties.PropertyFactory.booleanProperty;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAssignmentExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTExpressionStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTForStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTIfStatement;
+import net.sourceforge.pmd.lang.java.ast.ASTUnaryExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTWhileStatement;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+import net.sourceforge.pmd.properties.PropertySource;
+import net.sourceforge.pmd.reporting.RuleContext;
+
+/**
+ *
+ */
+public class AssignmentInOperandRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Boolean> ALLOW_IF_DESCRIPTOR =
+        booleanProperty("allowIf")
+            .desc("Allow assignment within the conditional expression of an if statement")
+            .defaultValue(false).build();
+
+    private static final PropertyDescriptor<Boolean> ALLOW_FOR_DESCRIPTOR =
+        booleanProperty("allowFor")
+            .desc("Allow assignment within the conditional expression of a for statement")
+            .defaultValue(false).build();
+
+    private static final PropertyDescriptor<Boolean> ALLOW_WHILE_DESCRIPTOR =
+            booleanProperty("allowWhile")
+                    .desc("Allow assignment within the conditional expression of a while statement")
+                    .defaultValue(false).build();
+
+    private static final PropertyDescriptor<Boolean> ALLOW_INCREMENT_DECREMENT_DESCRIPTOR =
+            booleanProperty("allowIncrementDecrement")
+                    .desc("Allow increment or decrement operators within the conditional expression of an if, for, or while statement")
+                    .defaultValue(false).build();
+
+
+    public AssignmentInOperandRule() {
+        super(ASTAssignmentExpression.class, ASTUnaryExpression.class);
+        definePropertyDescriptor(ALLOW_IF_DESCRIPTOR);
+        definePropertyDescriptor(ALLOW_FOR_DESCRIPTOR);
+        definePropertyDescriptor(ALLOW_WHILE_DESCRIPTOR);
+        definePropertyDescriptor(ALLOW_INCREMENT_DECREMENT_DESCRIPTOR);
+    }
+
+    @Override
+    public Object visit(ASTAssignmentExpression node, Object data) {
+        checkAssignment(node, (RuleContext) data);
+        return null;
+    }
+
+    @Override
+    public Object visit(ASTUnaryExpression node, Object data) {
+        if (!getProperty(ALLOW_INCREMENT_DECREMENT_DESCRIPTOR) && !node.getOperator().isPure()) {
+            checkAssignment(node, (RuleContext) data);
+        }
+        return null;
+    }
+
+    private void checkAssignment(ASTExpression impureExpr, RuleContext ctx) {
+        ASTExpression toplevel = JavaAstUtils.getTopLevelExpr(impureExpr);
+        JavaNode parent = toplevel.getParent();
+        if (parent instanceof ASTExpressionStatement) {
+            // that's ok
+            return;
+        }
+        if (parent instanceof ASTIfStatement && !getProperty(ALLOW_IF_DESCRIPTOR)
+            || parent instanceof ASTWhileStatement && !getProperty(ALLOW_WHILE_DESCRIPTOR)
+            || parent instanceof ASTForStatement && ((ASTForStatement) parent).getCondition() == toplevel && !getProperty(ALLOW_FOR_DESCRIPTOR)) {
+
+            ctx.addViolation(impureExpr);
+        }
+    }
+
+    public boolean allowsAllAssignments() {
+        return getProperty(ALLOW_IF_DESCRIPTOR) && getProperty(ALLOW_FOR_DESCRIPTOR)
+                && getProperty(ALLOW_WHILE_DESCRIPTOR) && getProperty(ALLOW_INCREMENT_DECREMENT_DESCRIPTOR);
+    }
+
+    /**
+     * @see PropertySource#dysfunctionReason()
+     */
+    @Override
+    public String dysfunctionReason() {
+        return allowsAllAssignments() ? "All assignment types allowed, no checks performed" : null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 19:17:01
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp1slzh7rj.assignment-in-operand:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+if ($OP $EXP) { ... }
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: assignment-in-operand
+  patterns:
+    - pattern-either:
+      - pattern: |
+          if ($EXP = $VAL) { ... }
+      - pattern: |
+          while ($EXP = $VAL) { ... }
+      - pattern: |
+          for (...; $EXP = $VAL; ...) { ... }
+    - patterns:
+      - pattern-either:
+        - pattern: |
+            if ($OP $EXP) { ... }
+        - pattern: |
+            while ($OP $EXP) { ... }
+        - pattern: |
+            for (...; $OP $EXP; ...) { ... }
+      - metavariable-regex:
+          metavariable: $OP
+          regex: "(\\+\\+|\\-\\-)"
+  message: Avoid assignment or increment/decrement operators inside operand expressions (if/while/for conditions).
+  languages:
+    - java
+  severity: WARNING
+  metadata:
+    category: error-prone
+    subcategory:
+      - correctness
+    cwe:
+      - "CWE-481: Assigning instead of Comparing"
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    technology:
+      - java
+    references:
+      - https://cwe.mitre.org/data/definitions/481.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpt7s0d5k8.assignment-in-operand:
+ Invalid pattern for Java: `$OP$EXP' is neither a valid identifier in Java nor a valid meta-variable
+----- pattern -----
+if ($OP$EXP) { ... }
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpt7s0d5k8.assignment-in-operand:
+ Invalid pattern for Java: `$OP$EXP' is neither a valid identifier in Java nor a valid meta-variable
+----- pattern -----
+if ($OP$EXP) { ... }
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 将模式中的 `$OP$EXP` 分开为合法的元变量格式 `$OP $EXP`，因为 Semgrep 不支持连写的元变量
+2. 明确指定 `$OP` 为合法的 Java 一元操作符 (++, --)，添加操作符约束
+3. 为 `$EXP` 添加类型约束，确保匹配有效的 Java 表达式
+4. 重构模式结构，将增量/减量操作符模式与其他条件模式分开处理
+5. 验证修改后的模式是否符合 Java 语法规范
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,184 @@
+Timestamp: 2025-07-22 19:14:39
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmph6gz4bxb.confusing-varargs-method-call:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$CLASS.$METHOD(...$ARGS)
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: confusing-varargs-method-call
+  patterns:
+  - pattern-inside: |
+      $CLASS.$METHOD(...$ARGS)
+  - focus-metavariable: $ARGS[-1]
+  - pattern-not: (..., ($T) $ARGS[-1], ...)
+  - pattern-not: (..., new $TYPE[] {...}, ...)
+  - pattern-either:
+    - pattern: |
+        $ARGS[-1].getTypeMirror().isSubtypeOf($COMPONENT)
+    - pattern: |
+        $ARGS[-1] instanceof ASTArrayAllocation && $ARGS[-1].getArrayInitializer() != null
+  message: >
+    Unclear if a varargs or non-varargs call is intended. Cast to %s or %s[],
+    or pass varargs parameters separately to clarify intent.
+  fix: |
+    // Cast to appropriate type or use explicit array creation
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: error-prone
+    subcategory:
+    - correctness
+    cwe:
+    - 'CWE-628: Function Call with Incorrectly Specified Arguments'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: LOW
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/628.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import java.util.List;
+
+import net.sourceforge.pmd.lang.java.ast.ASTArgumentList;
+import net.sourceforge.pmd.lang.java.ast.ASTArrayAllocation;
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.InvocationNode;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.JArrayType;
+import net.sourceforge.pmd.lang.java.types.JTypeMirror;
+import net.sourceforge.pmd.lang.java.types.OverloadSelectionResult;
+import net.sourceforge.pmd.lang.java.types.TypeOps;
+import net.sourceforge.pmd.lang.java.types.TypePrettyPrint;
+
+public class ConfusingArgumentToVarargsMethodRule extends AbstractJavaRulechainRule {
+
+    public ConfusingArgumentToVarargsMethodRule() {
+        super(ASTArgumentList.class);
+    }
+
+    @Override
+    public Object visit(ASTArgumentList argList, Object data) {
+        if (argList.isEmpty()) {
+            return null;
+        }
+
+        // node is the last param in an arguments list
+        InvocationNode call = (InvocationNode) argList.getParent();
+        OverloadSelectionResult info = call.getOverloadSelectionInfo();
+        if (info.isFailed()
+            || info.isVarargsCall()
+            || !info.getMethodType().isVarargs()) {
+            return null;
+        }
+
+        List<JTypeMirror> formals = info.getMethodType().getFormalParameters();
+        JTypeMirror lastFormal = formals.get(formals.size() - 1);
+        JTypeMirror expectedComponent = ((JArrayType) lastFormal).getComponentType();
+
+        // since we know this is not a varargs call the last arg has an array type
+        ASTExpression varargsArg = argList.getLastChild();
+        assert varargsArg != null;
+        if (varargsArg.getTypeMirror().isSubtypeOf(expectedComponent)
+            && !varargsArg.getTypeMirror().equals(lastFormal)
+            && !TypeOps.isSpecialUnresolvedOrArray(varargsArg.getTypeMirror())) {
+            // confusing
+
+            String message;
+            if (varargsArg instanceof ASTArrayAllocation && ((ASTArrayAllocation) varargsArg).getArrayInitializer() != null) {
+                message = "Unclear if a varargs or non-varargs call is intended. Cast to {0} or {0}[], or pass varargs parameters separately to clarify intent.";
+            } else {
+                message = "Unclear if a varargs or non-varargs call is intended. Cast to {0} or {0}[] to clarify intent.";
+            }
+            asCtx(data).addViolationWithMessage(varargsArg, message, TypePrettyPrint.prettyPrintWithSimpleNames(expectedComponent));
+        }
+
+        return null;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

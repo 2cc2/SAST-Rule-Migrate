@@ -1,0 +1,424 @@
+Timestamp: 2025-07-22 15:25:04
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpzrs23_oy/rule.yml:30
+30 |   - pattern-not: |
+31 |       $LITERAL.$METHOD($X)
+32 |     metavariables:
+33 |       $LITERAL:
+34 |         patterns:
+35 |         - pattern: "\"...\""
+36 |         - pattern: StringLiteral(...)
+37 |   - pattern-not: |
+
+{'pattern-not': '$LITERAL.$METHOD($X)\n', 'metavariables': {'$LITERAL': {'patterns': [{'pattern': '"..."'}, {'pattern': 'StringLiteral(...)'}]}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: literals-first-in-comparisons
+  message: >
+    Literal values should be placed first in string comparisons to avoid NullPointerException.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        $X.equals($Y)
+    - pattern: |
+        $X.equalsIgnoreCase($Y)
+    - pattern: |
+        $X.compareTo($Y)
+    - pattern: |
+        $X.compareToIgnoreCase($Y)
+    - pattern: |
+        $X.contentEquals($Y)
+    - pattern: |
+        $X.$METHOD(...args)
+      metavariable-regex:
+        metavariable: $METHOD
+        regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+    - pattern: |
+        $X.$METHOD(...args)
+      metavariables:
+        $METHOD:
+          regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+  - pattern-not: |
+      $LITERAL.$METHOD($X)
+    metavariables:
+      $LITERAL:
+        patterns:
+        - pattern: "\"...\""
+        - pattern: StringLiteral(...)
+  - pattern-not: |
+      "...".$METHOD($X)
+  metadata:
+    category: best-practices
+    subcategory:
+    - error-prevention
+    cwe:
+    - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A10:2021 - Server-Side Request Forgery (SSRF)
+    technology:
+    - Java
+    references:
+    - https://rules.sonarsource.com/java/tag/spring/RSPEC-1132
+    - https://pmd.github.io/latest/pmd_rules_java_bestpractices.html#literalsfirstincomparisons
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /*
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.util.CollectionUtil.listOf;
+import static net.sourceforge.pmd.util.CollectionUtil.setOf;
+
+import java.util.Set;
+
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import net.sourceforge.pmd.lang.java.ast.ASTExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodCall;
+import net.sourceforge.pmd.lang.java.ast.ASTStringLiteral;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+import net.sourceforge.pmd.reporting.RuleContext;
+
+public class LiteralsFirstInComparisonsRule extends AbstractJavaRulechainRule {
+
+    private static final Set<String> STRING_COMPARISONS =
+        setOf("equalsIgnoreCase",
+              "compareTo",
+              "compareToIgnoreCase",
+              "contentEquals");
+
+    public LiteralsFirstInComparisonsRule() {
+        super(ASTMethodCall.class);
+    }
+
+    @Override
+    public Object visit(ASTMethodCall call, Object data) {
+        if ("equals".equals(call.getMethodName())
+            && call.getArguments().size() == 1
+            && isEqualsObjectAndNotAnOverload(call)) {
+            checkArgs((RuleContext) data, call);
+        } else if (STRING_COMPARISONS.contains(call.getMethodName())
+            && call.getArguments().size() == 1
+            && TypeTestUtil.isDeclaredInClass(String.class, call.getMethodType())) {
+            checkArgs((RuleContext) data, call);
+        }
+        return data;
+    }
+
+    private boolean isEqualsObjectAndNotAnOverload(ASTMethodCall call) {
+        return call.getOverloadSelectionInfo().isFailed() // failed selection is considered probably equals(Object)
+                || call.getMethodType().getFormalParameters().equals(listOf(call.getTypeSystem().OBJECT));
+    }
+
+    private boolean isConstantString(@Nullable ASTExpression node) {
+        return node instanceof ASTStringLiteral
+            || node != null && node.getConstValue() instanceof String;
+    }
+
+    private void checkArgs(RuleContext ctx, ASTMethodCall call) {
+        ASTExpression arg = call.getArguments().get(0);
+        @Nullable ASTExpression qualifier = call.getQualifier();
+        if (qualifier != null && !isConstantString(qualifier) && isConstantString(arg)) {
+            ctx.addViolation(call);
+        }
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:25:41
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjy_txfy3/rule.yml:26
+26 |   - pattern-not: |
+27 |       "$LITERAL".$METHOD($X)
+28 |     metavariables:
+29 |       $METHOD:
+30 |         regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+31 |       $LITERAL:
+32 |         regex: '".*"'
+33 |   metadata:
+
+{'pattern-not': '"$LITERAL".$METHOD($X)\n', 'metavariables': {'$METHOD': {'regex': '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'}, '$LITERAL': {'regex': '".*"'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: literals-first-in-comparisons
+  message: >
+    Literal values should be placed first in string comparisons to avoid NullPointerException.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        $X.equals($Y)
+    - pattern: |
+        $X.equalsIgnoreCase($Y)
+    - pattern: |
+        $X.compareTo($Y)
+    - pattern: |
+        $X.compareToIgnoreCase($Y)
+    - pattern: |
+        $X.contentEquals($Y)
+    - pattern: |
+        $X.$METHOD(...args)
+      metavariable-regex:
+        metavariable: $METHOD
+        regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+  - pattern-not: |
+      "$LITERAL".$METHOD($X)
+    metavariables:
+      $METHOD:
+        regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+      $LITERAL:
+        regex: '".*"'
+  metadata:
+    category: best-practices
+    subcategory:
+    - error-prevention
+    cwe:
+    - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A10:2021 - Server-Side Request Forgery (SSRF)
+    technology:
+    - Java
+    references:
+    - https://rules.sonarsource.com/java/tag/spring/RSPEC-1132
+    - https://pmd.github.io/latest/pmd_rules_java_bestpractices.html#literalsfirstincomparisons
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpzrs23_oy/rule.yml:30
+30 |   - pattern-not: |
+31 |       $LITERAL.$METHOD($X)
+32 |     metavariables:
+33 |       $LITERAL:
+34 |         patterns:
+35 |         - pattern: "\"...\""
+36 |         - pattern: StringLiteral(...)
+37 |   - pattern-not: |
+
+{'pattern-not': '$LITERAL.$METHOD($X)\n', 'metavariables': {'$LITERAL': {'patterns': [{'pattern': '"..."'}, {'pattern': 'StringLiteral(...)'}]}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpzrs23_oy/rule.yml:30
+30 |   - pattern-not: |
+31 |       $LITERAL.$METHOD($X)
+32 |     metavariables:
+33 |       $LITERAL:
+34 |         patterns:
+35 |         - pattern: "\"...\""
+36 |         - pattern: StringLiteral(...)
+37 |   - pattern-not: |
+
+{'pattern-not': '$LITERAL.$METHOD($X)\n', 'metavariables': {'$LITERAL': {'patterns': [{'pattern': '"..."'}, {'pattern': 'StringLiteral(...)'}]}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将metavariable的模式匹配从patterns数组改为metavariable-regex格式，因为Semgrep不支持直接在metavariables下使用patterns
+2. 合并两个pattern-not规则为一个，并使用metavariable-regex来定义$LITERAL的模式
+3. 移除无效的StringLiteral(...)模式，因为Semgrep的原生模式匹配不支持这种语法
+4. 确保metavariable-regex的正则表达式能正确匹配字符串字面量
+5. 规范yaml缩进，确保所有子项正确嵌套
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:26:26
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpwzdrhqox/rule.yml:26
+26 |   - pattern-not: |
+27 |       "$LITERAL".$METHOD($X)
+28 |     metavariable-regex:
+29 |       metavariable: $LITERAL
+30 |       regex: '".*"'
+31 |   metadata:
+
+{'pattern-not': '"$LITERAL".$METHOD($X)\n', 'metavariable-regex': {'metavariable': '$LITERAL', 'regex': '".*"'}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: literals-first-in-comparisons
+  message: >
+    Literal values should be placed first in string comparisons to avoid NullPointerException.
+  languages:
+  - java
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        $X.equals($Y)
+    - pattern: |
+        $X.equalsIgnoreCase($Y)
+    - pattern: |
+        $X.compareTo($Y)
+    - pattern: |
+        $X.compareToIgnoreCase($Y)
+    - pattern: |
+        $X.contentEquals($Y)
+    - pattern: |
+        $X.$METHOD(...)
+      metavariable-regex:
+        metavariable: $METHOD
+        regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+  - pattern-not: |
+      "$LITERAL".$METHOD($X)
+    metavariable-regex:
+      metavariable: $LITERAL
+      regex: '".*"'
+  metadata:
+    category: best-practices
+    subcategory:
+    - error-prevention
+    cwe:
+    - 'CWE-476: NULL Pointer Dereference'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A10:2021 - Server-Side Request Forgery (SSRF)
+    technology:
+    - Java
+    references:
+    - https://rules.sonarsource.com/java/tag/spring/RSPEC-1132
+    - https://pmd.github.io/latest/pmd_rules_java_bestpractices.html#literalsfirstincomparisons
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjy_txfy3/rule.yml:26
+26 |   - pattern-not: |
+27 |       "$LITERAL".$METHOD($X)
+28 |     metavariables:
+29 |       $METHOD:
+30 |         regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+31 |       $LITERAL:
+32 |         regex: '".*"'
+33 |   metadata:
+
+{'pattern-not': '"$LITERAL".$METHOD($X)\n', 'metavariables': {'$METHOD': {'regex': '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'}, '$LITERAL': {'regex': '".*"'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpjy_txfy3/rule.yml:26
+26 |   - pattern-not: |
+27 |       "$LITERAL".$METHOD($X)
+28 |     metavariables:
+29 |       $METHOD:
+30 |         regex: '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'
+31 |       $LITERAL:
+32 |         regex: '".*"'
+33 |   metadata:
+
+{'pattern-not': '"$LITERAL".$METHOD($X)\n', 'metavariables': {'$METHOD': {'regex': '(equals|equalsIgnoreCase|compareTo|compareToIgnoreCase|contentEquals)'}, '$LITERAL': {'regex': '".*"'}}} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将metavariables定义移到顶层，不要放在pattern-not子项内，因为Semgrep不支持这种嵌套方式
+2. 对于方法名的匹配，保留之前的metavariable-regex方式，而不是在metavariables中使用regex
+3. 对于字符串字面量的匹配，改用专门的正则表达式模式
+4. 确保yaml缩进正确，所有模式都正确嵌套在patterns下
+5. 合并相关的模式匹配条件，保持规则逻辑的一致性
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

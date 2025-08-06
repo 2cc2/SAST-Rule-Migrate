@@ -1,0 +1,700 @@
+Timestamp: 2025-07-24 14:20:31
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,11-42)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,11-67)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,11-42)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,11-67)
+ERROR: extraneous input '|' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,36-37)
+ERROR: unexpected input 'instanceof' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,43-53)
+ERROR: extraneous input '|' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,36-37)
+ERROR: unexpected input 'instanceof' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,43-53)
+ERROR: getAReference() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,14-27)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,15-31)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,33-49)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,6-18)
+ERROR: predicate is not compatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,3-45)
+ERROR: Expected a predicate with result but found 'isLoggingMethod', which is a predicate without result. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,26-44)
+WARNING: unused variable 'arg1' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,28-32)
+WARNING: unused variable 'arg2' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,39-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean properties to log messages.
+ *              The expression language might also lead to unwanted code execution if dynamic values are used.
+ *              Verify the source of values to prevent unfiltered values from risky code evaluation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ *       technology/jboss
+ */
+
+import java
+
+predicate isSeamLogImport(Import i) {
+  exists(| i.getAReference().getPackage().getName() = "org.jboss.seam.log")
+}
+
+predicate isSeamLogVariable(Field f) {
+  exists(MethodAccess ma | 
+    ma.getMethod().getName() = "getLogger" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log")
+  ) and
+  f.getType().hasQualifiedName("org.jboss.seam.log", "Log")
+}
+
+predicate isLoggingMethod(Method m) {
+  m.getName() = "debug" or
+  m.getName() = "error" or
+  m.getName() = "fatal" or
+  m.getName() = "info" or
+  m.getName() = "trace" or
+  m.getName() = "warn"
+}
+
+from MethodAccess ma, Expr arg1, Expr arg2
+where
+  // Match log method calls like LOG.info(X + Y,...)
+  ma.getMethod().hasName(isLoggingMethod(_)) and
+  (exists(ma.getArgument(0) = arg1.| arg1 instanceof BinaryAddExpr) or
+   exists(ma.getArgument(1) = arg2.| arg2 instanceof BinaryAddExpr)) and
+  // Check if it's a Seam Log instance
+  (exists(Field f | 
+    ma.getQualifier() = f.getAnAccess() and
+    isSeamLogVariable(f)
+  ) or
+  exists(Import i | 
+    isSeamLogImport(i) and
+    ma.getQualifier().getType().hasQualifiedName("org.jboss.seam.log", "Log")
+  ))
+select ma, "Seam logging with potential expression language injection. Verify dynamic values used in log messages."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: seam-log-injection
+  patterns:
+  - pattern: |
+      $LOG.$INFO($X + $Y,...)
+  - pattern-either:
+    - pattern-inside: |
+        import org.jboss.seam.log.Log;
+        ...
+    - pattern-inside: |
+        org.jboss.seam.log.Log $LOG = ...;
+        ...
+  - metavariable-regex:
+      metavariable: $INFO
+      regex: (debug|error|fatal|info|trace|warn)
+  languages: [java]
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+  metadata:
+    cwe:
+    - "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+    category: security
+    technology:
+    - jboss
+    confidence: LOW
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: MEDIUM
+  severity: ERROR
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:21:19
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedElement() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,24-42)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,15-31)
+ERROR: getQualifier() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,18-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,10-22)
+WARNING: unused predicate 'isSeamLogImport' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,11-26)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean properties to log messages.
+ *              The expression language might also lead to unwanted code execution if dynamic values are used.
+ *              Verify the source of values to prevent unfiltered values from risky code evaluation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ *       technology/jboss
+ */
+
+import java
+
+predicate isSeamLogImport(Import i) {
+  exists(RefType p | i.getImportedElement() = p and p.getQualifiedName() = "org.jboss.seam.log.Log")
+}
+
+predicate isSeamLogVariable(Field f) {
+  exists(Method m | 
+    m.getName() = "getLogger" and
+    m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log")
+  ) and
+  f.getType().hasQualifiedName("org.jboss.seam.log", "Log")
+}
+
+predicate isLoggingMethod(Method m) {
+  m.getName().matches("debug|error|fatal|info|trace|warn")
+}
+
+from Expr logCall, Expr arg
+where
+  exists(MethodAccess ma |
+    ma = logCall and
+    isLoggingMethod(ma.getMethod()) and
+    (ma.getArgument(0) = arg or ma.getArgument(1) = arg) and
+    arg instanceof AddExpr
+  ) and
+  exists(FieldAccess fa |
+    fa = logCall.getQualifier() and
+    isSeamLogVariable(fa.getField())
+  )
+select logCall, "Seam logging with potential expression language injection. Verify dynamic values used in log messages."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,11-42)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,11-67)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,11-42)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,11-67)
+ERROR: extraneous input '|' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,36-37)
+ERROR: unexpected input 'instanceof' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,43-53)
+ERROR: extraneous input '|' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,36-37)
+ERROR: unexpected input 'instanceof' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,43-53)
+ERROR: getAReference() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,14-27)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,15-31)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,33-49)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,6-18)
+ERROR: predicate is not compatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,3-45)
+ERROR: Expected a predicate with result but found 'isLoggingMethod', which is a predicate without result. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,26-44)
+WARNING: unused variable 'arg1' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,28-32)
+WARNING: unused variable 'arg2' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,39-43)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+            # 转换后的 Codeql 规则
+            /**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean properties to log messages.
+ *              The expression language might also lead to unwanted code execution if dynamic values are used.
+ *              Verify the source of values to prevent unfiltered values from risky code evaluation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ *       technology/jboss
+ */
+
+import java
+
+predicate isSeamLogImport(Import i) {
+  exists(RefType p | i.getImportedElement() = p and p.getQualifiedName() = "org.jboss.seam.log.Log")
+}
+
+predicate isSeamLogVariable(Field f) {
+  exists(Method m | 
+    m.getName() = "getLogger" and
+    m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log")
+  ) and
+  f.getType().hasQualifiedName("org.jboss.seam.log", "Log")
+}
+
+predicate isLoggingMethod(Method m) {
+  m.getName().matches("debug|error|fatal|info|trace|warn")
+}
+
+from Expr logCall, Expr arg
+where
+  exists(MethodAccess ma |
+    ma = logCall and
+    isLoggingMethod(ma.getMethod()) and
+    (ma.getArgument(0) = arg or ma.getArgument(1) = arg) and
+    arg instanceof AddExpr
+  ) and
+  exists(FieldAccess fa |
+    fa = logCall.getQualifier() and
+    isSeamLogVariable(fa.getField())
+  )
+select logCall, "Seam logging with potential expression language injection. Verify dynamic values used in log messages."
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:21:59
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,15-31)
+ERROR: could not resolve type MethodAccessExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,6-22)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean properties to log messages.
+ *              The expression language might also lead to unwanted code execution if dynamic values are used.
+ *              Verify the source of values to prevent unfiltered values from risky code evaluation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ *       technology/jboss
+ */
+
+import java
+
+predicate isSeamLogVariable(Field f) {
+  exists(Method m | 
+    m.getName() = "getLogger" and
+    m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log")
+  ) and
+  f.getType().hasQualifiedName("org.jboss.seam.log", "Log")
+}
+
+predicate isLoggingMethod(Method m) {
+  m.getName().matches("debug|error|fatal|info|trace|warn")
+}
+
+from MethodAccessExpr ma, Expr arg
+where
+  isLoggingMethod(ma.getMethod()) and
+  exists(FieldAccess fa |
+    fa = ma.getQualifier() and
+    isSeamLogVariable(fa.getField())
+  ) and
+  (ma.getArgument(0) = arg or ma.getArgument(1) = arg) and
+  arg instanceof AddExpr
+select ma, "Seam logging with potential expression language injection. Verify dynamic values used in log messages."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedElement() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,24-42)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,15-31)
+ERROR: getQualifier() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,18-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,10-22)
+WARNING: unused predicate 'isSeamLogImport' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,11-26)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为了解决这些问题，请按照以下步骤进行修复：
+
+1. 修复 Import 类型的 getImportedElement() 方法不存在的问题：
+   - 使用 ImportRef.getImportedElement() 替代 Import.getImportedElement()
+
+2. 修复 Type 类型的 hasQualifiedName() 方法不存在的问题：
+   - 使用 RefType.hasQualifiedName() 替代 Type.hasQualifiedName()
+   - 确保在使用前先将类型转换为 RefType
+
+3. 修复 Expr.getQualifier() 方法不存在的问题：
+   - 使用 MethodAccess.getQualifier() 代替 Expr.getQualifier()
+   - 确保在调用前先将表达式转换为 MethodAccess 类型
+
+4. 解决 MethodAccess 类型已弃用的问题：
+   - 使用 MethodAccessExpr 替代 MethodAccess 类型
+
+5. 移除未使用的谓词 isSeamLogImport：
+   - 删除整个 isSeamLogImport 谓词定义
+   - 删除所有与其相关的代码
+
+6. 修正类型转换和调用链：
+   - 在查询前添加必要的类型检查
+   - 确保所有方法调用都在正确的类型上执行
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:39:37
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedName() cannot be resolved for type Import::ImportType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,29-44)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,65-75)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,36-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,6-18)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean property to log messages.
+ *              The expression language may lead to unwanted code execution if dynamic values are used unfiltered.
+ * @kind problem
+ * @problem.severity error
+ * @precision low
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       owasp-a3
+ *       jboss
+ */
+
+import java
+
+from MethodAccess logCall, Expr logArgument, StringLiteral infoLevel
+where
+  infoLevel.getValue().matches("debug|error|fatal|info|trace|warn") and
+  (
+    exists(ImportType i | i.getImportedName() = "org.jboss.seam.log.Log") or
+    exists(Field f | f.getType().hasName("Log") and f.getType().getPackage().getName() = "org.jboss.seam.log")
+  ) and
+  logCall.getMethod().getName() = infoLevel.getValue() and
+  logCall.getQualifier().getType().hasName("Log") and
+  logCall.getQualifier().getType().getPackage().getName() = "org.jboss.seam.log" and
+  logArgument = logCall.getArgument(0)
+select logCall, "Potential Seam log injection with dynamic expression language. Verify input values to prevent code execution."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: seam-log-injection
+  patterns:
+  - pattern: |
+      $LOG.$INFO($X + $Y,...)
+  - pattern-either:
+    - pattern-inside: |
+        import org.jboss.seam.log.Log;
+        ...
+    - pattern-inside: |
+        org.jboss.seam.log.Log $LOG = ...;
+        ...
+  - metavariable-regex:
+      metavariable: $INFO
+      regex: (debug|error|fatal|info|trace|warn)
+  languages: [java]
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+  metadata:
+    cwe:
+    - "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+    category: security
+    technology:
+    - jboss
+    confidence: LOW
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: MEDIUM
+  severity: ERROR
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:40:15
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,25-40)
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,14-29)
+ERROR: Expr::Expr is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,15-16)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean property to log messages.
+ *              The expression language may lead to unwanted code execution if dynamic values are used unfiltered.
+ * @kind problem
+ * @problem.severity error
+ * @precision low
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       owasp-a3
+ *       jboss
+ */
+
+import java
+
+from Method logCall, Expr logArgument, StringLiteral infoLevel
+where
+  infoLevel.getValue().matches("debug|error|fatal|info|trace|warn") and
+  (
+    exists(Import i | i.getImportedType().getName() = "Log" and 
+           i.getImportedType().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log") or
+    exists(Field f | f.getType().getName() = "Log" and 
+           f.getType().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log")
+  ) and
+  logCall.getName() = infoLevel.getValue() and
+  logCall.getDeclaringType().getName() = "Log" and
+  logCall.getDeclaringType().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log" and
+  logArgument = logCall.getAPrimaryQlClass()
+select logCall, "Potential Seam log injection with dynamic expression language. Verify input values to prevent code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedName() cannot be resolved for type Import::ImportType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,29-44)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,65-75)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,36-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,6-18)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedName() cannot be resolved for type Import::ImportType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,29-44)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,65-75)
+ERROR: getPackage() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,36-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,6-18)，请按照以下步骤进行修复：
+1. 将`ImportType`改为`Import`类，并使用`getImportedType()`替代`getImportedName()`
+2. 使用`getCompilationUnit().getPackage()`替代`getPackage()`来获取包信息
+3. 将`MethodAccess`替换为新推荐的`Method`类
+4. 调整相关方法调用，确保新API的正确使用
+5. 更新类型检查逻辑以适应新的API调用方式
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:40:59
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAReference() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,9-22)
+ERROR: getAReference() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,9-22)
+ERROR: getAnArgument(int) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,25-38)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can introduce bean property to log messages.
+ *              The expression language may lead to unwanted code execution if dynamic values are used unfiltered.
+ * @kind problem
+ * @problem.severity error
+ * @precision low
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       owasp-a3
+ *       jboss
+ */
+
+import java
+
+from Method logCall, Expr logArgument, StringLiteral infoLevel
+where
+  infoLevel.getValue().matches("debug|error|fatal|info|trace|warn") and
+  (
+    exists(Import i | 
+      i.getAReference().getImportedElement().getName() = "Log" and
+      i.getAReference().getImportedElement().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log"
+    ) or
+    exists(Field f | 
+      f.getType().getName() = "Log" and
+      f.getType().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log"
+    )
+  ) and
+  logCall.getName() = infoLevel.getValue() and
+  logCall.getDeclaringType().getName() = "Log" and
+  logCall.getDeclaringType().getCompilationUnit().getPackage().getName() = "org.jboss.seam.log" and
+  logArgument = logCall.getAnArgument(0)
+select logCall, "Potential Seam log injection with dynamic expression language. Verify input values to prevent code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,25-40)
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,14-29)
+ERROR: Expr::Expr is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,15-16)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,25-40)
+ERROR: getImportedType() cannot be resolved for type Import::Import (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,14-29)
+ERROR: Expr::Expr is incompatible with string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,15-16)，请按照以下步骤进行修复：
+1. 使用`getAReference().getImportedElement()`替代`getImportedType()`来获取导入的类型引用
+2. 使用`getAnArgument()`替代`getAPrimaryQlClass()`来获取方法调用的参数
+3. 修复类型检查逻辑，确保比较的类型兼容
+4. 更新导入语句的相关条件判断
+5. 调整方法声明类型的检查方式
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 19:12:59
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getLeftOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,10-24)
+ERROR: getRightOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,10-25)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,6-18)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language to introduce bean property to log messages.
+ *              The expression language can also be the source to unwanted code execution.
+ *              In this context, an expression is built with a dynamic value.
+ *              The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03:2021
+ *       external/jboss
+ */
+import java
+
+from MethodAccess ma, Expr arg1, Expr arg2
+where
+  // Check method call matches log.{debug|error|fatal|info|trace|warn}($X + $Y,...)
+  ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+  ma.getQualifier().getType().hasName("org.jboss.seam.log.Log") and
+  arg1 = ma.getArgument(0) and
+  arg1 instanceof AddExpr and
+  (
+    arg1.getLeftOperand() = arg2 or
+    arg1.getRightOperand() = arg2
+  )
+select ma, "Seam Log injection vulnerability. User input should be properly sanitized " +
+           "before being used in log expression to prevent code execution."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: seam-log-injection
+  patterns:
+  - pattern: |
+      $LOG.$INFO($X + $Y,...)
+  - pattern-either:
+    - pattern-inside: |
+        import org.jboss.seam.log.Log;
+        ...
+    - pattern-inside: |
+        org.jboss.seam.log.Log $LOG = ...;
+        ...
+  - metavariable-regex:
+      metavariable: $INFO
+      regex: (debug|error|fatal|info|trace|warn)
+  languages: [java]
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+  metadata:
+    cwe:
+    - "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp:
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+    category: security
+    technology:
+    - jboss
+    confidence: LOW
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: MEDIUM
+  severity: ERROR
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

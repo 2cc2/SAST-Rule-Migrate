@@ -1,0 +1,758 @@
+Timestamp: 2025-07-24 14:48:34
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,3-28)
+ERROR: asExpr() cannot be resolved for type DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-16)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,29-41)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-21)
+ERROR: Member::Method is incompatible with predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,13-14)
+ERROR: Expected a predicate with result but found 'hasName', which is a predicate without result. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,15-57)
+Rule Content:
+/**
+ * @name Insecure JMS Deserialization
+ * @description JMS Object messages depend on Java Serialization for marshalling/unmarshalling
+ * of the message payload when ObjectMessage.getObject() is called.
+ * Deserialization of untrusted data can lead to security flaws; a remote attacker
+ * could via a crafted JMS ObjectMessage to execute
+ * arbitrary code with the permissions of the application listening/consuming JMS
+ * Messages.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.8
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ *       external/owasp/a08:2017
+ *       external/owasp/a08:2021
+ *       external/cwe2022-top25
+ *       external/cwe2021-top25
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow::PathGraph
+
+class JMSMessageListener extends Class {
+  JMSMessageListener() {
+    this.implements("javax.jms.MessageListener") and
+    this.getAMethod().hasName("onMessage")
+  }
+}
+
+class GetObjectCall extends MethodAccess {
+  GetObjectCall() {
+    exists(Method m |
+      m = this.getMethod() |
+      m.getName() = "getObject" and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JMSMessageListener listener,
+  Method onMessage,
+  GetObjectCall getObjectCall,
+  DataFlow::PathNode source,
+  DataFlow::PathNode sink
+where
+  onMessage = listener.getAMethod().hasName("onMessage") and
+  getObjectCall.getEnclosingCallable() = onMessage and
+  TaintTracking::localTaint(source, sink, getObjectCall.getAnArgument()) and
+  source.asExpr() = getObjectCall.getQualifier()
+select
+  getObjectCall,
+  "Potential insecure JMS deserialization via ObjectMessage.getObject() call",
+  source, sink,
+  "This deserialization of untrusted data could lead to arbitrary code execution."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: insecure-jms-deserialization
+  severity: WARNING
+  languages:
+  - java
+  metadata:
+    cwe:
+    - 'CWE-502: Deserialization of Untrusted Data'
+    owasp:
+    - A08:2017 - Insecure Deserialization
+    - A08:2021 - Software and Data Integrity Failures
+    asvs:
+      section: V5 Validation, Sanitization and Encoding
+      control_id: 5.5.3 Insecue Deserialization
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v55-deserialization-prevention
+      version: '4'
+    references:
+    - https://www.blackhat.com/docs/us-16/materials/us-16-Kaiser-Pwning-Your-Java-Messaging-With-Deserialization-Vulnerabilities-wp.pdf
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  message: >-
+    JMS Object messages depend on Java Serialization for marshalling/unmarshalling
+    of the message payload when ObjectMessage.getObject() is called.
+    Deserialization of untrusted data can lead to security flaws; a remote attacker
+    could via a crafted JMS ObjectMessage to execute
+    arbitrary code with the permissions of the application listening/consuming JMS
+    Messages.
+    In this case, the JMS MessageListener consume an ObjectMessage type received inside
+    the onMessage method, which may lead to arbitrary code execution when calling
+    the $Y.getObject method.
+  patterns:
+  - pattern-inside: |
+      public class $JMS_LISTENER implements MessageListener {
+        ...
+        public void onMessage(Message $JMS_MSG) {
+            ...
+        }
+      }
+  - pattern-either:
+    - pattern-inside: $X = $Y.getObject(...);
+    - pattern-inside: $X = ($Z) $Y.getObject(...);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:49:44
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,5-42)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,34-40)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: could not resolve module DataFlow::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-26)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,10-20)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,24-34)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,3-28)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,17-29)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,3-21)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,58-70)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,46-58)
+Rule Content:
+/**
+ * @name Insecure JMS Deserialization
+ * @description JMS Object messages depend on Java Serialization for marshalling/unmarshalling
+ * of the message payload when ObjectMessage.getObject() is called.
+ * Deserialization of untrusted data can lead to security flaws; a remote attacker
+ * could via a crafted JMS ObjectMessage to execute
+ * arbitrary code with the permissions of the application listening/consuming JMS
+ * Messages.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.8
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ *       external/owasp/a08:2017
+ *       external/owasp/a08:2021
+ *       external/cwe2022-top25
+ *       external/cwe2021-top25
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow::PathGraph
+import DataFlow::PathNode
+import TaintTracking
+
+class JMSMessageListener extends Class {
+  JMSMessageListener() {
+    this.getASupertype().hasQualifiedName("javax.jms", "MessageListener") and
+    this.getAMethod("onMessage").exists()
+  }
+}
+
+class GetObjectCall extends Expr {
+  GetObjectCall() {
+    exists(Method m |
+      m = this.(MethodAccess).getMethod() |
+      m.getName() = "getObject" and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JMSMessageListener listener,
+  Method onMessage,
+  GetObjectCall getObjectCall,
+  DataFlow::PathNode source,
+  DataFlow::PathNode sink
+where
+  onMessage = listener.getAMethod("onMessage") and
+  getObjectCall.getEnclosingCallable() = onMessage and
+  TaintTracking::localTaint(source, sink, getObjectCall.(MethodAccess).getAnArgument()) and
+  source.getNode().asExpr() = getObjectCall.(MethodAccess).getQualifier()
+select
+  getObjectCall,
+  "Potential insecure JMS deserialization via ObjectMessage.getObject() call",
+  source, sink,
+  "This deserialization of untrusted data could lead to arbitrary code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,3-28)
+ERROR: asExpr() cannot be resolved for type DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-16)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,29-41)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-21)
+ERROR: Member::Method is incompatible with predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,13-14)
+ERROR: Expected a predicate with result but found 'hasName', which is a predicate without result. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,15-57)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,3-28)
+ERROR: asExpr() cannot be resolved for type DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-16)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,29-41)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-21)
+ERROR: Member::Method is incompatible with predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,13-14)
+ERROR: Expected a predicate with result but found 'hasName', which is a predicate without result. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,15-57)，请按照以下步骤进行修复：
+
+1. 修改JMSMessageListener类定义，使用正确的implements语法：
+   - 将`this.implements("javax.jms.MessageListener")`改为`this.getASupertype().hasQualifiedName("javax.jms", "MessageListener")`
+
+2. 替换已弃用的PathGraph模块导入：
+   - 将`import DataFlow::PathGraph`改为`import DataFlow::PathGraph`保持不变即可（因为没有完全替代模块）
+   - 或者考虑使用新的DataFlow库API
+
+3. 替换已弃用的MethodAccess类型：
+   - 将`class GetObjectCall extends MethodAccess`改为使用`class GetObjectCall extends Expr`
+
+4. 替换已弃用的PathNode类型：
+   - 将`DataFlow::PathNode`改为使用新的DataFlow库中的节点类型
+   - 可能需要使用`DataFlow::Node`或`DataFlow::PathNode`的最新替代品
+
+5. 修复localTaint调用问题：
+   - 确保正确导入TaintTracking模块
+   - 可能需要使用`TaintTracking::localTaint`的正确参数形式
+   - 或考虑使用`DataFlow::localFlow`替代
+
+6. 修复asExpr()调用：
+   - 对于新的DataFlow节点类型，可能需要使用`source.getNode()`或类似方法获取表达式
+
+7. 修复Method类型不匹配：
+   - 在where子句中，确保正确比较Method对象
+   - 改为类似`onMethod.hasName("onMessage")`的正确语法
+
+8. 修复hasName谓词使用：
+   - 确保hasName谓词的使用符合上下文要求
+   - 可能需要重构为`exists(MethodAccess ma | ma = listener.getAMethod("onMessage"))`
+
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 14:51:13
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,32-42)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,34-44)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,3-28)
+ERROR: class DataFlowImpl1::Configuration from this import conflicts with class TaintTrackingImpl::Configuration from TaintTrackingImpl.qll:58 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Global from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Global from TaintTracking.qll:81 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Make from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Make from TaintTracking.qll:101 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::GlobalWithState from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::GlobalWithState from TaintTracking.qll:108 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,1-16)
+ERROR: module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::MakeWithState from this import conflicts with module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::MakeWithState from TaintTracking.qll:134 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,1-16)
+ERROR: class TaintTrackingImpl::Configuration from this import conflicts with class DataFlowImpl1::Configuration from DataFlowImpl1.qll:53 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Global from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Global from DataFlow.qll:647 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::Make from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::Make from DataFlow.qll:663 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::GlobalWithState from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::GlobalWithState from DataFlow.qll:670 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-21)
+ERROR: module TaintTracking::TaintFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow, TaintTrackingImplSpecific::JavaTaintTracking>::MakeWithState from this import conflicts with module DataFlow::DataFlowMake<Location::Location, DataFlowImplSpecific::JavaDataFlow>::MakeWithState from DataFlow.qll:691 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-21)
+Rule Content:
+/**
+ * @name Insecure JMS Deserialization
+ * @description JMS Object messages depend on Java Serialization for marshalling/unmarshalling
+ * of the message payload when ObjectMessage.getObject() is called.
+ * Deserialization of untrusted data can lead to security flaws; a remote attacker
+ * could via a crafted JMS ObjectMessage to execute
+ * arbitrary code with the permissions of the application listening/consuming JMS
+ * Messages.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.8
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ *       external/owasp/a08:2017
+ *       external/owasp/a08:2021
+ *       external/cwe2022-top25
+ *       external/cwe2021-top25
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow
+import TaintTracking
+
+class JMSMessageListener extends Class {
+  JMSMessageListener() {
+    this.getASupertype().hasQualifiedName("javax.jms", "MessageListener") and
+    exists(Method m | m = this.getAMethod("onMessage"))
+  }
+}
+
+class GetObjectCall extends Call {
+  GetObjectCall() {
+    exists(Method m |
+      m = this.getCallee() |
+      m.getName() = "getObject" and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JMSMessageListener listener,
+  Method onMessage,
+  GetObjectCall getObjectCall,
+  DataFlow::Node source,
+  DataFlow::Node sink
+where
+  exists(Method m | m = listener.getAMethod("onMessage") and m = onMessage) and
+  getObjectCall.getEnclosingCallable() = onMessage and
+  TaintTracking::localTaint(source, sink, getObjectCall.getArgument(0)) and
+  source.asExpr() = getObjectCall.getQualifier()
+select
+  getObjectCall,
+  "Potential insecure JMS deserialization via ObjectMessage.getObject() call",
+  source, sink,
+  "This deserialization of untrusted data could lead to arbitrary code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,5-42)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,34-40)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: could not resolve module DataFlow::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-26)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,10-20)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,24-34)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,3-28)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,17-29)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,3-21)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,58-70)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,46-58)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,5-42)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,34-40)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: could not resolve module DataFlow::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-26)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,10-20)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,41-42)
+ERROR: getAMethod(string) cannot be resolved for type JMSMessageListener (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,24-34)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,3-28)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,17-29)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-21)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,3-21)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,58-70)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,46-58)，请按照以下步骤进行修复：
+
+1. 修复JMSMessageListener类中的getAMethod调用语法：
+   - 将`this.getAMethod("onMessage").exists()`改为`exists(Method m | m = this.getAMethod("onMessage"))`
+
+2. 处理MethodAccess弃用问题：
+   - 将`GetObjectCall`类中的`this.(MethodAccess).getMethod()`改为`this.(Call).getCallee()`
+   - 修改所有相关的方法调用，如`getAnArgument()`改为`getArgument()`
+
+3. 替换PathGraph和PathNode的使用：
+   - 使用新的DataFlow库API，如`import DataFlow`和`DataFlow::Node`
+   - 将`PathNode`替换为`Node`
+
+4. 解决localTaint调用问题：
+   - 确保正确导入TaintTracking模块
+   - 改为使用`TaintTracking::localTaintStep`或其他适当的taint tracking方法
+
+5. 修复类型转换语法：
+   - 将`source.getNode().asExpr()`改为`source.asExpr()`
+   - 确保类型转换语法正确，如`getObjectCall.(Call)`而非废弃的MethodAccess
+
+6. 移除重复的PathNode导入：
+   - 删除`import DataFlow::PathNode`行
+
+7. 更新方法调用语法：
+   - 将`listener.getAMethod("onMessage")`改为`exists(Method m | m = listener.getAMethod("onMessage"))`
+   - 确保方法调用返回类型正确
+
+8. 使用新的Call类代替MethodAccess：
+   - 在整个查询中使用`Call`类而不是`MethodAccess`
+   - 更新所有相关方法调用，如`getCallee()`代替`getMethod()`
+
+9. 重新组织结构中的exists量化表达式：
+   - 确保所有exists表达式语法正确
+   - 如`exists(Method m | m = ...)`而非直接在条件中使用exists
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:55:29
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,5-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,42-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,10-28)
+Rule Content:
+/**
+ * @name Insecure JMS deserialization
+ * @description Detects unsafe deserialization via JMS ObjectMessage.getObject()
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       cwe/502
+ *       owasp-a08
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class JmsMessageListener extends Class {
+  JmsMessageListener() {
+    this.implements("javax.jms.MessageListener")
+  }
+}
+
+class ObjectMessageGetObjectCall extends MethodAccess {
+  ObjectMessageGetObjectCall() {
+    exists(Method m | 
+      m.getName() = "getObject" and
+      this.getMethod() = m and
+      m.getDeclaringType().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JmsMessageListener listener,
+  Method onMessageMethod,
+  ObjectMessageGetObjectCall getObjectCall,
+  DataFlow::Node source, DataFlow::Node sink
+where
+  onMessageMethod.getName() = "onMessage" and
+  onMessageMethod.getDeclaringType() = listener and
+  exists(DataFlow::PathNode path | 
+    TaintTracking::localTaint(path, source, sink) and
+    sink.asExpr() = getObjectCall and
+    source.asParameter() = onMessageMethod.getParameter(0)
+  )
+select getObjectCall, 
+  "JMS ObjectMessage.getObject() call may lead to insecure deserialization. " +
+  "Deserialization of untrusted data can lead to arbitrary code execution."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: insecure-jms-deserialization
+  severity: WARNING
+  languages:
+  - java
+  metadata:
+    cwe:
+    - 'CWE-502: Deserialization of Untrusted Data'
+    owasp:
+    - A08:2017 - Insecure Deserialization
+    - A08:2021 - Software and Data Integrity Failures
+    asvs:
+      section: V5 Validation, Sanitization and Encoding
+      control_id: 5.5.3 Insecue Deserialization
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v55-deserialization-prevention
+      version: '4'
+    references:
+    - https://www.blackhat.com/docs/us-16/materials/us-16-Kaiser-Pwning-Your-Java-Messaging-With-Deserialization-Vulnerabilities-wp.pdf
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: MEDIUM
+  message: >-
+    JMS Object messages depend on Java Serialization for marshalling/unmarshalling
+    of the message payload when ObjectMessage.getObject() is called.
+    Deserialization of untrusted data can lead to security flaws; a remote attacker
+    could via a crafted JMS ObjectMessage to execute
+    arbitrary code with the permissions of the application listening/consuming JMS
+    Messages.
+    In this case, the JMS MessageListener consume an ObjectMessage type received inside
+    the onMessage method, which may lead to arbitrary code execution when calling
+    the $Y.getObject method.
+  patterns:
+  - pattern-inside: |
+      public class $JMS_LISTENER implements MessageListener {
+        ...
+        public void onMessage(Message $JMS_MSG) {
+            ...
+        }
+      }
+  - pattern-either:
+    - pattern-inside: $X = $Y.getObject(...);
+    - pattern-inside: $X = ($Z) $Y.getObject(...);
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:56:09
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAnImmediateSupertype() cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,12-35)
+ERROR: could not resolve predicate pathExists/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,3-28)
+Rule Content:
+/**
+ * @name Insecure JMS deserialization
+ * @description Detects unsafe deserialization via JMS ObjectMessage.getObject()
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       cwe/502
+ *       owasp-a08
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class JmsMessageListener extends Class {
+  JmsMessageListener() {
+    exists(RefType mlistener |
+      mlistener.hasQualifiedName("javax.jms", "MessageListener") and
+      this.getAnImmediateSupertype*() = mlistener
+    )
+  }
+}
+
+class ObjectMessageGetObjectCall extends Expr {
+  ObjectMessageGetObjectCall() {
+    exists(Method m |
+      m.getName() = "getObject" and
+      this.(Call).getCallee() = m and
+      m.getDeclaringType().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JmsMessageListener listener,
+  Method onMessageMethod,
+  ObjectMessageGetObjectCall getObjectCall,
+  DataFlow::Node source, DataFlow::Node sink
+where
+  onMessageMethod.getName() = "onMessage" and
+  onMessageMethod.getDeclaringType() = listener and
+  TaintTracking::pathExists(source, sink) and
+  sink.asExpr() = getObjectCall and
+  source.asParameter() = onMessageMethod.getParameter(0)
+select getObjectCall, 
+  "JMS ObjectMessage.getObject() call may lead to insecure deserialization. " +
+  "Deserialization of untrusted data can lead to arbitrary code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,5-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,42-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,10-28)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: implements(string) cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,10-20)
+ERROR: could not resolve predicate localTaint/3 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,5-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,42-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,10-28)，请按照以下步骤进行修复：
+1. 替换过时的MethodAccess类型为新的Expr类型，因为MethodAccess已在较新版本的CodeQL中弃用
+2. 修改JmsMessageListener的实现检查方式，使用getAnImmediateSupertype()替代直接调用implements()
+3. 将过时的PathNode替换为PathNodeType类型或直接使用新的数据流API
+4. 使用hasQualifiedName()来检查类是否实现了特定接口，而不是直接使用字符串比较
+5. 替换localTaint谓词使用新的TaintTracking::pathExists()或其他推荐的数据流跟踪方法
+6. 更新参数类型和返回值类型以匹配新API的签名要求
+7. 确保所有类型引用都使用了最新版本的CodeQL标准库接口
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:56:56
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodImpl (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-22)
+ERROR: could not resolve predicate globalTaint/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,3-29)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,13-25)
+Rule Content:
+/**
+ * @name Insecure JMS deserialization
+ * @description Detects unsafe deserialization via JMS ObjectMessage.getObject()
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision medium
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       cwe/502
+ *       owasp-a08
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class JmsMessageListener extends Class {
+  JmsMessageListener() {
+    exists(RefType mlistener |
+      mlistener.hasQualifiedName("javax.jms", "MessageListener") and
+      this.getASupertype*() = mlistener
+    )
+  }
+}
+
+class ObjectMessageGetObjectCall extends Expr {
+  ObjectMessageGetObjectCall() {
+    exists(MethodImpl m |
+      m.getName() = "getObject" and
+      this.(MethodAccess).getMethod() = m and
+      m.getDeclaringType().hasQualifiedName("javax.jms", "ObjectMessage")
+    )
+  }
+}
+
+from
+  JmsMessageListener listener,
+  Method onMessageMethod,
+  ObjectMessageGetObjectCall getObjectCall,
+  DataFlow::Node source, DataFlow::Node sink
+where
+  onMessageMethod.getName() = "onMessage" and
+  onMessageMethod.getDeclaringType() = listener and
+  TaintTracking::globalTaint(source, sink) and
+  sink.asExpr() = getObjectCall and
+  source.asParameter() = onMessageMethod.getParameter(0)
+select getObjectCall, 
+  "JMS ObjectMessage.getObject() call may lead to insecure deserialization. " +
+  "Deserialization of untrusted data can lead to arbitrary code execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAnImmediateSupertype() cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,12-35)
+ERROR: could not resolve predicate pathExists/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,3-28)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAnImmediateSupertype() cannot be resolved for type JmsMessageListener.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,12-35)
+ERROR: could not resolve predicate pathExists/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,3-28)，请按照以下步骤进行修复：
+1. 修改JmsMessageListener的实现检查方式，使用getASupertype()替代getAnImmediateSupertype()，因为后者可能需要递归查找
+2. 更新TaintTracking谓词使用globalTaint()代替pathExists()，这是更常用的路径跟踪谓词
+3. 确保所有类型引用都正确导入所需的CodeQL模块
+4. 检查并修正类型转换语法，比如this.(Call)应该是this.(MethodAccess)
+5. 验证数据流配置是否完整，包括必要的配置谓词
+6. 确认CodeQL版本兼容性，必要时更新语法以匹配目标版本
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

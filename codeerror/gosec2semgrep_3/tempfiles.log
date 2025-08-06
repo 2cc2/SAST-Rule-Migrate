@@ -1,0 +1,978 @@
+Timestamp: 2025-07-22 10:54:15
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpxbxahyua/rule.yml:17
+17 |   - patterns:
+18 |     - pattern-either:
+19 |       - metavariable-regex:
+20 |           metavariable: $PATH
+21 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+22 |       - pattern: |
+23 |           os.TempDir()
+24 |       - pattern-either:
+25 |         - pattern: |
+26 |             path.Join($ARGS...)
+27 |         - pattern: |
+28 |             path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+  - go
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        io/ioutil.WriteFile($PATH, ...)
+    - pattern: |
+        os.Create($PATH)
+    - pattern: |
+        os.WriteFile($PATH, ...)
+  - pattern-not: |
+      io/ioutil.TempFile(...)
+  - patterns:
+    - pattern-either:
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: ^(/(usr|var))?/tmp(/.*)?$
+      - pattern: |
+          os.TempDir()
+      - pattern-either:
+        - pattern: |
+            path.Join($ARGS...)
+        - pattern: |
+            path/filepath.Join($ARGS...)
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            // (c) Copyright 2016 Hewlett Packard Enterprise Development LP
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package rules
+
+import (
+	"go/ast"
+	"regexp"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type badTempFile struct {
+	issue.MetaData
+	calls       gosec.CallList
+	args        *regexp.Regexp
+	argCalls    gosec.CallList
+	nestedCalls gosec.CallList
+}
+
+func (t *badTempFile) ID() string {
+	return t.MetaData.ID
+}
+
+func (t *badTempFile) findTempDirArgs(n ast.Node, c *gosec.Context, suspect ast.Node) *issue.Issue {
+	if s, e := gosec.GetString(suspect); e == nil {
+		if t.args.MatchString(s) {
+			return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+		}
+		return nil
+	}
+	if ce := t.argCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+	}
+	if be, ok := suspect.(*ast.BinaryExpr); ok {
+		if ops := gosec.GetBinaryExprOperands(be); len(ops) != 0 {
+			return t.findTempDirArgs(n, c, ops[0])
+		}
+		return nil
+	}
+	if ce := t.nestedCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return t.findTempDirArgs(n, c, ce.Args[0])
+	}
+	return nil
+}
+
+func (t *badTempFile) Match(n ast.Node, c *gosec.Context) (gi *issue.Issue, err error) {
+	if node := t.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		return t.findTempDirArgs(n, c, node.Args[0]), nil
+	}
+	return nil, nil
+}
+
+// NewBadTempFile detects direct writes to predictable path in temporary directory
+func NewBadTempFile(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("io/ioutil", "WriteFile")
+	calls.AddAll("os", "Create", "WriteFile")
+	argCalls := gosec.NewCallList()
+	argCalls.Add("os", "TempDir")
+	nestedCalls := gosec.NewCallList()
+	nestedCalls.Add("path", "Join")
+	nestedCalls.Add("path/filepath", "Join")
+	return &badTempFile{
+		calls:       calls,
+		args:        regexp.MustCompile(`^(/(usr|var))?/tmp(/.*)?$`),
+		argCalls:    argCalls,
+		nestedCalls: nestedCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File creation in shared tmp directory without using ioutil.Tempfile",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </origin_rule>
+            <example>
+            patterns:
+  - pattern: |
+      $VAR := $VAL
+      $VAR = $VAL
+      var $VAR = $VAL
+      const $VAR = $VAL
+  - metavariable-regex:
+      metavariable: $VAR
+      regex: (?i)passwd|pass|password|pwd|secret|token|pw|apiKey|bearer|cred
+  - metavariable-regex:
+      metavariable: $VAL
+      regex: >
+        (-----BEGIN (RSA|DSA|EC) PRIVATE KEY-----)|
+        (xox[pborsa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})|
+        (AKIA[0-9A-Z]{16})|
+        (ghp_[a-zA-Z0-9]{36})|
+        (AIza[0-9A-Za-z\-_]{35})|
+        ([aA][pP][iI]_?[kK][eE][yY].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        ([sS][eE][cC][rR][eE][tT].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        (key-[0-9a-zA-Z]{32})|
+        ([a-zA-Z]{3,10}://[^/\\s:@]{3,20}:[^/\\s:@]{3,20}@.{1,100}["'\\s])|
+        (sk_live_[0-9a-zA-Z]{24})|
+        (rk_live_[0-9a-zA-Z]{24})
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 10:54:52
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphhhwvgfi/rule.yml:17
+17 |   - pattern-either:
+18 |     - metavariable-regex:
+19 |         metavariable: $PATH
+20 |         regex: ^(/(usr|var))?/tmp(/.*)?$
+21 |     - pattern: |
+22 |         os.TempDir()
+23 |     - pattern: |
+24 |         path.Join($ARGS...)
+25 |     - pattern: |
+26 |         path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+  - go
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        io/ioutil.WriteFile($PATH, ...)
+    - pattern: |
+        os.Create($PATH)
+    - pattern: |
+        os.WriteFile($PATH, ...)
+  - pattern-not: |
+      io/ioutil.TempFile(...)
+  - pattern-either:
+    - metavariable-regex:
+        metavariable: $PATH
+        regex: ^(/(usr|var))?/tmp(/.*)?$
+    - pattern: |
+        os.TempDir()
+    - pattern: |
+        path.Join($ARGS...)
+    - pattern: |
+        path/filepath.Join($ARGS...)
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpxbxahyua/rule.yml:17
+17 |   - patterns:
+18 |     - pattern-either:
+19 |       - metavariable-regex:
+20 |           metavariable: $PATH
+21 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+22 |       - pattern: |
+23 |           os.TempDir()
+24 |       - pattern-either:
+25 |         - pattern: |
+26 |             path.Join($ARGS...)
+27 |         - pattern: |
+28 |             path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpxbxahyua/rule.yml:17
+17 |   - patterns:
+18 |     - pattern-either:
+19 |       - metavariable-regex:
+20 |           metavariable: $PATH
+21 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+22 |       - pattern: |
+23 |           os.TempDir()
+24 |       - pattern-either:
+25 |         - pattern: |
+26 |             path.Join($ARGS...)
+27 |         - pattern: |
+28 |             path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 修正嵌套的patterns结构：在Semgrep中，pattern-either不能直接嵌套在patterns下，需要作为顶级模式使用
+2. 将内部的pattern-either提取到顶层，并与前一个pattern-not并列
+3. 调整模式组合逻辑，使用适当的逻辑组合器（patterns、pattern-either等）来组织规则
+4. 确保每个patterns块只有一个主要模式类型（不能混合pattern-either和其他模式类型）
+5. 重构规则结构，使所有pattern-either都处于规则的顶层，而不能相互嵌套
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 10:55:33
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprh3fs_rn/rule.yml:18
+18 |   - patterns:
+19 |     - pattern-either:
+20 |       - metavariable-regex:
+21 |           metavariable: $PATH
+22 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |       - pattern: os.TempDir()
+24 |     - pattern-either:
+25 |       - pattern: path.Join($ARGS...)
+26 |       - pattern: path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+  - go
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        io/ioutil.WriteFile($PATH, ...)
+    - pattern: |
+        os.Create($PATH)
+    - pattern: |
+        os.WriteFile($PATH, ...)
+  - pattern-not: |
+      io/ioutil.TempFile(...)
+  - patterns:
+    - pattern-either:
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: ^(/(usr|var))?/tmp(/.*)?$
+      - pattern: os.TempDir()
+    - pattern-either:
+      - pattern: path.Join($ARGS...)
+      - pattern: path/filepath.Join($ARGS...)
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphhhwvgfi/rule.yml:17
+17 |   - pattern-either:
+18 |     - metavariable-regex:
+19 |         metavariable: $PATH
+20 |         regex: ^(/(usr|var))?/tmp(/.*)?$
+21 |     - pattern: |
+22 |         os.TempDir()
+23 |     - pattern: |
+24 |         path.Join($ARGS...)
+25 |     - pattern: |
+26 |         path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmphhhwvgfi/rule.yml:17
+17 |   - pattern-either:
+18 |     - metavariable-regex:
+19 |         metavariable: $PATH
+20 |         regex: ^(/(usr|var))?/tmp(/.*)?$
+21 |     - pattern: |
+22 |         os.TempDir()
+23 |     - pattern: |
+24 |         path.Join($ARGS...)
+25 |     - pattern: |
+26 |         path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将所有的pattern-either和pattern-not组合到一个顶级的patterns下
+2. 不能直接并列多个pattern-either，需要将它们作为子模式包含在顶层patterns中
+3. 使用正确的patterns嵌套结构，保持每个patterns块只包含单一类型的模式组合器
+4. 将metavariable-regex整合到patterns结构中，避免直接与pattern-either并列
+5. 确保每条规则的结构符合Semgrep的规则schema验证
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 10:56:10
+Attempt: 4
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpgdmwx8wn/rule.yml:18
+18 |   - pattern-either:
+19 |     - metavariable-regex:
+20 |         metavariable: $PATH
+21 |         regex: ^(/(usr|var))?/tmp(/.*)?$
+22 |     - pattern: os.TempDir()
+23 |     - pattern: path.Join($ARGS...)
+24 |     - pattern: path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+  - go
+  severity: WARNING
+  patterns:
+  - pattern-either:
+    - pattern: |
+        io/ioutil.WriteFile($PATH, ...)
+    - pattern: |
+        os.Create($PATH)
+    - pattern: |
+        os.WriteFile($PATH, ...)
+  - pattern-not: |
+      io/ioutil.TempFile(...)
+  - pattern-either:
+    - metavariable-regex:
+        metavariable: $PATH
+        regex: ^(/(usr|var))?/tmp(/.*)?$
+    - pattern: os.TempDir()
+    - pattern: path.Join($ARGS...)
+    - pattern: path/filepath.Join($ARGS...)
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprh3fs_rn/rule.yml:18
+18 |   - patterns:
+19 |     - pattern-either:
+20 |       - metavariable-regex:
+21 |           metavariable: $PATH
+22 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |       - pattern: os.TempDir()
+24 |     - pattern-either:
+25 |       - pattern: path.Join($ARGS...)
+26 |       - pattern: path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmprh3fs_rn/rule.yml:18
+18 |   - patterns:
+19 |     - pattern-either:
+20 |       - metavariable-regex:
+21 |           metavariable: $PATH
+22 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |       - pattern: os.TempDir()
+24 |     - pattern-either:
+25 |       - pattern: path.Join($ARGS...)
+26 |       - pattern: path/filepath.Join($ARGS...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将patterns下的多个pattern-either合并为一个顶级的pattern-either
+2. patterns块内不应该包含多个独立的pattern-either，应该将所有选项合并到一个pattern-either中
+3. 将metavariable-regex作为pattern的同级选项整合到pattern-either中
+4. 保持模式的逻辑关系不变，但调整语法结构符合Semgrep规范
+5. 确保每个patterns块只包含一个主要模式类型（不能混合多个pattern-either）
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 10:58:27
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp4pqc1oa4/rule.yml:2
+2  | - id: bad-temp-file
+3  |   pattern: |
+4  |     ($PKG.$FUNC($ARG)) 
+5  |     $PKG.$FUNC($ARG)
+6  |     $PKG.FUNC($ARG)
+7  |   message: File creation in shared tmp directory without using ioutil.Tempfile
+8  |   languages:
+9  |     - go
+10 |   severity: WARNING
+11 |   patterns:
+12 |     - pattern-either:
+13 |         - pattern: |
+14 |             io/ioutil.WriteFile($ARG, ...)
+15 |         - pattern: |
+16 |             os.Create($ARG, ...)
+17 |         - pattern: |
+18 |             os.WriteFile($ARG, ...)
+19 |     - pattern-either:
+20 |         - metavariable-regex:
+21 |             metavariable: $ARG
+22 |             regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |         - pattern: |
+24 |             os.TempDir()
+25 |         - pattern: |
+26 |             path.Join(..., $ARG, ...)
+27 |         - pattern: |
+28 |             path/filepath.Join(..., $ARG, ...)
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: bad-temp-file
+  pattern: |
+    ($PKG.$FUNC($ARG)) 
+    $PKG.$FUNC($ARG)
+    $PKG.FUNC($ARG)
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+    - go
+  severity: WARNING
+  patterns:
+    - pattern-either:
+        - pattern: |
+            io/ioutil.WriteFile($ARG, ...)
+        - pattern: |
+            os.Create($ARG, ...)
+        - pattern: |
+            os.WriteFile($ARG, ...)
+    - pattern-either:
+        - metavariable-regex:
+            metavariable: $ARG
+            regex: ^(/(usr|var))?/tmp(/.*)?$
+        - pattern: |
+            os.TempDir()
+        - pattern: |
+            path.Join(..., $ARG, ...)
+        - pattern: |
+            path/filepath.Join(..., $ARG, ...)
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            // (c) Copyright 2016 Hewlett Packard Enterprise Development LP
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package rules
+
+import (
+	"go/ast"
+	"regexp"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type badTempFile struct {
+	issue.MetaData
+	calls       gosec.CallList
+	args        *regexp.Regexp
+	argCalls    gosec.CallList
+	nestedCalls gosec.CallList
+}
+
+func (t *badTempFile) ID() string {
+	return t.MetaData.ID
+}
+
+func (t *badTempFile) findTempDirArgs(n ast.Node, c *gosec.Context, suspect ast.Node) *issue.Issue {
+	if s, e := gosec.GetString(suspect); e == nil {
+		if t.args.MatchString(s) {
+			return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+		}
+		return nil
+	}
+	if ce := t.argCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+	}
+	if be, ok := suspect.(*ast.BinaryExpr); ok {
+		if ops := gosec.GetBinaryExprOperands(be); len(ops) != 0 {
+			return t.findTempDirArgs(n, c, ops[0])
+		}
+		return nil
+	}
+	if ce := t.nestedCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return t.findTempDirArgs(n, c, ce.Args[0])
+	}
+	return nil
+}
+
+func (t *badTempFile) Match(n ast.Node, c *gosec.Context) (gi *issue.Issue, err error) {
+	if node := t.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		return t.findTempDirArgs(n, c, node.Args[0]), nil
+	}
+	return nil, nil
+}
+
+// NewBadTempFile detects direct writes to predictable path in temporary directory
+func NewBadTempFile(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("io/ioutil", "WriteFile")
+	calls.AddAll("os", "Create", "WriteFile")
+	argCalls := gosec.NewCallList()
+	argCalls.Add("os", "TempDir")
+	nestedCalls := gosec.NewCallList()
+	nestedCalls.Add("path", "Join")
+	nestedCalls.Add("path/filepath", "Join")
+	return &badTempFile{
+		calls:       calls,
+		args:        regexp.MustCompile(`^(/(usr|var))?/tmp(/.*)?$`),
+		argCalls:    argCalls,
+		nestedCalls: nestedCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File creation in shared tmp directory without using ioutil.Tempfile",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </origin_rule>
+            <example>
+            patterns:
+  - pattern: |
+      $VAR := $VAL
+      $VAR = $VAL
+      var $VAR = $VAL
+      const $VAR = $VAL
+  - metavariable-regex:
+      metavariable: $VAR
+      regex: (?i)passwd|pass|password|pwd|secret|token|pw|apiKey|bearer|cred
+  - metavariable-regex:
+      metavariable: $VAL
+      regex: >
+        (-----BEGIN (RSA|DSA|EC) PRIVATE KEY-----)|
+        (xox[pborsa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})|
+        (AKIA[0-9A-Z]{16})|
+        (ghp_[a-zA-Z0-9]{36})|
+        (AIza[0-9A-Za-z\-_]{35})|
+        ([aA][pP][iI]_?[kK][eE][yY].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        ([sS][eE][cC][rR][eE][tT].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        (key-[0-9a-zA-Z]{32})|
+        ([a-zA-Z]{3,10}://[^/\\s:@]{3,20}:[^/\\s:@]{3,20}@.{1,100}["'\\s])|
+        (sk_live_[0-9a-zA-Z]{24})|
+        (rk_live_[0-9a-zA-Z]{24})
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 10:59:12
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp4lnfb4ik/rule.yml:8
+8  |     - pattern-and:
+9  |         - pattern-either:
+10 |             - pattern: io/ioutil.WriteFile($ARG, ...)
+11 |             - pattern: os.Create($ARG, ...)
+12 |             - pattern: os.WriteFile($ARG, ...)
+13 |         - pattern-either:
+14 |             - metavariable-pattern:
+15 |                 metavariable: $ARG
+16 |                 patterns:
+17 |                   - pattern: $(/(usr|var))?/tmp(/.*)?$
+18 |             - pattern: os.TempDir()
+19 |             - pattern: path.Join(..., $ARG, ...)
+20 |             - pattern: path/filepath.Join(..., $ARG, ...)
+
+{'pattern-and': [{'pattern-either': [{'pattern': 'io/ioutil.WriteFile($ARG, ...)'}, {'pattern': 'os.Create($ARG, ...)'}, {'pattern': 'os.WriteFile($ARG, ...)'}]}, {'pattern-either': [{'metavariable-pattern': {'metavariable': '$ARG', 'patterns': [{'pattern': '$(/(usr|var))?/tmp(/.*)?$'}]}}, {'pattern': 'os.TempDir()'}, {'pattern': 'path.Join(..., $ARG, ...)'}, {'pattern': 'path/filepath.Join(..., $ARG, ...)'}]}]} is not valid under any of the given schemas
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages:
+    - go
+  severity: WARNING
+  patterns:
+    - pattern-and:
+        - pattern-either:
+            - pattern: io/ioutil.WriteFile($ARG, ...)
+            - pattern: os.Create($ARG, ...)
+            - pattern: os.WriteFile($ARG, ...)
+        - pattern-either:
+            - metavariable-pattern:
+                metavariable: $ARG
+                patterns:
+                  - pattern: $(/(usr|var))?/tmp(/.*)?$
+            - pattern: os.TempDir()
+            - pattern: path.Join(..., $ARG, ...)
+            - pattern: path/filepath.Join(..., $ARG, ...)
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp4pqc1oa4/rule.yml:2
+2  | - id: bad-temp-file
+3  |   pattern: |
+4  |     ($PKG.$FUNC($ARG)) 
+5  |     $PKG.$FUNC($ARG)
+6  |     $PKG.FUNC($ARG)
+7  |   message: File creation in shared tmp directory without using ioutil.Tempfile
+8  |   languages:
+9  |     - go
+10 |   severity: WARNING
+11 |   patterns:
+12 |     - pattern-either:
+13 |         - pattern: |
+14 |             io/ioutil.WriteFile($ARG, ...)
+15 |         - pattern: |
+16 |             os.Create($ARG, ...)
+17 |         - pattern: |
+18 |             os.WriteFile($ARG, ...)
+19 |     - pattern-either:
+20 |         - metavariable-regex:
+21 |             metavariable: $ARG
+22 |             regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |         - pattern: |
+24 |             os.TempDir()
+25 |         - pattern: |
+26 |             path.Join(..., $ARG, ...)
+27 |         - pattern: |
+28 |             path/filepath.Join(..., $ARG, ...)
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmp4pqc1oa4/rule.yml:2
+2  | - id: bad-temp-file
+3  |   pattern: |
+4  |     ($PKG.$FUNC($ARG)) 
+5  |     $PKG.$FUNC($ARG)
+6  |     $PKG.FUNC($ARG)
+7  |   message: File creation in shared tmp directory without using ioutil.Tempfile
+8  |   languages:
+9  |     - go
+10 |   severity: WARNING
+11 |   patterns:
+12 |     - pattern-either:
+13 |         - pattern: |
+14 |             io/ioutil.WriteFile($ARG, ...)
+15 |         - pattern: |
+16 |             os.Create($ARG, ...)
+17 |         - pattern: |
+18 |             os.WriteFile($ARG, ...)
+19 |     - pattern-either:
+20 |         - metavariable-regex:
+21 |             metavariable: $ARG
+22 |             regex: ^(/(usr|var))?/tmp(/.*)?$
+23 |         - pattern: |
+24 |             os.TempDir()
+25 |         - pattern: |
+26 |             path.Join(..., $ARG, ...)
+27 |         - pattern: |
+28 |             path/filepath.Join(..., $ARG, ...)
+
+These options were both specified, but they are mutually exclusive: 'pattern', 'patterns'
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 删除顶层的独立 'pattern' 字段及其内容（第3-6行），因为 Semgrep 不允许同时使用顶级 pattern 和 patterns 组合模式
+2. 将所有检测逻辑整合到 patterns 结构下，使用 pattern-either 和 pattern-and 进行组合
+3. 将顶级 message 字段移至 patterns 结构内的合适位置
+4. 确保 patterns 结构内的所有子模式都正确嵌套和组织
+5. 使用 metavariable-pattern 替代原来的单独 metavariable-regex 检查以实现更严格的匹配
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 18:58:51
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmppbyl_iac/rule.yml:14
+14 |     - pattern-either:
+15 |       - metavariable-regex:
+16 |           metavariable: $PATH
+17 |           regex: ^(/(usr|var))?/tmp(/.*)?$
+18 |       - pattern: |
+19 |           path.Join(os.TempDir(), ...)
+20 |       - pattern: |
+21 |           path/filepath.Join(os.TempDir(), ...)
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: bad-temp-file
+  message: File creation in shared tmp directory without using ioutil.Tempfile
+  languages: [go]
+  severity: WARNING
+  patterns:
+    - pattern-either:
+      - pattern: |
+          io/ioutil.WriteFile($PATH, ...)
+      - pattern: |
+          os.Create($PATH)
+      - pattern: |
+          os.WriteFile($PATH, ...)
+    - pattern-either:
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: ^(/(usr|var))?/tmp(/.*)?$
+      - pattern: |
+          path.Join(os.TempDir(), ...)
+      - pattern: |
+          path/filepath.Join(os.TempDir(), ...)
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            // (c) Copyright 2016 Hewlett Packard Enterprise Development LP
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package rules
+
+import (
+	"go/ast"
+	"regexp"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type badTempFile struct {
+	issue.MetaData
+	calls       gosec.CallList
+	args        *regexp.Regexp
+	argCalls    gosec.CallList
+	nestedCalls gosec.CallList
+}
+
+func (t *badTempFile) ID() string {
+	return t.MetaData.ID
+}
+
+func (t *badTempFile) findTempDirArgs(n ast.Node, c *gosec.Context, suspect ast.Node) *issue.Issue {
+	if s, e := gosec.GetString(suspect); e == nil {
+		if t.args.MatchString(s) {
+			return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+		}
+		return nil
+	}
+	if ce := t.argCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return c.NewIssue(n, t.ID(), t.What, t.Severity, t.Confidence)
+	}
+	if be, ok := suspect.(*ast.BinaryExpr); ok {
+		if ops := gosec.GetBinaryExprOperands(be); len(ops) != 0 {
+			return t.findTempDirArgs(n, c, ops[0])
+		}
+		return nil
+	}
+	if ce := t.nestedCalls.ContainsPkgCallExpr(suspect, c, false); ce != nil {
+		return t.findTempDirArgs(n, c, ce.Args[0])
+	}
+	return nil
+}
+
+func (t *badTempFile) Match(n ast.Node, c *gosec.Context) (gi *issue.Issue, err error) {
+	if node := t.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		return t.findTempDirArgs(n, c, node.Args[0]), nil
+	}
+	return nil, nil
+}
+
+// NewBadTempFile detects direct writes to predictable path in temporary directory
+func NewBadTempFile(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("io/ioutil", "WriteFile")
+	calls.AddAll("os", "Create", "WriteFile")
+	argCalls := gosec.NewCallList()
+	argCalls.Add("os", "TempDir")
+	nestedCalls := gosec.NewCallList()
+	nestedCalls.Add("path", "Join")
+	nestedCalls.Add("path/filepath", "Join")
+	return &badTempFile{
+		calls:       calls,
+		args:        regexp.MustCompile(`^(/(usr|var))?/tmp(/.*)?$`),
+		argCalls:    argCalls,
+		nestedCalls: nestedCalls,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File creation in shared tmp directory without using ioutil.Tempfile",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            </origin_rule>
+            <example>
+            patterns:
+  - pattern: |
+      $VAR := $VAL
+      $VAR = $VAL
+      var $VAR = $VAL
+      const $VAR = $VAL
+  - metavariable-regex:
+      metavariable: $VAR
+      regex: (?i)passwd|pass|password|pwd|secret|token|pw|apiKey|bearer|cred
+  - metavariable-regex:
+      metavariable: $VAL
+      regex: >
+        (-----BEGIN (RSA|DSA|EC) PRIVATE KEY-----)|
+        (xox[pborsa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})|
+        (AKIA[0-9A-Z]{16})|
+        (ghp_[a-zA-Z0-9]{36})|
+        (AIza[0-9A-Za-z\-_]{35})|
+        ([aA][pP][iI]_?[kK][eE][yY].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        ([sS][eE][cC][rR][eE][tT].*['\"][0-9a-zA-Z]{32,45}['\"])|
+        (key-[0-9a-zA-Z]{32})|
+        ([a-zA-Z]{3,10}://[^/\\s:@]{3,20}:[^/\\s:@]{3,20}@.{1,100}["'\\s])|
+        (sk_live_[0-9a-zA-Z]{24})|
+        (rk_live_[0-9a-zA-Z]{24})
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

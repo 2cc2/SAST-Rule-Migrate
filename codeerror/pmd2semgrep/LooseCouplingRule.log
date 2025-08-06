@@ -1,0 +1,345 @@
+Timestamp: 2025-07-22 15:40:09
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4a11_2o2.loose-coupling:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+provides $INTERFACE with $TYPE
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: loose-coupling
+  patterns:
+  - pattern: |
+      $TYPE.getInstance()
+  - pattern-not: |
+      java.util.Properties.getInstance()
+  - pattern-not-inside: |
+      @Override
+      public void $METHOD(...) { ... }
+  - pattern-not: |
+      new $TYPE(...)
+  - pattern-not: |
+      ($TYPE) $EXPR
+  - pattern-not: |
+      $EXPR instanceof $TYPE
+  - pattern-not: |
+      $TYPE.class
+  - pattern-not: |
+      extends $TYPE
+  - pattern-not: |
+      provides $INTERFACE with $TYPE
+  message: |
+    Avoid using concrete collection types directly. Consider using interfaces instead.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: loose-coupling
+    cwe:
+    - "CWE-1006: Bad Coding Practices"
+    technology:
+    - Java
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import net.sourceforge.pmd.lang.ast.NodeStream;
+import net.sourceforge.pmd.lang.java.ast.ASTArrayAllocation;
+import net.sourceforge.pmd.lang.java.ast.ASTArrayType;
+import net.sourceforge.pmd.lang.java.ast.ASTBlock;
+import net.sourceforge.pmd.lang.java.ast.ASTCastExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTClassLiteral;
+import net.sourceforge.pmd.lang.java.ast.ASTClassType;
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorCall;
+import net.sourceforge.pmd.lang.java.ast.ASTExtendsList;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTModuleProvidesDirective;
+import net.sourceforge.pmd.lang.java.ast.ASTSuperExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTThisExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTTypeExpression;
+import net.sourceforge.pmd.lang.java.ast.JavaNode;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.types.TypeTestUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+import net.sourceforge.pmd.properties.PropertyFactory;
+
+public class LooseCouplingRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<List<String>> ALLOWED_TYPES =
+        PropertyFactory.stringListProperty("allowedTypes")
+                       .desc("Exceptions to the rule")
+                       .defaultValues("java.util.Properties")
+                       .build();
+
+    public LooseCouplingRule() {
+        super(ASTClassType.class);
+        definePropertyDescriptor(ALLOWED_TYPES);
+    }
+
+    @Override
+    public Object visit(ASTClassType node, Object data) {
+        if (isConcreteCollectionType(node)
+            && !isInOverriddenMethodSignature(node)
+            && !isInAllowedSyntacticCtx(node)
+            && !isAllowedType(node)
+            && !isTypeParameter(node)) {
+            asCtx(data).addViolation(node, node.getSimpleName());
+        }
+        return null;
+    }
+
+    private boolean isInAllowedSyntacticCtx(ASTClassType node) {
+        JavaNode parent = node.getParent();
+        return parent instanceof ASTConstructorCall      // new ArrayList<>()
+            || parent instanceof ASTTypeExpression       // instanceof, method reference
+            || parent instanceof ASTCastExpression       // if we allow instanceof, we should allow cast
+            || parent instanceof ASTClassLiteral         // ArrayList.class
+            || parent instanceof ASTClassType // AbstractMap.SimpleEntry
+            || parent instanceof ASTExtendsList          // extends AbstractMap<...>
+            || parent instanceof ASTThisExpression       // Enclosing.this
+            || parent instanceof ASTSuperExpression      // Enclosing.super
+            || parent instanceof ASTModuleProvidesDirective  // provides <interface> with <implementation>
+            || parent instanceof ASTArrayType && parent.getParent() instanceof ASTArrayAllocation;
+    }
+
+    private boolean isAllowedType(ASTClassType node) {
+        for (String allowed : getProperty(ALLOWED_TYPES)) {
+            if (TypeTestUtil.isA(allowed, node)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    private boolean isConcreteCollectionType(ASTClassType node) {
+        return (TypeTestUtil.isA(Collection.class, node) || TypeTestUtil.isA(Map.class, node))
+            && !node.getTypeMirror().isInterface();
+    }
+
+    private static boolean isInOverriddenMethodSignature(JavaNode node) {
+        JavaNode ancestor = node.ancestors().map(NodeStream.asInstanceOf(ASTMethodDeclaration.class, ASTBlock.class)).first();
+        // when it's in a signature and not the body
+        return ancestor instanceof ASTMethodDeclaration && ((ASTMethodDeclaration) ancestor).isOverridden();
+    }
+
+    private boolean isTypeParameter(ASTClassType node) {
+        return node.getTypeMirror().isTypeVariable();
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:40:50
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmplsm11wd4.loose-coupling:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+new $TYPE<...>(...)
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: loose-coupling
+  patterns:
+  - pattern: |
+      new $TYPE<...>(...)
+  - metavariable-regex:
+      metavariable: $TYPE
+      regex: (ArrayList|HashMap|HashSet|LinkedHashMap|LinkedHashSet|TreeMap|TreeSet|Vector|Hashtable)
+  - pattern-not: |
+      java.util.Properties.getInstance()
+  - pattern-not-inside: |
+      @Override
+      public void $METHOD(...) { ... }
+  - pattern-not: |
+      ($TYPE) $EXPR
+  - pattern-not: |
+      $EXPR instanceof $TYPE
+  - pattern-not: |
+      $TYPE.class
+  - pattern-not: |
+      extends $TYPE
+  message: |
+    Avoid using concrete collection types ($TYPE) directly. Consider using interfaces (List, Map, Set) instead for better loose coupling.
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: loose-coupling
+    cwe:
+    - "CWE-1006: Bad Coding Practices"
+    technology:
+    - Java
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4a11_2o2.loose-coupling:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+provides $INTERFACE with $TYPE
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp4a11_2o2.loose-coupling:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+provides $INTERFACE with $TYPE
+
+----- end pattern -----
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 移除无效的Java语法模式 `provides $INTERFACE with $TYPE`，因为Semgrep目前不支持Java模块系统的`provides...with`语法
+2. 将规则中的`pattern-not`条件改为更通用的集合类型检测模式，例如检测`new ArrayList<>()`等具体集合类型的实例化
+3. 保留其他有效的`pattern-not`条件（如instanceof、cast操作等），因为它们符合Java语法规范
+4. 更新规则的message部分，使之更准确地描述检测到的具体集合类型使用问题
+5. 保持其他metadata不变，确保规则的分类和严重性级别一致
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

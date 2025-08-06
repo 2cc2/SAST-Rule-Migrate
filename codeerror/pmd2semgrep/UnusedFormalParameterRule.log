@@ -1,0 +1,1161 @@
+Timestamp: 2025-07-22 15:44:56
+Attempt: 1
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpq5p0zbx5/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $METHOD {
+        ...
+      }
+  - pattern-not: |
+      @Override
+      $RET $METHOD(...) { ... }
+  - pattern-not: |
+      $RET serializationReadObject(...) { ... }
+  - pattern-not: |
+      default $RET $METHOD(...) { ... }
+  - pattern-either:
+    - pattern: |
+        private $RET $METHOD(...) { ... }
+    - pattern: |
+        private $CLASS(...) { ... }
+    - pattern: |
+        $RET $METHOD(...) { ... }
+      metavariable-regex:
+        metavariable: '$METHOD'
+        regex: '.*UnusedVarName.*'
+        negation: true
+  - focus-metavariable: $PARAM
+  - pattern-not-inside: |
+      ... $PARAM ...
+  message: Unused formal parameter '$PARAM' in $METHODTYPE
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-563: Assignment to Variable without Use'
+    confidence: HIGH
+    likelihood: HIGH
+    impact: LOW
+    owasp:
+    - A9:2017-Using Components with Known Vulnerabilities
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.properties.PropertyFactory.booleanProperty;
+
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFormalParameter;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaRuleUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+public class UnusedFormalParameterRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Boolean> CHECKALL_DESCRIPTOR = booleanProperty("checkAll").desc("Check all methods, including non-private ones").defaultValue(false).build();
+
+    public UnusedFormalParameterRule() {
+        super(ASTConstructorDeclaration.class, ASTMethodDeclaration.class);
+        definePropertyDescriptor(CHECKALL_DESCRIPTOR);
+    }
+
+    @Override
+    public Object visit(ASTConstructorDeclaration node, Object data) {
+        check(node, data);
+        return data;
+    }
+
+    @Override
+    public Object visit(ASTMethodDeclaration node, Object data) {
+        if (node.getVisibility() != Visibility.V_PRIVATE && !getProperty(CHECKALL_DESCRIPTOR)) {
+            return data;
+        }
+        if (node.getBody() != null
+            && !node.hasModifiers(JModifier.DEFAULT)
+            && !JavaRuleUtil.isSerializationReadObject(node)
+            && !node.isOverridden()) {
+            check(node, data);
+        }
+        return data;
+    }
+
+    private void check(ASTExecutableDeclaration node, Object data) {
+        for (ASTFormalParameter formal : node.getFormalParameters()) {
+            ASTVariableId varId = formal.getVarId();
+            if (JavaAstUtils.isNeverUsed(varId) && !JavaRuleUtil.isExplicitUnusedVarName(varId.getName())) {
+                asCtx(data).addViolation(varId, node instanceof ASTMethodDeclaration ? "method" : "constructor", varId.getName());
+            }
+        }
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:45:35
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpse4bbuor/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $METHOD {
+        ...
+      }
+  - pattern-not: |
+      @Override
+      $RET $METHOD(...) { ... }
+  - pattern-not: |
+      $RET serializationReadObject(...) { ... }
+  - pattern-not: |
+      default $RET $METHOD(...) { ... }
+  - pattern-either:
+    - pattern: |
+        private $RET $METHOD(...) { ... }
+    - pattern: |
+        private $CLASS(...) { ... }
+    - pattern: |
+        $RET $METHOD(...) { ... }
+      metavariable-regex:
+        metavariable: '$METHOD'
+        regex: '.*UnusedVarName.*'
+        negation: true
+  - focus-metavariable: $PARAM
+  - pattern-not-inside: |
+      ... $PARAM ...
+  message: Unused formal parameter '$PARAM' in $METHODTYPE
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-563: Assignment to Variable without Use'
+    confidence: HIGH
+    likelihood: HIGH
+    impact: LOW
+    owasp:
+    - A9:2017-Using Components with Known Vulnerabilities
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpq5p0zbx5/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpq5p0zbx5/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将pattern-either移到patterns列表的顶层，使其成为patterns的直接子项，而不是作为另一个pattern的子项
+2. 确保focus-metavariable与patterns处于同一层级，而不是作为pattern-either的一部分
+3. 检查所有缩进层级是否符合YAML语法规范，确认每一项的正确嵌套关系
+4. 确保metavariable-regex位于其所属pattern项的下一层级
+5. 验证所有pattern结构是否符合Semgrep的pattern组合语法要求
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 15:46:20
+Attempt: 3
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpxbce3haw/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $METHOD {
+        ...
+      }
+  - pattern-not: |
+      @Override
+      $RET $METHOD(...) { ... }
+  - pattern-not: |
+      $RET serializationReadObject(...) { ... }
+  - pattern-not: |
+      default $RET $METHOD(...) { ... }
+  - pattern-either:
+    - pattern: |
+        private $RET $METHOD(...) { ... }
+    - pattern: |
+        private $CLASS(...) { ... }
+    - pattern: |
+        $RET $METHOD(...) { ... }
+      metavariable-regex:
+        metavariable: '$METHOD'
+        regex: '.*UnusedVarName.*'
+        negation: true
+  - focus-metavariable: $PARAM
+  - pattern-not-inside: |
+      ... $PARAM ...
+  message: Unused formal parameter '$PARAM' in $METHODTYPE
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory:
+    - unused-code
+    cwe:
+    - 'CWE-563: Assignment to Variable without Use'
+    confidence: HIGH
+    likelihood: HIGH
+    impact: LOW
+    owasp:
+    - A9:2017-Using Components with Known Vulnerabilities
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpse4bbuor/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpse4bbuor/rule.yml:15
+15 |   - pattern-either:
+16 |     - pattern: |
+17 |         private $RET $METHOD(...) { ... }
+18 |     - pattern: |
+19 |         private $CLASS(...) { ... }
+20 |     - pattern: |
+21 |         $RET $METHOD(...) { ... }
+22 |       metavariable-regex:
+23 |         metavariable: '$METHOD'
+24 |         regex: '.*UnusedVarName.*'
+25 |         negation: true
+26 |   - focus-metavariable: $PARAM
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 将pattern-either移到patterns列表的顶层，使其成为patterns的直接子项，而不是作为另一个pattern的子项
+2. 确保focus-metavariable与patterns处于同一层级，而不是作为pattern-either的一部分
+3. 检查所有缩进层级是否符合YAML语法规范，确认每一项的正确嵌套关系
+4. 确保metavariable-regex位于其所属pattern项的下一层级
+5. 验证所有pattern结构是否符合Semgrep的pattern组合语法要求
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:11:10
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpmz0ifr5_.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$RETURN $MODIFIERS $METHOD(...,$PARAM $NAME,...) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $RETURN $MODIFIERS $METHOD(...,$PARAM $NAME,...) {
+        ...
+      }
+  - pattern-not: $PARAM $NAME = ...
+  - pattern-not: $NAME(...)
+  - pattern-not: ...$NAME...
+  - metavariable-regex:
+      metavariable: $MODIFIERS
+      regex: (private|protected)
+  message: Found unused formal parameter '$NAME' in $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    owasp:
+    - "A12:2021 - Cryptographic Failures"
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.properties.PropertyFactory.booleanProperty;
+
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFormalParameter;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaRuleUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+public class UnusedFormalParameterRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Boolean> CHECKALL_DESCRIPTOR = booleanProperty("checkAll").desc("Check all methods, including non-private ones").defaultValue(false).build();
+
+    public UnusedFormalParameterRule() {
+        super(ASTConstructorDeclaration.class, ASTMethodDeclaration.class);
+        definePropertyDescriptor(CHECKALL_DESCRIPTOR);
+    }
+
+    @Override
+    public Object visit(ASTConstructorDeclaration node, Object data) {
+        check(node, data);
+        return data;
+    }
+
+    @Override
+    public Object visit(ASTMethodDeclaration node, Object data) {
+        if (node.getVisibility() != Visibility.V_PRIVATE && !getProperty(CHECKALL_DESCRIPTOR)) {
+            return data;
+        }
+        if (node.getBody() != null
+            && !node.hasModifiers(JModifier.DEFAULT)
+            && !JavaRuleUtil.isSerializationReadObject(node)
+            && !node.isOverridden()) {
+            check(node, data);
+        }
+        return data;
+    }
+
+    private void check(ASTExecutableDeclaration node, Object data) {
+        for (ASTFormalParameter formal : node.getFormalParameters()) {
+            ASTVariableId varId = formal.getVarId();
+            if (JavaAstUtils.isNeverUsed(varId) && !JavaRuleUtil.isExplicitUnusedVarName(varId.getName())) {
+                asCtx(data).addViolation(varId, node instanceof ASTMethodDeclaration ? "method" : "constructor", varId.getName());
+            }
+        }
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:11:48
+Attempt: 2
+Error: semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkyupylh0/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $MODIFIERS
+11 |       patterns:
+12 |       - pattern-either:
+13 |         - "private"
+14 |         - "protected"
+15 |   - pattern-not: $NAME = ...
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $RETURN $MODIFIERS $METHOD($PARAMS) {
+        ...
+      }
+  - pattern: $TYPE $NAME
+  - metavariable-pattern:
+      metavariable: $MODIFIERS
+      patterns:
+      - pattern-either:
+        - "private"
+        - "protected"
+  - pattern-not: $NAME = ...
+  - pattern-not: $NAME(...)
+  - pattern-not: ... $NAME ...
+  message: Found unused formal parameter '$NAME' in $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    owasp:
+    - "A12:2021 - Cryptographic Failures"
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpmz0ifr5_.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$RETURN $MODIFIERS $METHOD(...,$PARAM $NAME,...) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpmz0ifr5_.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$RETURN $MODIFIERS $METHOD(...,$PARAM $NAME,...) {
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修正方法声明语法：使用完整的Java方法声明模式语法，明确的参数列表和返回类型语法
+2. 明确指定模式变量：为$RETURN、$MODIFIERS、$METHOD等模式变量添加类型约束
+3. 简化参数列表匹配：避免连续的...通配符，改用明确的类型-变量对模式
+4. 确保代码块语法正确：使用明确的{...}模式匹配代码块
+5. 添加必要的模式限定：确保只匹配私有或受保护方法（原规则意图）
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:12:25
+Attempt: 3
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp7zdhe1m3.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+...$NAME...
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern-inside: |
+      $RETURN $MODIFIERS $METHOD($PARAMS) {
+        ...
+      }
+  - pattern-either:
+    - pattern: private $TYPE $NAME
+    - pattern: protected $TYPE $NAME
+  - pattern-not: $NAME = ...
+  - pattern-not: $NAME(...)
+  - pattern-not: ...$NAME...
+  message: Found unused formal parameter '$NAME' in $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    cwe:
+    - "CWE-563: Assignment to Variable without Use"
+    owasp:
+    - "A12:2021 - Cryptographic Failures"
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkyupylh0/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $MODIFIERS
+11 |       patterns:
+12 |       - pattern-either:
+13 |         - "private"
+14 |         - "protected"
+15 |   - pattern-not: $NAME = ...
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：semgrep error: Invalid rule schema
+  --> /var/folders/br/qqr4qgw16pq_wrp98_513pxr0000gn/T/tmpkyupylh0/rule.yml:9
+9  |   - metavariable-pattern:
+10 |       metavariable: $MODIFIERS
+11 |       patterns:
+12 |       - pattern-either:
+13 |         - "private"
+14 |         - "protected"
+15 |   - pattern-not: $NAME = ...
+
+Additional properties are not allowed ('pattern-either' was unexpected)
+
+[ERROR] invalid configuration file found (1 configs were invalid)，请按照以下步骤进行修复：
+1. 移除metavariable-pattern中的pattern-either结构：Semgrep的metavariable-pattern不支持直接使用pattern-either
+2. 将修饰符检查移到主patterns列表：使用单独的pattern-either来匹配private/protected修饰符
+3. 确保metavariable-pattern只包含简单模式：metavariable-pattern应该只包含单个pattern
+4. 重新组织规则结构：将修饰符检查和参数检查分开处理
+5. 添加类型注解：明确$TYPE和$NAME的模式变量类型
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:46:48
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpm6ud834a.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Override
+... $METHOD(...) {...}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: unused-formal-parameter
+  patterns:
+  - pattern: |
+      $RETURN $METHOD(..., $PARAM $VAR, ...) {
+        ...
+      }
+  - pattern-not: $VAR
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: (private|protected)
+  - pattern-not: |
+      @Override
+      ... $METHOD(...) {...}
+  - pattern-not: |
+      default ... $METHOD(...) {...}
+  - pattern-not: |
+      readObject(...)
+  message: Unused formal parameter '$VAR' in $METHOD
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: unused
+    cwe:
+    - 'CWE-563: Assignment to Variable without Use'
+    confidence: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.bestpractices;
+
+import static net.sourceforge.pmd.properties.PropertyFactory.booleanProperty;
+
+import net.sourceforge.pmd.lang.java.ast.ASTConstructorDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTExecutableDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTFormalParameter;
+import net.sourceforge.pmd.lang.java.ast.ASTMethodDeclaration;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableId;
+import net.sourceforge.pmd.lang.java.ast.JModifier;
+import net.sourceforge.pmd.lang.java.ast.ModifierOwner.Visibility;
+import net.sourceforge.pmd.lang.java.ast.internal.JavaAstUtils;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.rule.internal.JavaRuleUtil;
+import net.sourceforge.pmd.properties.PropertyDescriptor;
+
+
+public class UnusedFormalParameterRule extends AbstractJavaRulechainRule {
+
+    private static final PropertyDescriptor<Boolean> CHECKALL_DESCRIPTOR = booleanProperty("checkAll").desc("Check all methods, including non-private ones").defaultValue(false).build();
+
+    public UnusedFormalParameterRule() {
+        super(ASTConstructorDeclaration.class, ASTMethodDeclaration.class);
+        definePropertyDescriptor(CHECKALL_DESCRIPTOR);
+    }
+
+    @Override
+    public Object visit(ASTConstructorDeclaration node, Object data) {
+        check(node, data);
+        return data;
+    }
+
+    @Override
+    public Object visit(ASTMethodDeclaration node, Object data) {
+        if (node.getVisibility() != Visibility.V_PRIVATE && !getProperty(CHECKALL_DESCRIPTOR)) {
+            return data;
+        }
+        if (node.getBody() != null
+            && !node.hasModifiers(JModifier.DEFAULT)
+            && !JavaRuleUtil.isSerializationReadObject(node)
+            && !node.isOverridden()) {
+            check(node, data);
+        }
+        return data;
+    }
+
+    private void check(ASTExecutableDeclaration node, Object data) {
+        for (ASTFormalParameter formal : node.getFormalParameters()) {
+            ASTVariableId varId = formal.getVarId();
+            if (JavaAstUtils.isNeverUsed(varId) && !JavaRuleUtil.isExplicitUnusedVarName(varId.getName())) {
+                asCtx(data).addViolation(varId, node instanceof ASTMethodDeclaration ? "method" : "constructor", varId.getName());
+            }
+        }
+    }
+
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-22 17:47:25
+Attempt: 2
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpb54xxuqz.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+$RETURNTYPE $METHOD(..., $TYPE $VAR, ...) {
+  ...
+  $VAR ...;
+  ...
+}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+# 转换后的 Semgrep 规则
+rules:
+- id: unused-formal-parameter
+  message: Unused formal parameter '$VAR' in method
+  patterns:
+  - pattern-inside: |
+      $RETURNTYPE $METHOD(..., $TYPE $VAR, ...) {
+        ...
+      }
+  - pattern-not-inside: |
+      $RETURNTYPE $METHOD(..., $TYPE $VAR, ...) {
+        ...
+        $VAR ...;
+        ...
+      }
+  - pattern-not-inside: |
+      @Override
+      $RETURNTYPE $METHOD(...) {...}
+  - pattern-not-inside: |
+      default $RETURNTYPE $METHOD(...) {...}
+  - pattern-not-inside: |
+      readObject(...)
+  - metavariable-regex:
+      metavariable: $METHOD
+      regex: (private|protected)
+  languages:
+  - java
+  severity: WARNING
+  metadata:
+    category: best-practices
+    subcategory: unused
+    cwe:
+    - 'CWE-563: Assignment to Variable without Use'
+    confidence: MEDIUM
+    technology:
+    - Java
+    references:
+    - https://cwe.mitre.org/data/definitions/563.html
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpm6ud834a.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Override
+... $METHOD(...) {...}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmpm6ud834a.unused-formal-parameter:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+@Override
+... $METHOD(...) {...}
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.，请按照以下步骤进行修复：
+1. 修复`pattern-not`语法错误，使用Semgrep合法的语法结构替代含糊的省略号模式
+2. 重写`@Override`检查模式，使用准确的Java方法注解匹配语法
+3. 确保所有模式都符合Semgrep的Java语法规范，避免使用不明确的通配符
+4. 添加明确的类型约束和方法声明模式，使规则更具针对性
+5. 测试修改后的规则是否能正确识别未使用的形式参数
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```yaml
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,801 @@
+Timestamp: 2025-07-24 16:27:08
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,35-51)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-27)
+ERROR: HttpRequestSource must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,7-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-75)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,70-88)
+ERROR: CommandSink.extends is incompatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,14-15)
+Rule Content:
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command.
+ *              This could lead to command injection if variables passed into the exec commands are not
+ *              properly sanitized. Instead, avoid using these OS commands with user-supplied input, or,
+ *              if you must use these commands, use a whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.0
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class HttpRequestSource extends RemoteFlowSource {
+  HttpRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+      ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasQualifiedName("javax.servlet.http", "Cookie")
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+        ma.getMethod().getName() = "command"
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+        ma.getMethod().getName() = "exec" and
+        this = ma.getArgument(0)
+      )
+    )
+  }
+}
+
+class TaintedCmdFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedCmdFromHttpRequestConfig() { this = "TaintedCmdFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CommandSink }
+}
+
+from TaintedCmdFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Command injection vulnerability: user input from HTTP request flows into OS command execution."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: tainted-cmd-from-http-request
+  message: >-
+    Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command. This could
+    lead to command injection if variables passed into the exec commands are not properly sanitized. Instead,
+    avoid using these OS commands with user-supplied input, or, if you must use these commands, use a
+    whitelist of specific values.
+  languages: [java]
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:   # this pattern is a hack to get the rule to recognize `map` as tainted source when `cookie.getValue(user_input)` is used.
+        - pattern-inside: |
+            (javax.servlet.http.Cookie[] $COOKIES) = (HttpServletRequest $REQ).getCookies(...);
+            ...
+            for (javax.servlet.http.Cookie $COOKIE: $COOKIES) {
+              ...
+            }
+        - pattern: |
+            $COOKIE.getValue(...)
+  pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  (ProcessBuilder $PB) = ...;
+              - patterns:
+                - pattern: |
+                    (Process $P) = ...;
+                - pattern-not: |
+                    (Process $P) = (java.lang.Runtime $R).exec(...);
+              - patterns:
+                  - pattern: (java.lang.Runtime $R).exec($CMD, ...);
+                  - focus-metavariable: $CMD
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (ProcessBuilder $PB) = ...;
+                          ...
+                          $PB.command($ARGLIST);
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (ProcessBuilder $PB) = ...;
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (Process $P) = ...;
+                  - pattern: |
+                      $ARGLIST.add(...);
+  metadata:
+    category: security
+    technology:
+    - java
+    cwe:
+    - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: MEDIUM
+    impact: MEDIUM
+    confidence: MEDIUM
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:28:19
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-28)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,43-62)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,71-90)
+ERROR: predicate 'getSourceType' has result type predicate, not matching the overridden predicate's string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,22-35)
+WARNING: test is always true, as HttpRequestSource is a supertype of the expression type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: test is always true, as the expression already has type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,47-75)
+ERROR: Expr::Expr is incompatible with Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,23-24)
+Rule Content:
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command.
+ *              This could lead to command injection if variables passed into the exec commands are not
+ *              properly sanitized. Instead, avoid using these OS commands with user-supplied input, or,
+ *              if you must use these commands, use a whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.0
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph2
+
+class HttpRequestSource extends RemoteFlowSource {
+  override predicate getSourceType() { this instanceof HttpRequestSource }
+
+  HttpRequestSource() {
+    exists(Method m |
+      (
+        m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+        m.getName() = "getValue" and
+        m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie")
+      ) and
+      this.asParameter() = m.getAParameter()
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(Method m |
+      (
+        m.getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+        m.getName() = "command"
+      ) or
+      (
+        m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+        m.getName() = "exec" and
+        this.asExpr() = m.getParameter(0)
+      )
+    )
+  }
+}
+
+class TaintedCmdFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedCmdFromHttpRequestConfig() { 
+    this = "TaintedCmdFromHttpRequestConfig" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CommandSink }
+}
+
+from TaintedCmdFromHttpRequestConfig cfg, DataFlow::PathNode2 source, DataFlow::PathNode2 sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Command injection vulnerability: user input from HTTP request flows into OS command execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,35-51)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-27)
+ERROR: HttpRequestSource must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,7-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-75)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,70-88)
+ERROR: CommandSink.extends is incompatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,14-15)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,35-51)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-27)
+ERROR: HttpRequestSource must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,7-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-75)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,70-88)
+ERROR: CommandSink.extends is incompatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,14-15)，请按照以下步骤进行修复：
+1. 将 hasQualifiedName() 替换为正常的检查类型合法表达式，使用 hasQualifiedName(package_name, type_name) 时确保作用在 RefType 类型上
+2. 将 import DataFlow::PathGraph 替换为 import DataFlow::PathGraph 的替代模块 DataFlow::PathGraph2
+3. 在 HttpRequestSource 类中添加缺失的 getSourceType() 方法实现
+4. 在 HttpRequestSource 的特征谓词中绑定 this 变量
+5. 将 MethodAccess 类型的用法替换为推荐的 Method 类型或其他替代类型
+6. 将 Configuration 类型替换为 TaintTracking::Configuration 最新语法
+7. 将 PathNode 类型替换为推荐的替代类型
+8. 确保 CommandSink 正确继承 DataFlow::Node 而非 Expr::Expr
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 16:29:30
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,37-56)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,3-20)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,3-14)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,47-75)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,70-88)
+ERROR: The body of this 'TestRule::HttpRequestSource::getSourceType' does not bind 'result' to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,19-32)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+Rule Content:
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command.
+ *              This could lead to command injection if variables passed into the exec commands are not
+ *              properly sanitized. Instead, avoid using these OS commands with user-supplied input, or,
+ *              if you must use these commands, use a whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.0
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow
+
+class HttpRequestSource extends RemoteFlowSource {
+  override string getSourceType() { "HttpRequestSource" }
+
+  HttpRequestSource() {
+    exists(Method m |
+      (
+        m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+        m.getName() = "getValue" and
+        m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie")
+      )
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(Method m |
+      (
+        m.getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+        m.getName() = "command"
+      ) or
+      (
+        m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+        m.getName() = "exec"
+      )
+    )
+  }
+}
+
+class TaintedCmdFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedCmdFromHttpRequestConfig() { 
+    this = "TaintedCmdFromHttpRequestConfig" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CommandSink }
+}
+
+from TaintedCmdFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Command injection vulnerability: user input from HTTP request flows into OS command execution."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-28)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,43-62)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,71-90)
+ERROR: predicate 'getSourceType' has result type predicate, not matching the overridden predicate's string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,22-35)
+WARNING: test is always true, as HttpRequestSource is a supertype of the expression type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: test is always true, as the expression already has type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,47-75)
+ERROR: Expr::Expr is incompatible with Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,23-24)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-28)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,43-62)
+ERROR: could not resolve type DataFlow::PathNode2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,71-90)
+ERROR: predicate 'getSourceType' has result type predicate, not matching the overridden predicate's string (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,22-35)
+WARNING: test is always true, as HttpRequestSource is a supertype of the expression type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: test is always true, as the expression already has type HttpRequestSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,56-73)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,47-75)
+ERROR: Expr::Expr is incompatible with Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,23-24)，请按照以下步骤进行修复：
+1. 将 DataFlow::PathGraph2 替换为正确的模块 DataFlow
+2. 将 DataFlow::PathNode2 替换为标准的 DataFlow::PathNode
+3. 修改 getSourceType() 方法使其返回 string 类型而不是 predicate
+4. 去除不必要的 HttpRequestSource 类型检查
+5. 将 TaintTracking::Configuration 替换为建议的最新语法
+6. 修正 CommandSink 中的数据流节点类型，确保类型兼容性
+7. 更新 MethodAccess 相关的代码，使用最新的 API 调用方式
+8. 修复 HttpRequestSource 中的参数绑定表达式
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:59:41
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,33-49)
+ERROR: asExpr() cannot be resolved for type HttpRequestSource.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-18)
+ERROR: could not resolve type VariableAccess (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,54-68)
+ERROR: asExpr() cannot be resolved for type HttpRequestSource.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,14-20)
+ERROR: could not resolve type ProcessBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,29-57)
+ERROR: test is always false, as HttpRequestSource is incompatible with the expression type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,23-40)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,25-43)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,52-70)
+ERROR: Expr::Expr is incompatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,25-26)
+ERROR: Expr::Expr is incompatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,23-24)
+Rule Content:
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command. This could
+ *    lead to command injection if variables passed into the exec commands are not properly sanitized. Instead,
+ *    avoid using these OS commands with user-supplied input, or, if you must use these commands, use a
+ *    whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a01
+ *       owasp-a03
+ *       cwe2021-top25
+ *       cwe2022-top25
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class HttpRequestSource extends RemoteFlowSource::Range {
+  HttpRequestSource() {
+    exists(MethodAccess getCookiesCall | 
+      getCookiesCall.getMethod().getName() = "getCookies" and
+      this.asExpr() = getCookiesCall.getQualifier().(VariableAccess).getVariable()
+    ) or
+    exists(MethodAccess getValueCall | 
+      getValueCall.getMethod().getName() = "getValue" and
+      exists(Variable v | 
+        getValueCall.getQualifier() = v.getAnAccess() and
+        v.getType() instanceof TypeCookie and
+        this.asExpr() = getValueCall
+      )
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(ProcessBuilder pb | pb.getConstruction().getExpr() = this.asExpr()) or
+    exists(MethodAccess execCall | 
+      execCall.getMethod().getName() = "exec" and
+      execCall.getMethod().getDeclaringType() instanceof TypeRuntime and
+      (
+        this.asExpr() = execCall.getArgument(0) or
+        exists(DataFlow::Node arg | 
+          arg.asExpr() = execCall.getArgument(0) and
+          this.asExpr() = arg
+        )
+      )
+    ) or
+    exists(MethodAccess commandCall | 
+      commandCall.getMethod().getName() = "command" and
+      commandCall.getMethod().getDeclaringType() instanceof TypeProcessBuilder and
+      exists(DataFlow::Node arg | 
+        arg.asExpr() = commandCall.getArgument(0) and
+        this.asExpr() = arg
+      )
+    )
+  }
+}
+
+class Configuration extends TaintTracking::Configuration {
+  Configuration() { this = "TaintedCommandFromHttpRequest" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CommandSink
+  }
+}
+
+from Configuration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Input from HTTP request flows into OS command and may cause command injection"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: tainted-cmd-from-http-request
+  message: >-
+    Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command. This could
+    lead to command injection if variables passed into the exec commands are not properly sanitized. Instead,
+    avoid using these OS commands with user-supplied input, or, if you must use these commands, use a
+    whitelist of specific values.
+  languages: [java]
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:   # this pattern is a hack to get the rule to recognize `map` as tainted source when `cookie.getValue(user_input)` is used.
+        - pattern-inside: |
+            (javax.servlet.http.Cookie[] $COOKIES) = (HttpServletRequest $REQ).getCookies(...);
+            ...
+            for (javax.servlet.http.Cookie $COOKIE: $COOKIES) {
+              ...
+            }
+        - pattern: |
+            $COOKIE.getValue(...)
+  pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  (ProcessBuilder $PB) = ...;
+              - patterns:
+                - pattern: |
+                    (Process $P) = ...;
+                - pattern-not: |
+                    (Process $P) = (java.lang.Runtime $R).exec(...);
+              - patterns:
+                  - pattern: (java.lang.Runtime $R).exec($CMD, ...);
+                  - focus-metavariable: $CMD
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (ProcessBuilder $PB) = ...;
+                          ...
+                          $PB.command($ARGLIST);
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (ProcessBuilder $PB) = ...;
+                      - pattern-inside: |
+                          (java.util.List<$TYPE> $ARGLIST) = ...;  
+                          ...
+                          (Process $P) = ...;
+                  - pattern: |
+                      $ARGLIST.add(...);
+  metadata:
+    category: security
+    technology:
+    - java
+    cwe:
+    - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: MEDIUM
+    impact: MEDIUM
+    confidence: MEDIUM
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 18:00:47
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,11-19)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,27-35)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,45-73)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,44-62)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,71-89)
+Rule Content:
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command. This could
+ *    lead to command injection if variables passed into the exec commands are not properly sanitized. Instead,
+ *    avoid using these OS commands with user-supplied input, or, if you must use these commands, use a
+ *    whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(Method m | 
+      m.getName() = "getCookies" and
+      this.asExpr() = m.getACall().getQualifier()
+    ) or
+    exists(Method m | 
+      m.getName() = "getValue" and
+      exists(DataFlow::Node cookieVar | 
+        m.getACall().getQualifier() = cookieVar.asExpr() and
+        cookieVar.getType() instanceof TypeCookie and
+        this.asExpr() = m.getACall()
+      )
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(ConstructorCall cc | 
+      cc.getConstructedType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = cc
+    ) or
+    exists(Method m | 
+      m.hasName("exec") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      this.asExpr() = m.getACall().getArgument(0)
+    ) or
+    exists(Method m | 
+      m.hasName("command") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+}
+
+class TaintedCommandFromHttpRequest extends TaintTracking::Configuration {
+  TaintedCommandFromHttpRequest() { this = "TaintedCommandFromHttpRequest" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CommandSink
+  }
+}
+
+from TaintedCommandFromHttpRequest config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Input from HTTP request flows into OS command and may cause command injection"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,33-49)
+ERROR: asExpr() cannot be resolved for type HttpRequestSource.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-18)
+ERROR: could not resolve type VariableAccess (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,54-68)
+ERROR: asExpr() cannot be resolved for type HttpRequestSource.extends (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,14-20)
+ERROR: could not resolve type ProcessBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,29-57)
+ERROR: test is always false, as HttpRequestSource is incompatible with the expression type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,23-40)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,25-43)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,52-70)
+ERROR: Expr::Expr is incompatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,25-26)
+ERROR: Expr::Expr is incompatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,23-24)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command. This could
+ *    lead to command injection if variables passed into the exec commands are not properly sanitized. Instead,
+ *    avoid using these OS commands with user-supplied input, or, if you must use these commands, use a
+ *    whitelist of specific values.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(Method m | 
+      m.getName() = "getCookies" and
+      this.asExpr() = m.getACall().getQualifier()
+    ) or
+    exists(Method m | 
+      m.getName() = "getValue" and
+      exists(DataFlow::Node cookieVar | 
+        m.getACall().getQualifier() = cookieVar.asExpr() and
+        cookieVar.getType() instanceof TypeCookie and
+        this.asExpr() = m.getACall()
+      )
+    )
+  }
+}
+
+class CommandSink extends DataFlow::Node {
+  CommandSink() {
+    exists(ConstructorCall cc | 
+      cc.getConstructedType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = cc
+    ) or
+    exists(Method m | 
+      m.hasName("exec") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      this.asExpr() = m.getACall().getArgument(0)
+    ) or
+    exists(Method m | 
+      m.hasName("command") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+}
+
+class TaintedCommandFromHttpRequest extends TaintTracking::Configuration {
+  TaintedCommandFromHttpRequest() { this = "TaintedCommandFromHttpRequest" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CommandSink
+  }
+}
+
+from TaintedCommandFromHttpRequest config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Input from HTTP request flows into OS command and may cause command injection"
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

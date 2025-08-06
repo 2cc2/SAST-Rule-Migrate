@@ -1,0 +1,1272 @@
+Timestamp: 2025-07-24 23:45:49
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,80-87)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-42)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,55-79)
+ERROR: 'prefix' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,29-42)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,44-48)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,22-33)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detected user input flowing into a manually constructed HTML string.
+ * @id tainted-html-string
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-079
+ *       external/cwe/cwe-116
+ *       owasp-a03
+ *       owasp-a07
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Spring
+
+class TaintedHtmlStringConfig extends TaintTracking::Configuration {
+  TaintedHtmlStringConfig() { this = "TaintedHtmlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", 
+        ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "ModelAttribute"]) and
+      p = m.getAParameter() and
+      source.asParameter() = p and
+      not p.getType() instanceof BoxedType and
+      not p.getType() instanceof PrimitiveType
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma, string prefix |
+      (ma.getMethod().getName() = "ResponseEntity" or ma.getMethod().getName() matches "^ok|of$") and
+      prefix = ma.getArgument(0).(Literal).getStringValue() and
+      prefix.matches("^<\\w+") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(StringBuilder sb, string prefix |
+      prefix = sb.getStringInit().getStringValue() and
+      prefix.matches("^<\\w+") and
+      sink.asExpr() = sb.getAnAppend().getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.owasp.esapi", "Encoder", "encodeForHTML") or
+      ma.getMethod().hasQualifiedName("org.owasp.html", "PolicyFactory", "sanitize") or
+      ma.getMethod().hasQualifiedName("org.owasp.validator.html", "AntiSamy", "scan") or
+      ma.getMethod().hasQualifiedName("org.jsoup", "Jsoup", "clean") and
+      sanitizer.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from TaintedHtmlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Detected user input flowing into a manually constructed HTML string."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: tainted-html-string
+  languages:
+  - java
+  severity: ERROR
+  message: >-
+    Detected user input flowing into a manually constructed HTML string.
+    You may be accidentally bypassing secure methods of rendering HTML by
+    manually constructing HTML and this could create a cross-site scripting
+    vulnerability, which could let attackers steal sensitive user data. To be
+    sure this is safe, check that the HTML is rendered safely. You can use
+    the OWASP ESAPI encoder if you must render user data.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+    category: security
+    technology:
+    - java
+    - spring
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  mode: taint
+  pattern-sources:
+  - label: INPUT
+    patterns:
+    - pattern-either:
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ(...) $TYPE $SOURCE,...) {
+            ...
+          }
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ $TYPE $SOURCE,...) {
+            ...
+          }
+    - metavariable-regex:
+        metavariable: $TYPE
+        regex: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+    - metavariable-regex:
+        metavariable: $REQ
+        regex: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+    - focus-metavariable: $SOURCE
+  - label: CONCAT
+    by-side-effect: true
+    requires: INPUT
+    patterns:
+    - pattern-either:
+      - pattern: |
+          "$HTMLSTR" + ...
+      - pattern: |
+          "$HTMLSTR".concat(...)
+      - patterns:
+        - pattern-inside: |
+            StringBuilder $SB = new StringBuilder("$HTMLSTR");
+            ...
+        - pattern: $SB.append(...)
+      - patterns:
+        - pattern-inside: |
+            $VAR = "$HTMLSTR";
+            ...
+        - pattern: $VAR += ...
+      - pattern: String.format("$HTMLSTR", ...)
+      - patterns:
+        - pattern-inside: |
+            String $VAR = "$HTMLSTR";
+            ...
+        - pattern: String.format($VAR, ...)
+    - metavariable-regex:
+        metavariable: $HTMLSTR
+        regex: ^<\w+
+  pattern-propagators:
+  - pattern: (StringBuilder $SB).append($...TAINTED)
+    from: $...TAINTED
+    to: $SB
+  - pattern: $VAR += $...TAINTED
+    from: $...TAINTED
+    to: $VAR
+  pattern-sinks:
+  - requires: CONCAT
+    patterns:
+    - pattern-either:
+      - pattern: new ResponseEntity<>($PAYLOAD, ...)
+      - pattern: new ResponseEntity<$ERROR>($PAYLOAD, ...)
+      - pattern: ResponseEntity. ... .body($PAYLOAD)
+      - patterns:
+        - pattern: |
+            ResponseEntity.$RESPFUNC($PAYLOAD). ...
+        - metavariable-regex:
+            metavariable: $RESPFUNC
+            regex: ^(ok|of)$
+    - focus-metavariable: $PAYLOAD
+  pattern-sanitizers:
+  - pattern-either:
+    - pattern: Encode.forHtml(...)
+    - pattern: (PolicyFactory $POLICY).sanitize(...)
+    - pattern: (AntiSamy $AS).scan(...)
+    - pattern: JSoup.clean(...)
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 23:47:06
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,54-65)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,7-18)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-25)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,7-18)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,35-53)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,62-80)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detected user input flowing into a manually constructed HTML string.
+ * @id tainted-html-string
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-079
+ *       external/cwe/cwe-116
+ *       owasp-a03
+ *       owasp-a07
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class TaintedHtmlStringConfig extends TaintTracking::Configuration {
+  TaintedHtmlStringConfig() { this = "TaintedHtmlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", 
+        ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "ModelAttribute"]) and
+      p = m.getAParameter() and
+      source.asParameter() = p and
+      not p.getType() instanceof BoxedType and
+      not p.getType() instanceof PrimitiveType
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call c, string prefix |
+      (c.getCallee().getName() = "ResponseEntity" or regexpMatch(c.getCallee().getName(), "^(ok|of)$")) and
+      prefix = c.getArgument(0).(StringLiteral).getValue() and
+      regexpMatch(prefix, "^<\\w+") and
+      sink.asExpr() = c.getArgument(0)
+    )
+    or
+    exists(StringBuilder sb, string prefix |
+      prefix = sb.getStringInit().getValue() and
+      regexpMatch(prefix, "^<\\w+") and
+      sink.asExpr() = sb.getAnAppend().getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(Call c |
+      (c.getCallee().hasQualifiedName("org.owasp.esapi", "Encoder", "encodeForHTML") or
+       c.getCallee().hasQualifiedName("org.owasp.html", "PolicyFactory", "sanitize") or
+       c.getCallee().hasQualifiedName("org.owasp.validator.html", "AntiSamy", "scan") or
+       c.getCallee().hasQualifiedName("org.jsoup", "Jsoup", "clean")) and
+      node.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+from TaintedHtmlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Detected user input flowing into a manually constructed HTML string."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,80-87)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-42)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,55-79)
+ERROR: 'prefix' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,29-42)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,44-48)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,22-33)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,80-87)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-42)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,55-79)
+ERROR: 'prefix' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,29-42)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,44-48)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,22-33)，请按照以下步骤进行修复：
+1. 将 `semmle.code.java.frameworks.Spring` 替换为正确的模块导入 `import java`
+2. 使用 `regexpMatch` 替代 `matches` 进行字符串匹配
+3. 修复 `getName` 谓词使用方式，确保正确调用方法
+4. 确保 `prefix` 变量被正确绑定在所有使用场景中
+5. 修复最后的 `}` 语法错误，确保所有代码块正确闭合
+6. 使用现代的 `TaintTracking::Configuration` 替代已被弃用的 `Configuration`
+7. 使用 `Call` 替换已被弃用的 `MethodAccess` 类型
+8. 确保 `override` 修饰符仅用于成员谓词和方法
+9. 修复未使用的变量和谓词警告，移除或使用这些声明
+10. 确保查询模块正确导出至少一个查询结果
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 23:48:01
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-31)
+ERROR: could not resolve module semmle.code.java.StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-38)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,54-65)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,7-18)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-25)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,7-18)
+ERROR: could not resolve type DataFlow::PathGraph (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,6-25)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,59-77)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,86-104)
+WARNING: unused variable 'pg' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,26-28)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detected user input flowing into a manually constructed HTML string.
+ * @id tainted-html-string
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-079
+ *       external/cwe/cwe-116
+ *       owasp-a03
+ *       owasp-a07
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.String
+import semmle.code.java.StringBuilder
+
+class TaintedHtmlStringConfig extends TaintTracking::Configuration {
+  TaintedHtmlStringConfig() { this = "TaintedHtmlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", 
+        ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "ModelAttribute"]) and
+      p = m.getAParameter() and
+      source.asParameter() = p and
+      not p.getType() instanceof BoxedType and
+      not p.getType() instanceof PrimitiveType
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call c, string prefix |
+      (c.getCallee().getName() = "ResponseEntity" or regexpMatch(c.getCallee().getName(), "^(ok|of)$")) and
+      prefix = c.getArgument(0).(StringLiteral).getValue() and
+      regexpMatch(prefix, "^<\\w+") and
+      sink.asExpr() = c.getArgument(0)
+    )
+    or
+    exists(StringBuilder sb, string prefix |
+      prefix = sb.getStringInit().getValue() and
+      regexpMatch(prefix, "^<\\w+") and
+      sink.asExpr() = sb.getAnAppend().getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(Call c |
+      (c.getCallee().hasQualifiedName("org.owasp.esapi", "Encoder", "encodeForHTML") or
+       c.getCallee().hasQualifiedName("org.owasp.html", "PolicyFactory", "sanitize") or
+       c.getCallee().hasQualifiedName("org.owasp.validator.html", "AntiSamy", "scan") or
+       c.getCallee().hasQualifiedName("org.jsoup", "Jsoup", "clean")) and
+      node.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathGraph pg, TaintedHtmlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Detected user input flowing into a manually constructed HTML string."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,54-65)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,7-18)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-25)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,7-18)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,35-53)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,62-80)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,54-65)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,7-18)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-25)
+ERROR: could not resolve predicate regexpMatch/2 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,7-18)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,35-53)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,62-80)，请按照以下步骤进行修复：
+1. 导入正则表达式相关的模块：添加 `import semmle.code.java.String`
+2. 导入 StringBuilder 相关的模块：添加 `import semmle.code.java.StringBuilder`
+3. 使用新增的 TaintTracking API 替代被弃用的 Configuration 类
+4. 使用 PathNode 的替代类型：使用 DataFlow::PathGraph 和 DataFlow::PathNode
+5. 确保所有 regexpMatch 调用都来自正确的模块
+6. 更新 select 语句使用新的类型系统
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-28 02:17:04
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'ma' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,34-36)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,1-2)
+ERROR: hasQualifiedName(string) cannot be resolved for type Annotation::AnnotationType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,37-53)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,33-42)
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,51-58)
+ERROR: could not resolve type StringFormatExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,21-37)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,44-57)
+ERROR: getLeftOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,35-49)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,21-33)
+WARNING: unused class 'HtmlInputSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,7-22)
+WARNING: unused class 'HtmlStringLiteral' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,7-24)
+WARNING: unused class 'HtmlConcatenation' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,7-24)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detects user input flowing into a manually constructed HTML string.
+ *              This could create a cross-site scripting vulnerability if the HTML
+ *              is not rendered safely.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-html-string
+ * @tags security
+ *       external/cwe/cwe-79
+ *       external/owasp/a07
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class HtmlInputSource extends DataFlow::Node {
+  HtmlInputSource() {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().hasQualifiedName([
+        "org.springframework.web.bind.annotation", "RequestBody",
+        "org.springframework.web.bind.annotation", "PathVariable",
+        "org.springframework.web.bind.annotation", "RequestParam",
+        "org.springframework.web.bind.annotation", "RequestHeader",
+        "org.springframework.web.bind.annotation", "CookieValue",
+        "org.springframework.web.bind.annotation", "ModelAttribute"
+      ]) and
+      p = m.getAParameter() and
+      not p.getType().hasName(["Integer","Long","Float","Double","Char","Boolean","int","long","float","double","char","boolean"]) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class HtmlStringLiteral extends DataFlow::Node {
+  HtmlStringLiteral() {
+    exists(Expr e |
+      (e = any(StringLiteral s).getString() and e.getText().matches("^<\\w+")) or
+      (e instanceof StringFormatExpr and e.getAnArgument().getStringValue().matches("^<\\w+"))
+    )
+  }
+}
+
+class HtmlConcatenation extends DataFlow::Node {
+  HtmlConcatenation() {
+    exists(Expr e |
+      (e instanceof AddExpr and e.getLeftOperand().getStringValue().matches("^<\\w+")) or
+      (e instanceof MethodAccess ma and 
+       ma.getMethod().getName() = "concat" and
+       ma.getQualifier().getStringValue().matches("^<\\w+")) or
+      (e instanceof MethodAccess ma and 
+       ma.getMethod().getName() = "append" and
+       ma.getQualifier().getType().getName() = "StringBuilder" and
+       exists(StringLiteral s | s.getString() = ma.getQualifier().getAValue())) or
+      (e instanceof AssignExpr ae and 
+       ae.getLeftOperand().getType().getName() = "String" and
+       ae.getOperator() = "+=" and
+       exists(StringLiteral s | s.getString() = ae.getLeftOperand().getAValue().getStringValue().matches("^<\\w+")))
+    )
+  }
+}
+
+class HtmlSink extends DataFlow::Node {
+  HtmlSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      ma.getMethod().getName() = "body" and
+      this.asExpr() = ma.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      ma.getMethod().getName().matches("ok|of") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "forHtml" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp", "Encoder")) or
+      (ma.getMethod().getName() = "sanitize" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp", "PolicyFactory")) or
+      (ma.getMethod().getName() = "scan" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp", "AntiSamy")) or
+      (ma.getMethod().getName() = "clean" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.jsoup", "JSoup"))
+    )
+  }
+}
+
+class HtmlTaintConfig extends TaintTracking::Configuration {
+  HtmlTaintConfig() { this = "HtmlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HtmlInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof HtmlSink and
+    exists(DataFlow::Node html | html instanceof HtmlStringLiteral or html instanceof HtmlConcatenation |
+      TaintTracking::localTaint(html, sink)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from HtmlTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Detected user input flowing into a manually constructed HTML string. This could create a cross-site scripting vulnerability."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: tainted-html-string
+  languages:
+  - java
+  severity: ERROR
+  message: >-
+    Detected user input flowing into a manually constructed HTML string.
+    You may be accidentally bypassing secure methods of rendering HTML by
+    manually constructing HTML and this could create a cross-site scripting
+    vulnerability, which could let attackers steal sensitive user data. To be
+    sure this is safe, check that the HTML is rendered safely. You can use
+    the OWASP ESAPI encoder if you must render user data.
+  metadata:
+    cwe:
+    - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    owasp:
+    - A07:2017 - Cross-Site Scripting (XSS)
+    - A03:2021 - Injection
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+    category: security
+    technology:
+    - java
+    - spring
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  mode: taint
+  pattern-sources:
+  - label: INPUT
+    patterns:
+    - pattern-either:
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ(...) $TYPE $SOURCE,...) {
+            ...
+          }
+      - pattern-inside: |
+          $METHODNAME(..., @$REQ $TYPE $SOURCE,...) {
+            ...
+          }
+    - metavariable-regex:
+        metavariable: $TYPE
+        regex: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+    - metavariable-regex:
+        metavariable: $REQ
+        regex: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+    - focus-metavariable: $SOURCE
+  - label: CONCAT
+    by-side-effect: true
+    requires: INPUT
+    patterns:
+    - pattern-either:
+      - pattern: |
+          "$HTMLSTR" + ...
+      - pattern: |
+          "$HTMLSTR".concat(...)
+      - patterns:
+        - pattern-inside: |
+            StringBuilder $SB = new StringBuilder("$HTMLSTR");
+            ...
+        - pattern: $SB.append(...)
+      - patterns:
+        - pattern-inside: |
+            $VAR = "$HTMLSTR";
+            ...
+        - pattern: $VAR += ...
+      - pattern: String.format("$HTMLSTR", ...)
+      - patterns:
+        - pattern-inside: |
+            String $VAR = "$HTMLSTR";
+            ...
+        - pattern: String.format($VAR, ...)
+    - metavariable-regex:
+        metavariable: $HTMLSTR
+        regex: ^<\w+
+  pattern-propagators:
+  - pattern: (StringBuilder $SB).append($...TAINTED)
+    from: $...TAINTED
+    to: $SB
+  - pattern: $VAR += $...TAINTED
+    from: $...TAINTED
+    to: $VAR
+  pattern-sinks:
+  - requires: CONCAT
+    patterns:
+    - pattern-either:
+      - pattern: new ResponseEntity<>($PAYLOAD, ...)
+      - pattern: new ResponseEntity<$ERROR>($PAYLOAD, ...)
+      - pattern: ResponseEntity. ... .body($PAYLOAD)
+      - patterns:
+        - pattern: |
+            ResponseEntity.$RESPFUNC($PAYLOAD). ...
+        - metavariable-regex:
+            metavariable: $RESPFUNC
+            regex: ^(ok|of)$
+    - focus-metavariable: $PAYLOAD
+  pattern-sanitizers:
+  - pattern-either:
+    - pattern: Encode.forHtml(...)
+    - pattern: (PolicyFactory $POLICY).sanitize(...)
+    - pattern: (AntiSamy $AS).scan(...)
+    - pattern: JSoup.clean(...)
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            /**
+ * @name CRLF Injection in Logs
+ * @description When data from an untrusted source is put into a logger and not neutralized correctly,
+ *              an attacker could forge log entries or include malicious content.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/crlf-injection-logs
+ * @tags security
+ *       external/cwe/cwe-93
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class Logger extends RefType {
+  Logger() { 
+    this.hasQualifiedName("org.slf4j", "Logger") or
+    this.hasQualifiedName("org.apache.logging.log4j", "Logger")
+  }
+}
+
+predicate isLoggerMethod(Method m) {
+  m.getDeclaringType() instanceof Logger
+}
+
+class LoggerParameter extends DataFlow::Node {
+  LoggerParameter() {
+    exists(Expr ma |
+      ma.(Call).getCallee().getName().matches("getParameter%") and
+      ma.(Call).getCallee().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class LoggerSink extends DataFlow::Node {
+  LoggerSink() {
+    exists(Expr ma |
+      (isLoggerMethod(ma.(Call).getCallee()) or ma.(Call).getCallee().getName().matches("log")) and
+      this.asExpr() = ma.(Call).getArgument(0)
+    )
+  }
+}
+
+class LoggerConfig extends TaintTracking::Configuration {
+  LoggerConfig() { this = "LoggerConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LoggerParameter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof LoggerSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from LoggerConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential CRLF injection in logs from untrusted source"
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-28 02:18:42
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTypeName() cannot be resolved for type Annotation::Annotation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,27-38)
+ERROR: getLeftOp() cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,9-18)
+ERROR: getLiteral() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,25-35)
+ERROR: getAValue() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,29-38)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,12-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:87,3-16)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:88,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:101,31-59)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:122,27-45)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:122,54-72)
+ERROR: HtmlConcatenation.extends is incompatible with Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,10-11)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detects user input flowing into a manually constructed HTML string.
+ *              This could create a cross-site scripting vulnerability if the HTML
+ *              is not rendered safely.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-html-string
+ * @tags security
+ *       external/cwe/cwe-79
+ *       external/owasp/a07
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.Spring
+
+class HtmlInputSource extends DataFlow::Node {
+  HtmlInputSource() {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getTypeName() in [
+        "org.springframework.web.bind.annotation.RequestBody",
+        "org.springframework.web.bind.annotation.PathVariable",
+        "org.springframework.web.bind.annotation.RequestParam",
+        "org.springframework.web.bind.annotation.RequestHeader",
+        "org.springframework.web.bind.annotation.CookieValue",
+        "org.springframework.web.bind.annotation.ModelAttribute"
+      ] and
+      p = m.getAParameter() and
+      not p.getType().hasName(["Integer","Long","Float","Double","Char","Boolean","int","long","float","double","char","boolean"]) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class HtmlStringLiteral extends DataFlow::Node {
+  HtmlStringLiteral() {
+    exists(StringLiteral s |
+      s.toString().matches("^<\\w+") and
+      this.asExpr() = s
+    )
+  }
+}
+
+class HtmlConcatenation extends DataFlow::Node {
+  HtmlConcatenation() {
+    this = any(AddExpr e | 
+      e.getLeftOp().getLiteral().toString().matches("^<\\w+")
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "concat" and
+      ma.getQualifier().getLiteral().toString().matches("^<\\w+") and
+      this.asExpr() = ma
+    ) or
+    exists(MethodAccess ma, StringLiteral s |
+      ma.getMethod().getName() = "append" and
+      ma.getQualifier().getType().hasName("StringBuilder") and
+      s.getValue().matches("^<\\w+") and
+      s = ma.getQualifier().getAValue() and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class HtmlSink extends DataFlow::Node {
+  HtmlSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      ma.getMethod().getName() = "body" and
+      this.asExpr() = ma.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      ma.getMethod().getName().matches("ok|of") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "forHtml" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp.esapi", "Encoder")) or
+      (ma.getMethod().getName() = "sanitize" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp.html", "PolicyFactory")) or
+      (ma.getMethod().getName() = "scan" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.owasp.validator.html", "AntiSamy")) or
+      (ma.getMethod().getName() = "clean" and
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.jsoup", "JSoup"))
+    )
+  }
+}
+
+class HtmlTaintConfig extends TaintTracking::Configuration {
+  HtmlTaintConfig() { this = "HtmlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HtmlInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof HtmlSink and
+    exists(DataFlow::Node html | 
+      html instanceof HtmlStringLiteral or 
+      html instanceof HtmlConcatenation |
+      TaintTracking::localTaint(html, sink)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from HtmlTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Detected user input flowing into a manually constructed HTML string. This could create a cross-site scripting vulnerability."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'ma' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,34-36)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,1-2)
+ERROR: hasQualifiedName(string) cannot be resolved for type Annotation::AnnotationType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,37-53)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,33-42)
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,51-58)
+ERROR: could not resolve type StringFormatExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,21-37)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,44-57)
+ERROR: getLeftOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,35-49)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,21-33)
+WARNING: unused class 'HtmlInputSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,7-22)
+WARNING: unused class 'HtmlStringLiteral' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,7-24)
+WARNING: unused class 'HtmlConcatenation' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,7-24)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'ma' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,34-36)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,1-2)
+ERROR: hasQualifiedName(string) cannot be resolved for type Annotation::AnnotationType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,37-53)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,33-42)
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,51-58)
+ERROR: could not resolve type StringFormatExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,21-37)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,44-57)
+ERROR: getLeftOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,35-49)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,3-20)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,21-33)
+WARNING: unused class 'HtmlInputSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,7-22)
+WARNING: unused class 'HtmlStringLiteral' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,7-24)
+WARNING: unused class 'HtmlConcatenation' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,7-24)，请按照以下步骤进行修复：
+
+1. 修复参数注解检查：将`m.getAnAnnotation().getType().hasQualifiedName()`改为`m.getAnAnnotation().getTypeName() in [...]`来检查注解类型
+
+2. 修复字符串字面量检查：
+   - 使用`e instanceof StringLiteral`替代`e = any(StringLiteral s).getString()`
+   - 使用`e.toString().matches()`替代`e.getText().matches()`
+   - 移除不存在的`StringFormatExpr`类型检查
+
+3. 修复连接操作检查：
+   - 修复方法访问语法错误，使用`e.(MethodAccess)`进行类型转换
+   - 使用`e.getLeftOp()`替代不存在的`getLeftOperand()`
+   - 正确绑定`this`引用
+
+4. 修复方法调用检查：
+   - 替换已弃用的`MethodAccess`为`MethodAccess`的等价写法
+   - 确保所有语法块正确关闭
+
+5. 确保所有类都被使用：
+   - 确保`HtmlInputSource`、`HtmlStringLiteral`和`HtmlConcatenation`类在配置中被正确引用
+   - 确保查询模块有有效的select语句
+
+6. 添加必要的导入：
+   - 确保所有使用的类型都有正确的导入语句，如`import semmle.code.java.frameworks.spring.Spring`等
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-28 02:20:14
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'MethodAccess concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringRequest (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-56)
+ERROR: could not resolve module semmle.code.java.StringOps (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-34)
+ERROR: getText() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,10-17)
+ERROR: getText() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,44-51)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused class 'HtmlInputSource' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,7-22)
+WARNING: unused class 'HtmlStringLiteral' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,7-24)
+WARNING: unused class 'HtmlConcatenation' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,7-24)
+Rule Content:
+/**
+ * @name Tainted HTML String
+ * @description Detects user input flowing into a manually constructed HTML string.
+ *              This could create a cross-site scripting vulnerability if the HTML
+ *              is not rendered safely.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-html-string
+ * @tags security
+ *       external/cwe/cwe-79
+ *       external/owasp/a07
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringRequest
+import semmle.code.java.StringOps
+
+class HtmlInputSource extends DataFlow::Node {
+  HtmlInputSource() {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().getName() in [
+        "RequestBody", "PathVariable", "RequestParam", 
+        "RequestHeader", "CookieValue", "ModelAttribute"
+      ] and
+      p = m.getAParameter() and
+      not p.getType().hasName([
+        "Integer","Long","Float","Double","Char","Boolean",
+        "int","long","float","double","char","boolean"
+      ]) and
+      this.asParameter() = p
+    ) 
+  }
+}
+
+class HtmlStringLiteral extends DataFlow::Node {
+  HtmlStringLiteral() {
+    exists(StringLiteral sl |
+      sl.getText().regexpMatch("^<\\w+") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class HtmlConcatenation extends DataFlow::Node {
+  HtmlConcatenation() {
+    exists(AddExpr add |
+      add.getLeftOperand().(StringLiteral).getText().regexpMatch("^<\\w+") and
+      this.asExpr() = add
+    ) or
+    exists(MethodAccess concat |
+      concat.getMethod().hasName("concat") and
+      concat.getQualifier().(StringLiteral).getText().regexpMatch("^<\\w+") and
+      this.asExpr() = concat
+    ) or
+    exists(MethodAccess append, StringLiteral sl |
+      append.getMethod().hasName("append") and
+      append.getQualifier().getType().hasName("StringBuilder") and
+      sl.getText().regexpMatch("^<\\w+") and
+      sl = append.getQualifier().getAValue() and
+      this.asExpr() = append
+    )
+  }
+}
+
+class HtmlSink extends DataFlow::Node {
+  HtmlSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(Call bodyCall |
+      bodyCall.getCallee().hasName("body") and
+      bodyCall.getCallee().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = bodyCall.getArgument(0)  
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(Call sanitizeCall |
+      sanitizeCall.getCallee().hasName("forHtml") and
+      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.esapi", "Encoder")
+    ) or
+    exists(Call sanitizeCall |
+      sanitizeCall.getCallee().hasName("sanitize") and
+      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.html", "PolicyFactory") 
+    )
+  }
+}
+
+class HtmlTaintConfig extends TaintTracking::Configuration {
+  HtmlTaintConfig() { this = "HtmlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HtmlInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof HtmlSink and
+    exists(DataFlow::Node html |
+      html instanceof HtmlStringLiteral or 
+      html instanceof HtmlConcatenation |
+      TaintTracking::localTaint(html, sink)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from HtmlTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, source, sink,
+  "Detected user input flowing into a manually constructed HTML string. This could create a cross-site scripting vulnerability."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTypeName() cannot be resolved for type Annotation::Annotation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,27-38)
+ERROR: getLeftOp() cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,9-18)
+ERROR: getLiteral() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,25-35)
+ERROR: getAValue() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,29-38)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,12-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:87,3-16)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:88,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:101,31-59)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:122,27-45)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:122,54-72)
+ERROR: HtmlConcatenation.extends is incompatible with Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,10-11)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Tainted HTML String
+ * @description Detects user input flowing into a manually constructed HTML string.
+ *              This could create a cross-site scripting vulnerability if the HTML
+ *              is not rendered safely.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-html-string
+ * @tags security
+ *       external/cwe/cwe-79
+ *       external/owasp/a07
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringRequest
+import semmle.code.java.StringOps
+
+class HtmlInputSource extends DataFlow::Node {
+  HtmlInputSource() {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation().getType().getName() in [
+        "RequestBody", "PathVariable", "RequestParam", 
+        "RequestHeader", "CookieValue", "ModelAttribute"
+      ] and
+      p = m.getAParameter() and
+      not p.getType().hasName([
+        "Integer","Long","Float","Double","Char","Boolean",
+        "int","long","float","double","char","boolean"
+      ]) and
+      this.asParameter() = p
+    ) 
+  }
+}
+
+class HtmlStringLiteral extends DataFlow::Node {
+  HtmlStringLiteral() {
+    exists(StringLiteral sl |
+      sl.getText().regexpMatch("^<\\w+") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class HtmlConcatenation extends DataFlow::Node {
+  HtmlConcatenation() {
+    exists(AddExpr add |
+      add.getLeftOperand().(StringLiteral).getText().regexpMatch("^<\\w+") and
+      this.asExpr() = add
+    ) or
+    exists(MethodAccess concat |
+      concat.getMethod().hasName("concat") and
+      concat.getQualifier().(StringLiteral).getText().regexpMatch("^<\\w+") and
+      this.asExpr() = concat
+    ) or
+    exists(MethodAccess append, StringLiteral sl |
+      append.getMethod().hasName("append") and
+      append.getQualifier().getType().hasName("StringBuilder") and
+      sl.getText().regexpMatch("^<\\w+") and
+      sl = append.getQualifier().getAValue() and
+      this.asExpr() = append
+    )
+  }
+}
+
+class HtmlSink extends DataFlow::Node {
+  HtmlSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(Call bodyCall |
+      bodyCall.getCallee().hasName("body") and
+      bodyCall.getCallee().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
+      this.asExpr() = bodyCall.getArgument(0)  
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(Call sanitizeCall |
+      sanitizeCall.getCallee().hasName("forHtml") and
+      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.esapi", "Encoder")
+    ) or
+    exists(Call sanitizeCall |
+      sanitizeCall.getCallee().hasName("sanitize") and
+      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.html", "PolicyFactory") 
+    )
+  }
+}
+
+class HtmlTaintConfig extends TaintTracking::Configuration {
+  HtmlTaintConfig() { this = "HtmlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HtmlInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof HtmlSink and
+    exists(DataFlow::Node html |
+      html instanceof HtmlStringLiteral or 
+      html instanceof HtmlConcatenation |
+      TaintTracking::localTaint(html, sink)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from HtmlTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, source, sink,
+  "Detected user input flowing into a manually constructed HTML string. This could create a cross-site scripting vulnerability."
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

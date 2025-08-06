@@ -1,0 +1,2034 @@
+Timestamp: 2025-07-24 15:15:19
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.ConcatFormatOperation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-46)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,36-52)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,63-81)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+import semmle.code.java.security.QueryInjection
+import semmle.code.java.ConcatFormatOperation
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma | 
+      ma.getMethod().hasName("getParameter") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      source.asExpr() = ma.getAnArgument()
+    )
+    or
+    exists(Method m, Parameter p | 
+      m.getAnAnnotation().getType().hasName("RequestMapping") and
+      p = m.getAParameter() and
+      p.getType() instanceof TypeString and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName().matches("createQuery") or
+       ma.getMethod().getName().matches("query%") or
+       ma.getMethod().getName() = "addBatch" or
+       ma.getMethod().getName() = "nativeSQL" or
+       ma.getMethod().getName() = "create" or
+       ma.getMethod().getName() = "prepare") and
+      (ma.getQualifier().getType() instanceof TypeStatement or
+       ma.getQualifier().getType() instanceof TypePreparedStatement or
+       ma.getQualifier().getType() instanceof TypeConnection or
+       ma.getQualifier().getType().hasQualifiedName("javax.persistence", "EntityManager")) and
+      sink.asExpr() = ma.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "append" and
+       (ma.getQualifier().getType() instanceof TypeStringBuilder or
+        ma.getQualifier().getType() instanceof TypeStringBuffer)) and
+      node1.asExpr() = ma.getAnArgument() and
+      node2.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+from FormattedSqlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection. " +
+  "Use prepared statements (java.sql.PreparedStatement) instead."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: formatted-sql-string
+  metadata:
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SQL_INJECTION
+    asvs:
+      section: 'V5: Validation, Sanitization and Encoding Verification Requirements'
+      control_id: 5.3.5 Injection
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v53-output-encoding-and-injection-prevention-requirements
+      version: '4'
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    - https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html#create_ps
+    - https://software-security.sans.org/developer-how-to/fix-sql-injection-in-java-using-prepared-callable-statement
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  options:
+    taint_assume_safe_numbers: true
+    taint_assume_safe_booleans: true
+  message: >-
+    Detected a formatted string in a SQL statement. This could lead to SQL
+    injection if variables in the SQL statement are not properly sanitized.
+    Use a prepared statements (java.sql.PreparedStatement) instead. You
+    can obtain a PreparedStatement using 'connection.prepareStatement'.
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:
+        - pattern-inside: |
+            $ANNOT $FUNC (..., $INPUT, ...) {
+              ...
+            }
+        - pattern: (String $INPUT)
+    - focus-metavariable: $INPUT
+    label: INPUT
+  - patterns:
+    - pattern-either:
+      - pattern: $X + $INPUT
+      - pattern: $X += $INPUT
+      - pattern: $STRB.append($INPUT)
+      - pattern: String.format(..., $INPUT, ...)
+      - pattern: String.join(..., $INPUT, ...)
+      - pattern: (String $STR).concat($INPUT)
+      - pattern: $INPUT.concat(...)
+      - pattern: new $STRB(..., $INPUT, ...)
+    label: CONCAT
+    requires: INPUT
+  pattern-propagators:
+    - pattern: (StringBuffer $S).append($X)
+      from: $X
+      to: $S
+    - pattern: (StringBuilder $S).append($X)
+      from: $X
+      to: $S
+  pattern-sinks:
+  - patterns:
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE *$/" ...>)
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE %s$/" ...>)
+    - pattern-either:
+      - pattern: (Statement $S).$SQLFUNC(...)
+      - pattern: (PreparedStatement $P).$SQLFUNC(...)
+      - pattern: (Connection $C).createStatement(...).$SQLFUNC(...)
+      - pattern: (Connection $C).prepareStatement(...).$SQLFUNC(...)
+      - pattern: (EntityManager $EM).$SQLFUNC(...)
+    - metavariable-regex:
+        metavariable: $SQLFUNC
+        regex: execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare
+    requires: CONCAT
+  pattern-sanitizers:
+  - patterns:
+    - pattern: (CriteriaBuilder $CB).$ANY(...)
+  severity: ERROR
+  languages:
+  - java
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:16:44
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,28-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,26-37)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,26-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,27-38)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,27-38)
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,27-38)
+ERROR: getReceiver() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,27-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,13-25)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,13-25)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,63-81)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+import semmle.code.java.security.QueryInjection
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr ma | 
+      ma.(MethodAccess).getCallee().getName() = "getParameter" and
+      ma.(MethodAccess).getCallee().getDeclaringType().getQualifiedName() = "javax.servlet.http.HttpServletRequest" and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(Method m, Parameter p | 
+      m.getAnAnnotation().getType().getName() = "RequestMapping" and
+      p = m.getAParameter() and
+      p.getType() instanceof TypeString and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Expr ma |
+      (ma.(MethodAccess).getCallee().getName().matches("execute%") or
+       ma.(MethodAccess).getCallee().getName().matches("createQuery") or
+       ma.(MethodAccess).getCallee().getName().matches("query%") or
+       ma.(MethodAccess).getCallee().getName() = "addBatch" or
+       ma.(MethodAccess).getCallee().getName() = "nativeSQL" or
+       ma.(MethodAccess).getCallee().getName() = "create" or
+       ma.(MethodAccess).getCallee().getName() = "prepare") and
+      (ma.(MethodAccess).getReceiver().getType().getName() = "Statement" or
+       ma.(MethodAccess).getReceiver().getType().getName() = "PreparedStatement" or
+       ma.(MethodAccess).getReceiver().getType().getName() = "Connection" or
+       ma.(MethodAccess).getReceiver().getType().getQualifiedName() = "javax.persistence.EntityManager") and
+      sink.asExpr() = ma.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Expr ma |
+      ma.(MethodAccess).getCallee().getDeclaringType().getQualifiedName() = "javax.persistence.criteria.CriteriaBuilder" and
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Expr ma |
+      (ma.(MethodAccess).getCallee().getName() = "append" and
+       (ma.(MethodAccess).getReceiver().getType().getName() = "StringBuilder" or
+        ma.(MethodAccess).getReceiver().getType().getName() = "StringBuffer")) and
+      node1.asExpr() = ma.getArgument(0) and
+      node2.asExpr() = ma.getReceiver()
+    )
+  }
+}
+
+from FormattedSqlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection. " +
+  "Use prepared statements (java.sql.PreparedStatement) instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.ConcatFormatOperation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-46)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,36-52)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,63-81)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.ConcatFormatOperation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-46)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,36-52)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,63-81)，请按照以下步骤进行修复：
+
+1. 移除不存在的模块导入：删除第21行的`import semmle.code.java.ConcatFormatOperation`，CodeQL中没有这个标准库
+
+2. 修正类型检查语法：
+   - 将`hasQualifiedName(string, string)`改为`hasQualifiedName([string, string])`形式
+   - 或者使用新的类型检查API：`getQualifiedName() = "javax.servlet.http.HttpServletRequest"`
+
+3. 更新已弃用的类型引用：
+   - 将所有`MethodAccess`替换为`Expr`
+   - 将`Configuration`替换为`TaintTracking::Configuration`
+   - 将`PathNode`替换为`DataFlow::PathNode`
+
+4. 更新方法调用方式：
+   - 使用`getMethod()`获取方法时，改用`getCallee()`
+   - 使用`getQualifier()`获取接收者时，改用`getReceiver()`
+
+5. 更新表达式匹配逻辑：
+   - 将`source.asExpr() = ma.getAnArgument()`改为`source.asExpr() = ma.getArgument(0)`
+   - 类似的参数访问都需要使用索引方式
+
+6. 更新类型判断逻辑：
+   - `instanceof TypeStatement`改为`getType().getName() = "Statement"`
+   - 类似的类型判断都改用getName方式
+
+7. 保持数据流跟踪的一致性：
+   - 确保所有taint tracking步骤使用新的API
+   - 检查isSource/isSink/isSanitizer的返回类型一致性
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 15:18:11
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,36-52)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,63-81)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+import semmle.code.java.security.QueryInjection
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma | 
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(Method m, Parameter p | 
+      m.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestMapping") and
+      p = m.getAParameter() and
+      p.getType() instanceof TypeString and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName() = "createQuery" or
+       ma.getMethod().getName().matches("query%") or
+       ma.getMethod().getName() = "addBatch" or
+       ma.getMethod().getName() = "nativeSQL" or
+       ma.getMethod().getName() = "create" or
+       ma.getMethod().getName() = "prepare") and
+      (ma.getQualifier().getType().hasName("Statement") or
+       ma.getQualifier().getType().hasName("PreparedStatement") or
+       ma.getQualifier().getType().hasName("Connection") or
+       ma.getQualifier().getType().hasQualifiedName("javax.persistence", "EntityManager")) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "append" and
+      (ma.getQualifier().getType().hasName("StringBuilder") or
+       ma.getQualifier().getType().hasName("StringBuffer")) and
+      node1.asExpr() = ma.getArgument(0) and
+      node2.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+from FormattedSqlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection. " +
+  "Use prepared statements (java.sql.PreparedStatement) instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,28-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,26-37)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,26-37)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,26-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,27-38)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,27-38)
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,27-38)
+ERROR: getReceiver() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,27-38)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,11-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,13-25)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,13-25)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,63-81)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+import semmle.code.java.security.QueryInjection
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma | 
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(Method m, Parameter p | 
+      m.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestMapping") and
+      p = m.getAParameter() and
+      p.getType() instanceof TypeString and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName() = "createQuery" or
+       ma.getMethod().getName().matches("query%") or
+       ma.getMethod().getName() = "addBatch" or
+       ma.getMethod().getName() = "nativeSQL" or
+       ma.getMethod().getName() = "create" or
+       ma.getMethod().getName() = "prepare") and
+      (ma.getQualifier().getType().hasName("Statement") or
+       ma.getQualifier().getType().hasName("PreparedStatement") or
+       ma.getQualifier().getType().hasName("Connection") or
+       ma.getQualifier().getType().hasQualifiedName("javax.persistence", "EntityManager")) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "append" and
+      (ma.getQualifier().getType().hasName("StringBuilder") or
+       ma.getQualifier().getType().hasName("StringBuffer")) and
+      node1.asExpr() = ma.getArgument(0) and
+      node2.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+from FormattedSqlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection. " +
+  "Use prepared statements (java.sql.PreparedStatement) instead."
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:09:58
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-23)
+ERROR: could not resolve type HttpServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,24-51)
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-23)
+ERROR: could not resolve type StringParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,24-39)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-62)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,33-51)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+
+class SQLInjectionConfig extends TaintTracking::Configuration {
+  SQLInjectionConfig() { this = "SQLInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodInput input |
+      input instanceof HttpServletRequestParameter or
+      input.isParameterOfAnnotatedMethod(["javax.servlet.http.HttpServletRequest"]) |
+      source.asParameter() = input
+    )
+    or
+    exists(MethodInput input |
+      input instanceof StringParameter |
+      source.asParameter() = input
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName().matches("createQuery") or
+       ma.getMethod().getName().matches("query") or
+       ma.getMethod().getName().matches("addBatch") or
+       ma.getMethod().getName().matches("nativeSQL") or
+       ma.getMethod().getName().matches("create") or
+       ma.getMethod().getName().matches("prepare")) and
+      (ma.getQualifier().getType() instanceof Statement or
+       ma.getQualifier().getType() instanceof PreparedStatement or
+       ma.getQualifier().getType() instanceof Connection or
+       ma.getQualifier().getType() instanceof EntityManager) and
+      not ma.getArgument(0).toString().matches(".*TABLE.*") and
+      not ma.getArgument(0).toString().matches(".*TABLE %s.*") |
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getQualifier().getType() instanceof CriteriaBuilder |
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "append" and
+       (ma.getQualifier().getType() instanceof StringBuffer or
+        ma.getQualifier().getType() instanceof StringBuilder)) |
+      node1.asExpr() = ma.getArgument(0) and
+      node2.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SQLInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential SQL injection from formatted string. Use prepared statements instead."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: formatted-sql-string
+  metadata:
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SQL_INJECTION
+    asvs:
+      section: 'V5: Validation, Sanitization and Encoding Verification Requirements'
+      control_id: 5.3.5 Injection
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v53-output-encoding-and-injection-prevention-requirements
+      version: '4'
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    - https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html#create_ps
+    - https://software-security.sans.org/developer-how-to/fix-sql-injection-in-java-using-prepared-callable-statement
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  options:
+    taint_assume_safe_numbers: true
+    taint_assume_safe_booleans: true
+  message: >-
+    Detected a formatted string in a SQL statement. This could lead to SQL
+    injection if variables in the SQL statement are not properly sanitized.
+    Use a prepared statements (java.sql.PreparedStatement) instead. You
+    can obtain a PreparedStatement using 'connection.prepareStatement'.
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:
+        - pattern-inside: |
+            $ANNOT $FUNC (..., $INPUT, ...) {
+              ...
+            }
+        - pattern: (String $INPUT)
+    - focus-metavariable: $INPUT
+    label: INPUT
+  - patterns:
+    - pattern-either:
+      - pattern: $X + $INPUT
+      - pattern: $X += $INPUT
+      - pattern: $STRB.append($INPUT)
+      - pattern: String.format(..., $INPUT, ...)
+      - pattern: String.join(..., $INPUT, ...)
+      - pattern: (String $STR).concat($INPUT)
+      - pattern: $INPUT.concat(...)
+      - pattern: new $STRB(..., $INPUT, ...)
+    label: CONCAT
+    requires: INPUT
+  pattern-propagators:
+    - pattern: (StringBuffer $S).append($X)
+      from: $X
+      to: $S
+    - pattern: (StringBuilder $S).append($X)
+      from: $X
+      to: $S
+  pattern-sinks:
+  - patterns:
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE *$/" ...>)
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE %s$/" ...>)
+    - pattern-either:
+      - pattern: (Statement $S).$SQLFUNC(...)
+      - pattern: (PreparedStatement $P).$SQLFUNC(...)
+      - pattern: (Connection $C).createStatement(...).$SQLFUNC(...)
+      - pattern: (Connection $C).prepareStatement(...).$SQLFUNC(...)
+      - pattern: (EntityManager $EM).$SQLFUNC(...)
+    - metavariable-regex:
+        metavariable: $SQLFUNC
+        regex: execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare
+    requires: CONCAT
+  pattern-sanitizers:
+  - patterns:
+    - pattern: (CriteriaBuilder $CB).$ANY(...)
+  severity: ERROR
+  languages:
+  - java
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:11:37
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-34)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,30-38)
+ERROR: getArgument(int) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,34-62)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,7-39)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.frameworks.spring.Spring
+import semmle.code.java.StringOps
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class SQLInjectionConfig extends TaintTracking::Configuration {
+  SQLInjectionConfig() { this = "SQLInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof RemoteFlowSource
+    or
+    exists(Parameter p |
+      p.getType().hasName("String") and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Expr arg |
+      (m.getName().matches("execute%") or
+       m.getName().matches("createQuery") or
+       m.getName().matches("query") or
+       m.getName().matches("addBatch") or
+       m.getName().matches("nativeSQL") or
+       m.getName().matches("create") or
+       m.getName().matches("prepare")) and
+      (m.getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       m.getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       m.getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       m.getDeclaringType().hasQualifiedName("javax.persistence", "EntityManager")) and
+      not arg.toString().matches(".*TABLE.*") and
+      not arg.toString().matches(".*TABLE %s.*") and
+      sink.asExpr() = arg
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      sanitizer.asExpr() = m.getACall()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m, Expr qual |
+      (m.getName() = "append" and
+       (m.getDeclaringType().hasQualifiedName("java.lang", "StringBuffer") or
+        m.getDeclaringType().hasQualifiedName("java.lang", "StringBuilder"))) and
+      node1.asExpr() = m.getArgument(0) and
+      node2.asExpr() = qual
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, SQLInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection from formatted string. Use prepared statements instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-23)
+ERROR: could not resolve type HttpServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,24-51)
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-23)
+ERROR: could not resolve type StringParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,24-39)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-62)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,33-51)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-23)
+ERROR: could not resolve type HttpServletRequestParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,24-51)
+ERROR: could not resolve type MethodInput (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-23)
+ERROR: could not resolve type StringParameter (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,24-39)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-62)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,33-51)，请按照以下步骤进行修复：
+
+1. 替换错误的导入语句：
+- 添加 `import semmle.code.java.frameworks.spring.Spring` 用于 HttpServletRequest 相关的检测
+- 添加 `import semmle.code.java.StringOps` 用于字符串处理
+
+2. 修复 Java 类引用：
+- 将 `MethodInput` 改为 `Parameter`
+- 将 `HttpServletRequestParameter` 改为 `RemoteFlowSource`
+- 将 `StringParameter` 改为 `Parameter` 配合类型检查
+- 确保所有 JDBC 相关类使用完整限定名：java.sql.Statement, java.sql.PreparedStatement 等
+
+3. 更新过时的 API 调用：
+- 将 `TaintTracking::Configuration` 改为 `TaintTracking::Configuration`
+- 将所有的 `MethodAccess` 替换为 `Method`
+- 将 `PathNode` 替换为 `DataFlow::Node`
+
+4. 重构 source 检测逻辑：
+- 使用 `RemoteFlowSource` 检测外部输入
+- 使用 `Parameter` 和 `getType()` 检测字符串参数
+
+5. 重构 sink 检测逻辑：
+- 使用 `Method` 替代 `MethodAccess`
+- 添加对完整类名的检查，确保能正确解析 JDBC 类
+
+6. 更新数据类型检测：
+- 使用 `hasQualifiedName()` 方法检查 StringBuffer/StringBuilder
+- 使用 `getType()` 方法配合完整类名检查其他类型
+
+7. 更新查询主体：
+- 使用 `DataFlow::Node` 替换 `PathNode`
+- 确保所有类型检查都有正确的导入支持
+
+8. 添加必要的辅助谓词：
+- 添加用于检测字符串操作的辅助谓词
+- 添加用于验证 SQL 方法的辅助谓词
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 17:12:53
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.external.TaintTrackingUtil (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,8-60)
+ERROR: could not resolve predicate remoteUserInput/1 (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,5-35)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-21)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-21)
+ERROR: getMethod() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,12-21)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,34-62)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,7-39)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.Spring
+import semmle.code.java.dataflow.external.TaintTrackingUtil
+
+class SQLInjectionConfig extends TaintTracking::Configuration {
+  SQLInjectionConfig() { this = "SQLInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    TaintTracking::remoteUserInput(source)
+    or
+    exists(Parameter p |
+      p.getType().hasName("String") and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call call, Expr arg |
+      (m.getName().matches("execute%") or
+       m.getName().matches("createQuery") or
+       m.getName().matches("query") or
+       m.getName().matches("addBatch") or
+       m.getName().matches("nativeSQL") or
+       m.getName().matches("create") or
+       m.getName().matches("prepare")) and
+      (m.getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       m.getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       m.getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       m.getDeclaringType().hasQualifiedName("javax.persistence", "EntityManager")) and
+      call.getMethod() = m and
+      call.getAnArgument() = arg and
+      not arg.toString().matches(".*TABLE.*") and
+      not arg.toString().matches(".*TABLE %s.*") and
+      sink.asExpr() = arg
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Method m, Call call |
+      m.getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      call.getMethod() = m and
+      sanitizer.asExpr() = call
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m, Call call |
+      m.getName() = "append" and
+      (m.getDeclaringType().hasQualifiedName("java.lang", "StringBuffer") or
+       m.getDeclaringType().hasQualifiedName("java.lang", "StringBuilder")) and
+      call.getMethod() = m and
+      node1.asExpr() = call.getArgument(0) and
+      node2.asExpr() = call.getQualifier()
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, SQLInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection from formatted string. Use prepared statements instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-34)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,30-38)
+ERROR: getArgument(int) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,34-62)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,7-39)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-34)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,23-39)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,30-38)
+ERROR: getArgument(int) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,34-62)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,7-39)，请按照以下步骤进行修复：
+
+1. 修正导入语句：
+- 移除不存在的 `semmle.code.java.StringOps` 导入
+- 添加 `import semmle.code.java.dataflow.external.TaintTrackingUtil` 替代 `RemoteFlowSource`
+
+2. 重构 source 检测：
+- 使用 `TaintTracking::remoteUserInput()` 替代 `RemoteFlowSource`
+- 保持字符串参数的原始检测方式
+
+3. 重构 sanitizer 检测：
+- 将 `m.getACall()` 替换为 `m.getAReference()`
+
+4. 重构 additional taint step：
+- 使用 `DataFlow::methodCall` 替代直接操作 Method
+- 通过调用表达式获取参数和限定符
+
+5. 更新 TaintTracking 配置：
+- 保持使用 `TaintTracking::Configuration` （虽然已弃用）
+- 或迁移到新的 `TaintTracking::TaintTrackingConfig`
+
+6. 修正类型兼容性：
+- 确保所有 `DataFlow::Node` 使用兼容的类型
+- 必要时添加显式类型转换
+
+7. 重构 sink 检测：
+- 使用 `DataFlow::exprNode` 包装表达式
+- 确保方法调用检测正确关联到参数
+
+8. 更新查询输出：
+- 调整 select 语句中的节点类型
+- 确保查询结果格式兼容
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 19:31:09
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type StringType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,30-40)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,67-85)
+Rule Content:
+/**
+ * @name Formatted SQL string
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @id java/sql-injection-formatted-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SqlInjectionConfiguration extends TaintTracking::Configuration {
+  SqlInjectionConfiguration() { this = "SqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma, Method m |
+      ma.getMethod() = m and
+      (m.hasName("getParameter") or m.getName().matches("%Request%")) and
+      source.asExpr() = ma.getAnArgument()
+    )
+    or
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType() instanceof StringType
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName().matches("createQuery") or
+       ma.getMethod().getName().matches("prepareStatement") or
+       ma.getMethod().getName().matches("nativeSQL") or
+       ma.getMethod().getName().matches("addBatch")) and
+      (ma.getQualifier().getType() instanceof Statement or
+       ma.getQualifier().getType() instanceof PreparedStatement or
+       ma.getQualifier().getType() instanceof Connection or
+       ma.getQualifier().getType() instanceof EntityManager) and
+      sink.asExpr() = ma.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getQualifier().getType() instanceof CriteriaBuilder and
+      sanitizer.asExpr() = ma.getAnArgument()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "append" and
+       (ma.getQualifier().getType() instanceof StringBuffer or
+        ma.getQualifier().getType() instanceof StringBuilder)) and
+      node1.asExpr() = ma.getAnArgument() and
+      node2.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+from SqlInjectionConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potentially unsafe SQL query construction from formatted string. " +
+  "Use prepared statements to prevent SQL injection.", 
+  source, 
+  "User input flows into SQL query here"
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: formatted-sql-string
+  metadata:
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SQL_INJECTION
+    asvs:
+      section: 'V5: Validation, Sanitization and Encoding Verification Requirements'
+      control_id: 5.3.5 Injection
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v53-output-encoding-and-injection-prevention-requirements
+      version: '4'
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    - https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html#create_ps
+    - https://software-security.sans.org/developer-how-to/fix-sql-injection-in-java-using-prepared-callable-statement
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  options:
+    taint_assume_safe_numbers: true
+    taint_assume_safe_booleans: true
+  message: >-
+    Detected a formatted string in a SQL statement. This could lead to SQL
+    injection if variables in the SQL statement are not properly sanitized.
+    Use a prepared statements (java.sql.PreparedStatement) instead. You
+    can obtain a PreparedStatement using 'connection.prepareStatement'.
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:
+        - pattern-inside: |
+            $ANNOT $FUNC (..., $INPUT, ...) {
+              ...
+            }
+        - pattern: (String $INPUT)
+    - focus-metavariable: $INPUT
+    label: INPUT
+  - patterns:
+    - pattern-either:
+      - pattern: $X + $INPUT
+      - pattern: $X += $INPUT
+      - pattern: $STRB.append($INPUT)
+      - pattern: String.format(..., $INPUT, ...)
+      - pattern: String.join(..., $INPUT, ...)
+      - pattern: (String $STR).concat($INPUT)
+      - pattern: $INPUT.concat(...)
+      - pattern: new $STRB(..., $INPUT, ...)
+    label: CONCAT
+    requires: INPUT
+  pattern-propagators:
+    - pattern: (StringBuffer $S).append($X)
+      from: $X
+      to: $S
+    - pattern: (StringBuilder $S).append($X)
+      from: $X
+      to: $S
+  pattern-sinks:
+  - patterns:
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE *$/" ...>)
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE %s$/" ...>)
+    - pattern-either:
+      - pattern: (Statement $S).$SQLFUNC(...)
+      - pattern: (PreparedStatement $P).$SQLFUNC(...)
+      - pattern: (Connection $C).createStatement(...).$SQLFUNC(...)
+      - pattern: (Connection $C).prepareStatement(...).$SQLFUNC(...)
+      - pattern: (EntityManager $EM).$SQLFUNC(...)
+    - metavariable-regex:
+        metavariable: $SQLFUNC
+        regex: execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare
+    requires: CONCAT
+  pattern-sanitizers:
+  - patterns:
+    - pattern: (CriteriaBuilder $CB).$ANY(...)
+  severity: ERROR
+  languages:
+  - java
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 19:32:36
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java.sql.Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-26)
+ERROR: could not resolve module java.sql.PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,8-34)
+ERROR: could not resolve module java.sql.Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,8-27)
+ERROR: could not resolve module javax.persistence.EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,8-39)
+ERROR: could not resolve module javax.persistence.criteria.CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,8-50)
+ERROR: could not resolve module java.lang.StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,8-30)
+ERROR: could not resolve module java.lang.StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-31)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,9-17)
+ERROR: could not resolve type TypeStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,40-53)
+ERROR: could not resolve type TypePreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,40-61)
+ERROR: could not resolve type TypeConnection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,40-54)
+ERROR: could not resolve type TypeEntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,40-57)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,9-17)
+ERROR: could not resolve type TypeCriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,39-58)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,9-17)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,9-17)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,9-17)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,41-69)
+Rule Content:
+/**
+ * @name Formatted SQL string
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ * injection if variables in the SQL statement are not properly sanitized.
+ * Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @id java/sql-injection-formatted-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import java.sql.Statement
+import java.sql.PreparedStatement
+import java.sql.Connection
+import javax.persistence.EntityManager
+import javax.persistence.criteria.CriteriaBuilder
+import java.lang.StringBuffer
+import java.lang.StringBuilder
+
+class SqlInjectionConfiguration extends TaintTracking::Configuration {
+  SqlInjectionConfiguration() { this = "SqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Expr arg |
+      (m.hasName("getParameter") or m.getName().matches("%Request%")) and
+      m.getACall().getAnArgument() = arg and
+      source.asExpr() = arg
+    )
+    or
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType().hasName("String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Expr arg |
+      (m.getName().matches("execute%") or
+       m.getName().matches("createQuery") or
+       m.getName().matches("prepareStatement") or
+       m.getName().matches("nativeSQL") or
+       m.getName().matches("addBatch")) and
+      (m.getDeclaringType() instanceof TypeStatement or
+       m.getDeclaringType() instanceof TypePreparedStatement or
+       m.getDeclaringType() instanceof TypeConnection or
+       m.getDeclaringType() instanceof TypeEntityManager) and
+      m.getACall().getAnArgument() = arg and
+      sink.asExpr() = arg
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Method m, Expr arg |
+      m.getDeclaringType() instanceof TypeCriteriaBuilder and
+      m.getACall().getAnArgument() = arg and
+      sanitizer.asExpr() = arg
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m, Expr arg, Expr qualifier |
+      m.getName() = "append" and
+      (m.getDeclaringType() instanceof TypeStringBuffer or
+       m.getDeclaringType() instanceof TypeStringBuilder) and
+      m.getACall().getAnArgument() = arg and
+      m.getACall().getQualifier() = qualifier and
+      node1.asExpr() = arg and
+      node2.asExpr() = qualifier
+    )
+  }
+}
+
+from SqlInjectionConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, 
+  "Potentially unsafe SQL query construction from formatted string. " +
+  "Use prepared statements to prevent SQL injection.", 
+  source, 
+  "User input flows into SQL query here"
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type StringType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,30-40)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,67-85)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type StringType (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,30-40)
+ERROR: could not resolve type Statement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,47-56)
+ERROR: could not resolve type PreparedStatement (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,47-64)
+ERROR: could not resolve type Connection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,47-57)
+ERROR: could not resolve type EntityManager (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,47-60)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,46-61)
+ERROR: could not resolve type StringBuffer (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,48-60)
+ERROR: could not resolve type StringBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,48-61)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,67-85)，请按照以下步骤进行修复：
+
+1. 添加必要的Java标准库import语句：
+   - 添加 `import java.sql.Statement`
+   - 添加 `import java.sql.PreparedStatement`
+   - 添加 `import java.sql.Connection`
+   - 添加 `import javax.persistence.EntityManager`
+   - 添加 `import javax.persistence.criteria.CriteriaBuilder`
+   - 添加 `import java.lang.StringBuffer`
+   - 添加 `import java.lang.StringBuilder`
+
+2. 替换StringType检查方式：
+   - 将 `p.getType() instanceof StringType` 改为 `p.getType().hasName("String")`
+
+3. 更新已弃用的类型引用：
+   - 将 `TaintTracking::Configuration` 改为 `TaintTracking::Configuration`
+   - 将 `MethodAccess` 的使用改为新版的 `Method`
+   - 将 `PathNode` 改为 `DataFlow::Node`
+
+4. 更新方法调用的处理方式：
+   - 替换所有 `MethodAccess` 的相关操作为新版API调用
+
+5. 重构数据流处理逻辑：
+   - 确保所有源、汇聚点和净化点都使用新的数据流API
+   - 更新路径查询部分以适应新的API接口
+
+6. 保留原有的安全逻辑不变：
+   - 保持原有规则的安全检测逻辑
+   - 确保迁移后的规则能检测相同类型的漏洞
+
+7. 测试验证：
+   - 确保修改后的规则能正确编译
+   - 验证规则能检测到原有的漏洞模式
+   - 检查是否有误报或漏报情况
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:37:02
+Attempt: 1
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-54)
+ERROR: could not resolve module semmle.code.java.StringConcatenation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module semmle.code.java.security.SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-48)
+ERROR: could not resolve module QueryInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-48)
+ERROR: could not resolve module SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-22)
+ERROR: could not resolve module StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,16-34)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,32-46)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,32-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+ERROR: Expected a predicate without result but found 'getAnAccess', which is a predicate with result type 'Expr::VarAccess'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,8-62)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ *              injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.security.QueryInjection
+import semmle.code.java.frameworks.StatementExecution
+import semmle.code.java.StringConcatenation
+import semmle.code.java.security.SourceTracking
+
+class FormattedSqlString extends QueryInjection::Range {
+  FormattedSqlString() {
+    exists(MethodAccess ma, Callable c |
+      // Sources: HTTP request parameters or method inputs
+      (SourceTracking::remoteUserInput(_, _, _, _, _) or
+       any(Parameter p | c.getAParameter() = p).getAnAccess())
+       and
+      // Propagators: string concatenation operations
+      (
+        ma.getMethod().getName().matches("%add%") or
+        ma.getMethod().getName().matches("%append%") or
+        ma.getMethod().getName() = "concat" or
+        ma.getMethod().getName() = "format" or
+        ma.getMethod().getName() = "join"
+      )
+      and
+      // Sinks: SQL execution methods
+      (
+        exists(StatementExecution::ExecutableSqlOperation eso |
+          eso.getMethod().getName().matches("execute%") or
+          eso.getMethod().getName().matches("prepare%") or
+          eso.getMethod().getName().matches("query%") or
+          eso.getMethod().getName().matches("nativeSQL") or
+          eso.getMethod().getName().matches("addBatch") or
+          eso.getMethod().getName().matches("create%")
+        )
+      )
+      and
+      // Exclude some false positives
+      not exists(Literal l | l.getStringValue().matches("%TABLE *%"))
+      and
+      not exists(Literal l | l.getStringValue().matches("%TABLE %s%"))
+    )
+  }
+}
+
+from FormattedSqlString fs
+select fs, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+           "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+           "(java.sql.PreparedStatement) instead."
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: formatted-sql-string
+  metadata:
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#SQL_INJECTION
+    asvs:
+      section: 'V5: Validation, Sanitization and Encoding Verification Requirements'
+      control_id: 5.3.5 Injection
+      control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v53-output-encoding-and-injection-prevention-requirements
+      version: '4'
+    references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    - https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html#create_ps
+    - https://software-security.sans.org/developer-how-to/fix-sql-injection-in-java-using-prepared-callable-statement
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  options:
+    taint_assume_safe_numbers: true
+    taint_assume_safe_booleans: true
+  message: >-
+    Detected a formatted string in a SQL statement. This could lead to SQL
+    injection if variables in the SQL statement are not properly sanitized.
+    Use a prepared statements (java.sql.PreparedStatement) instead. You
+    can obtain a PreparedStatement using 'connection.prepareStatement'.
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:
+        - pattern-inside: |
+            $ANNOT $FUNC (..., $INPUT, ...) {
+              ...
+            }
+        - pattern: (String $INPUT)
+    - focus-metavariable: $INPUT
+    label: INPUT
+  - patterns:
+    - pattern-either:
+      - pattern: $X + $INPUT
+      - pattern: $X += $INPUT
+      - pattern: $STRB.append($INPUT)
+      - pattern: String.format(..., $INPUT, ...)
+      - pattern: String.join(..., $INPUT, ...)
+      - pattern: (String $STR).concat($INPUT)
+      - pattern: $INPUT.concat(...)
+      - pattern: new $STRB(..., $INPUT, ...)
+    label: CONCAT
+    requires: INPUT
+  pattern-propagators:
+    - pattern: (StringBuffer $S).append($X)
+      from: $X
+      to: $S
+    - pattern: (StringBuilder $S).append($X)
+      from: $X
+      to: $S
+  pattern-sinks:
+  - patterns:
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE *$/" ...>)
+    - pattern-not: $S.$SQLFUNC(<... "=~/.*TABLE %s$/" ...>)
+    - pattern-either:
+      - pattern: (Statement $S).$SQLFUNC(...)
+      - pattern: (PreparedStatement $P).$SQLFUNC(...)
+      - pattern: (Connection $C).createStatement(...).$SQLFUNC(...)
+      - pattern: (Connection $C).prepareStatement(...).$SQLFUNC(...)
+      - pattern: (EntityManager $EM).$SQLFUNC(...)
+    - metavariable-regex:
+        metavariable: $SQLFUNC
+        regex: execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare
+    requires: CONCAT
+  pattern-sanitizers:
+  - patterns:
+    - pattern: (CriteriaBuilder $CB).$ANY(...)
+  severity: ERROR
+  languages:
+  - java
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:38:08
+Attempt: 2
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::StringConcat (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-30)
+ERROR: getAReferenceArgument() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,9-30)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-27)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-21)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,63-81)
+WARNING: unused variable 'source' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,46-52)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,44-48)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ *              injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+import DataFlow::StringConcat
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAReferenceArgument() = p.getAnAccess() and
+      (p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+       p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("jakarta.servlet.http", "HttpServletRequest"))
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName().matches("execute%") or
+      ma.getMethod().getName().matches("prepare%") or
+      ma.getMethod().getName().matches("query%") or
+      ma.getMethod().getName().matches("nativeSQL") or
+      ma.getMethod().getName().matches("addBatch") or
+      ma.getMethod().getName().matches("create%")
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(CriteriaBuilder cb | cb.getAMethodCall() = node.asExpr())
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("%add%") or
+       ma.getMethod().getName().matches("%append%") or
+       ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getMethod().getName() = "join") and
+      ma.getReceiver() = node1.asExpr() and
+      node2.asExpr() = ma
+    )
+  }
+}
+
+from FormattedSqlStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+       "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+       "(java.sql.PreparedStatement) instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-54)
+ERROR: could not resolve module semmle.code.java.StringConcatenation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module semmle.code.java.security.SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-48)
+ERROR: could not resolve module QueryInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-48)
+ERROR: could not resolve module SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-22)
+ERROR: could not resolve module StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,16-34)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,32-46)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,32-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+ERROR: Expected a predicate without result but found 'getAnAccess', which is a predicate with result type 'Expr::VarAccess'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,8-62)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+为解决以下错误：Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-54)
+ERROR: could not resolve module semmle.code.java.StringConcatenation (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module semmle.code.java.security.SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-48)
+ERROR: could not resolve module QueryInjection (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,34-48)
+ERROR: could not resolve module SourceTracking (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,8-22)
+ERROR: could not resolve module StatementExecution (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,16-34)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,32-46)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,32-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+ERROR: Expected a predicate without result but found 'getAnAccess', which is a predicate with result type 'Expr::VarAccess'. (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,8-62)，请按照以下步骤进行修复：
+1. 更新导入语句：
+   将semmle.code.java.frameworks.StatementExecution替换为dataflow模块
+   将semmle.code.java.StringConcatenation替换为DataFlow::StringConcat
+   删除semmle.code.java.security.SourceTracking和QueryInjection的导入
+
+2. 重构类定义：
+   删除对QueryInjection::Range的继承
+   改为定义一个新的类继承自TaintTracking::Configuration
+  
+3. 使用新的API替换MethodAccess：
+   将MethodAccess替换为Method或DataFlow::Node来表示方法调用
+
+4. 修改字符串操作检测：
+   使用DataFlow::StringConcat来检测字符串拼接操作
+
+5. 修复Literal检查：
+   将l.getStringValue()替换为l.getValue().toString()
+
+6. 重构参数访问检查：
+   使用DataFlow::ParameterNode来代替getAnAccess()检查
+
+7. SQL执行方法检测：
+   创建新的谓词来识别SQL执行方法，代替StatementExecution模块
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-24 20:39:21
+Attempt: 3
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,25-33)
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,22-40)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,16-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,40-68)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,33-51)
+WARNING: unused variable 'c' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,34-35)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ *              injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p, Callable c |
+      source.asParameter() = p and
+      (p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+       p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("jakarta.servlet.http", "HttpServletRequest"))
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m |
+      sink.asExpr() = m.getACall() and
+      (m.getName().matches("execute%") or
+       m.getName().matches("prepare%") or
+       m.getName().matches("query%") or
+       m.getName() = "nativeSQL" or
+       m.getName() = "addBatch" or
+       m.getName().matches("create%"))
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      node.asExpr() = m.getACall()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m, DataFlow::CallNode call |
+      (m.getName().matches("%add%") or
+       m.getName().matches("%append%") or
+       m.getName() = "concat" or
+       m.getName() = "format" or
+       m.getName() = "join") and
+      call = m.getACall() and
+      node1.asExpr() = call.getArgument(0) and
+      node2.asExpr() = call
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where any(FormattedSqlStringConfig cfg).hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+       "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+       "(java.sql.PreparedStatement) instead."
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::StringConcat (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,8-30)
+ERROR: getAReferenceArgument() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,9-30)
+ERROR: could not resolve type CriteriaBuilder (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-27)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-21)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,63-81)
+WARNING: unused variable 'source' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,46-52)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,44-48)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL
+ *              injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/formatted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class FormattedSqlStringConfig extends TaintTracking::Configuration {
+  FormattedSqlStringConfig() { this = "FormattedSqlStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p, Callable c |
+      source.asParameter() = p and
+      (p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletRequest") or
+       p.getCallable().getDeclaringType().getASupertype*().hasQualifiedName("jakarta.servlet.http", "HttpServletRequest"))
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m |
+      sink.asExpr() = m.getACall() and
+      (m.getName().matches("execute%") or
+       m.getName().matches("prepare%") or
+       m.getName().matches("query%") or
+       m.getName() = "nativeSQL" or
+       m.getName() = "addBatch" or
+       m.getName().matches("create%"))
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") and
+      node.asExpr() = m.getACall()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m, DataFlow::CallNode call |
+      (m.getName().matches("%add%") or
+       m.getName().matches("%append%") or
+       m.getName() = "concat" or
+       m.getName() = "format" or
+       m.getName() = "join") and
+      call = m.getACall() and
+      node1.asExpr() = call.getArgument(0) and
+      node2.asExpr() = call
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where any(FormattedSqlStringConfig cfg).hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+       "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+       "(java.sql.PreparedStatement) instead."
+```
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

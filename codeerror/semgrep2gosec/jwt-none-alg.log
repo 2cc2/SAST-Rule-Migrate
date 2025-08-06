@@ -1,0 +1,437 @@
+Timestamp: 2025-07-23 16:16:35
+Attempt: 1
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:16:35Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:22:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+rules/GC001.go:27:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+package rules
+
+import (
+	"go/ast"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type jwtNoneAlg struct {
+	issue.MetaData
+	jwtImports gosec.CallList
+	noneSigns  gosec.CallList
+}
+
+func (n *jwtNoneAlg) ID() string {
+	return n.MetaData.ID
+}
+
+func (n *jwtNoneAlg) Match(nod ast.Node, ctx *gosec.Context) (*issue.Issue, error) {
+	// Check for JWT imports
+	if imported, _, _ := ctx.Imported.GetImport("github.com/dgrijalva/jwt-go", "jwt"); imported {
+		if node := n.noneSigns.ContainsPkgCallExpr(nod, ctx, false); node != nil {
+			return ctx.NewIssue(nod, n.ID(), n.What, n.Severity, n.Confidence), nil
+		}
+	}
+	if imported, _, _ := ctx.Imported.GetImport("github.com/golang-jwt/jwt", "jwt"); imported {
+		if node := n.noneSigns.ContainsPkgCallExpr(nod, ctx, false); node != nil {
+			return ctx.NewIssue(nod, n.ID(), n.What, n.Severity, n.Confidence), nil
+		}
+	}
+	return nil, nil
+}
+
+func NewJWTNoneAlgorithm(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	noneSigns := gosec.NewCallList()
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "SigningMethodNone")
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "UnsafeAllowNoneSignatureType")
+	noneSigns.Add("github.com/golang-jwt/jwt", "SigningMethodNone")
+	noneSigns.Add("github.com/golang-jwt/jwt", "UnsafeAllowNoneSignatureType")
+
+	return &jwtNoneAlg{
+		jwtImports: gosec.NewCallList(),
+		noneSigns:  noneSigns,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.High,
+			Confidence: issue.High,
+			What:       "Detected use of the 'none' algorithm in a JWT token. The 'none' algorithm assumes the integrity of the token has already been verified. This would allow a malicious actor to forge a JWT token that will automatically be verified. Do not explicitly use the 'none' algorithm. Instead, use an algorithm such as 'HS256'. CWE: CWE-327, OWASP: A03:2017, A02:2021",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合Gosec的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            rules:
+- id: jwt-go-none-algorithm
+  message: >-
+    Detected use of the 'none' algorithm in a JWT token.
+    The 'none' algorithm assumes the integrity of the token has already
+    been verified. This would allow a malicious actor to forge a JWT token
+    that will automatically be verified. Do not explicitly use the 'none'
+    algorithm. Instead, use an algorithm such as 'HS256'.
+  metadata:
+    cwe:
+    - 'CWE-327: Use of a Broken or Risky Cryptographic Algorithm'
+    owasp:
+    - A03:2017 - Sensitive Data Exposure
+    - A02:2021 - Cryptographic Failures
+    source-rule-url: https://semgrep.dev/blog/2020/hardcoded-secrets-unverified-tokens-and-other-common-jwt-mistakes/
+    category: security
+    technology:
+    - jwt
+    confidence: HIGH
+    references:
+    - https://owasp.org/Top10/A02_2021-Cryptographic_Failures
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+  languages: [go]
+  severity: ERROR
+  patterns:
+  - pattern-either:
+    - pattern-inside: |
+        import "github.com/golang-jwt/jwt"
+        ...
+    - pattern-inside: |
+        import "github.com/dgrijalva/jwt-go"
+        ...
+  - pattern-either:
+    - pattern: |
+        jwt.SigningMethodNone
+    - pattern: jwt.UnsafeAllowNoneSignatureType
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            package rules
+
+import (
+	"go/ast"
+	"go/types"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type archive struct {
+	issue.MetaData
+	calls    gosec.CallList
+	argTypes []string
+}
+
+func (a *archive) ID() string {
+	return a.MetaData.ID
+}
+
+// Match inspects AST nodes to determine if the filepath.Joins uses any argument derived from type zip.File or tar.Header
+func (a *archive) Match(n ast.Node, c *gosec.Context) (*issue.Issue, error) {
+	if node := a.calls.ContainsPkgCallExpr(n, c, false); node != nil {
+		for _, arg := range node.Args {
+			var argType types.Type
+			if selector, ok := arg.(*ast.SelectorExpr); ok {
+				argType = c.Info.TypeOf(selector.X)
+			} else if ident, ok := arg.(*ast.Ident); ok {
+				if ident.Obj != nil && ident.Obj.Kind == ast.Var {
+					decl := ident.Obj.Decl
+					if assign, ok := decl.(*ast.AssignStmt); ok {
+						if selector, ok := assign.Rhs[0].(*ast.SelectorExpr); ok {
+							argType = c.Info.TypeOf(selector.X)
+						}
+					}
+				}
+			}
+
+			if argType != nil {
+				for _, t := range a.argTypes {
+					if argType.String() == t {
+						return c.NewIssue(n, a.ID(), a.What, a.Severity, a.Confidence), nil
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// NewArchive creates a new rule which detects the file traversal when extracting zip/tar archives
+func NewArchive(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	calls := gosec.NewCallList()
+	calls.Add("path/filepath", "Join")
+	calls.Add("path", "Join")
+	return &archive{
+		calls:    calls,
+		argTypes: []string{"*archive/zip.File", "*archive/tar.Header"},
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.Medium,
+			Confidence: issue.High,
+			What:       "File traversal when extracting zip/tar archive",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Gosec 的go语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 16:17:15
+Attempt: 2
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:17:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+rules/GC001.go:1:1: illegal character U+3010 '【'
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+【修改策略】
+1. 根据Gosec文档，Context结构中检查导入包的正确方式是使用ctx.Pkg.ImportSpecs而不是ctx.Imported
+2. 需要遍历ImportSpecs检查是否包含目标包名
+3. 保持原有的签名方法检测逻辑不变
+4. 合并重复的检测代码以提高效率
+5. 保持相同的漏洞描述和严重等级
+
+# 转换后的 Gosec 规则
+package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type jwtNoneAlg struct {
+	issue.MetaData
+	noneSigns gosec.CallList
+}
+
+func (n *jwtNoneAlg) ID() string {
+	return n.MetaData.ID
+}
+
+func (n *jwtNoneAlg) Match(nod ast.Node, ctx *gosec.Context) (*issue.Issue, error) {
+	// Check for JWT imports
+	for _, imp := range ctx.Pkg.ImportSpecs {
+		if imp.Path != nil {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if path == "github.com/dgrijalva/jwt-go" || path == "github.com/golang-jwt/jwt" {
+				if node := n.noneSigns.ContainsPkgCallExpr(nod, ctx, false); node != nil {
+					return ctx.NewIssue(nod, n.ID(), n.What, n.Severity, n.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewJWTNoneAlgorithm(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	noneSigns := gosec.NewCallList()
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "SigningMethodNone")
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "UnsafeAllowNoneSignatureType")
+	noneSigns.Add("github.com/golang-jwt/jwt", "SigningMethodNone")
+	noneSigns.Add("github.com/golang-jwt/jwt", "UnsafeAllowNoneSignatureType")
+
+	return &jwtNoneAlg{
+		noneSigns: noneSigns,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.High,
+			Confidence: issue.High,
+			What:       "Detected use of the 'none' algorithm in a JWT token. The 'none' algorithm assumes the integrity of the token has already been verified. This would allow a malicious actor to forge a JWT token that will automatically be verified. Do not explicitly use the 'none' algorithm. Instead, use an algorithm such as 'HS256'. CWE: CWE-327, OWASP: A03:2017, A02:2021",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:16:35Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:22:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+rules/GC001.go:27:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:16:35Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:22:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+rules/GC001.go:27:27: ctx.Imported undefined (type *gosec.Context has no field or method Imported)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2，请按照以下步骤进行修复：
+
+1. 审查Gosec的Context结构体文档，确认正确检查导入包的方法
+2. 将ctx.Imported.GetImport替换为正确的包导入检查方法，根据Gosec文档应使用ctx.Pkg.Imported()
+3. 修改Match方法中的导入判断逻辑，使用新的包导入检查方法
+4. 更新noneSigns的调用检测逻辑，确保包含完整的包路径
+5. 测试修改后的规则以确保功能不变且能正确检测jwt none算法使用
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-07-23 16:18:03
+Attempt: 3
+Error: make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:18:03Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+# github.com/securego/gosec/v2/rules
+rules/GC001.go:29:30: ctx.Pkg.ImportSpecs undefined (type *types.Package has no field or method ImportSpecs)
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+
+Rule Content:
+// Modified strategy:
+// 1. Removed all non-ASCII characters
+// 2. Kept only valid Go code and standard comments
+// 3. Converted modification notes to standard Go comments
+// 4. Verified UTF-8 encoding
+// 5. Maintained standard package declaration
+
+package rules
+
+import (
+	"go/ast"
+	"strings"
+
+	"github.com/securego/gosec/v2"
+	"github.com/securego/gosec/v2/issue"
+)
+
+type jwtNoneAlg struct {
+	issue.MetaData
+	noneSigns gosec.CallList
+}
+
+func (n *jwtNoneAlg) ID() string {
+	return n.MetaData.ID
+}
+
+func (n *jwtNoneAlg) Match(nod ast.Node, ctx *gosec.Context) (*issue.Issue, error) {
+	// Check for JWT imports
+	for _, imp := range ctx.Pkg.ImportSpecs {
+		if imp.Path != nil {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if path == "github.com/dgrijalva/jwt-go" || path == "github.com/golang-jwt/jwt" {
+				if node := n.noneSigns.ContainsPkgCallExpr(nod, ctx, false); node != nil {
+					return ctx.NewIssue(nod, n.ID(), n.What, n.Severity, n.Confidence), nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func NewJWTNoneAlgorithm(id string, _ gosec.Config) (gosec.Rule, []ast.Node) {
+	noneSigns := gosec.NewCallList()
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "SigningMethodNone")
+	noneSigns.Add("github.com/dgrijalva/jwt-go", "UnsafeAllowNoneSignatureType")
+	noneSigns.Add("github.com/golang-jwt/jwt", "SigningMethodNone")
+	noneSigns.Add("github.com/golang-jwt/jwt", "UnsafeAllowNoneSignatureType")
+
+	return &jwtNoneAlg{
+		noneSigns: noneSigns,
+		MetaData: issue.MetaData{
+			ID:         id,
+			Severity:   issue.High,
+			Confidence: issue.High,
+			What:       "Detected use of the 'none' algorithm in a JWT token. The 'none' algorithm assumes the integrity of the token has already been verified. This would allow a malicious actor to forge a JWT token that will automatically be verified. Do not explicitly use the 'none' algorithm. Instead, use an algorithm such as 'HS256'. CWE: CWE-327, OWASP: A03:2017, A02:2021",
+		},
+	}, []ast.Node{(*ast.CallExpr)(nil)}
+}
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:17:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+rules/GC001.go:1:1: illegal character U+3010 '【'
+make[1]: *** [build] Error 1
+make: *** [default] Error 2
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            ```
+为解决以下错误：make failed with error:
+STDOUT:
+/Library/Developer/CommandLineTools/usr/bin/make build
+go build -ldflags " -X 'main.Version=v2.22.5-6-g59ae7e9' -X 'main.GitTag=v2.22.5' -X 'main.BuildDate=2025-07-23T08:17:15Z'" -o gosec ./cmd/gosec/
+
+STDERR:
+rules/GC001.go:1:1: illegal character U+3010 '【'
+make[1]: *** [build] Error 1
+make: *** [default] Error 2，请按照以下步骤进行修复：
+
+1. 移除文件中的非ASCII字符（中文括号）
+2. 确保文件只包含有效的Go代码和注释
+3. 将修改策略注释转为英文或标准的Go注释格式
+4. 检查文件编码是否为UTF-8 without BOM
+5. 确保文件开头是标准的包声明
+```
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 Gosec 规则
+            ```
+            </output>
+        
+================================================================================

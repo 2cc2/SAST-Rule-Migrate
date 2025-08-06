@@ -1,0 +1,182 @@
+Timestamp: 2025-07-22 18:36:51
+Attempt: 1
+Error: ┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Nothing to scan.
+[ERROR] Rule parse error in rule var.folders.br.qqr4qgw16pq_wrp98_513pxr0000gn.T.tmp_53e9kqq.null-assignment:
+ Invalid pattern for Java: Stdlib.Parsing.Parse_error
+----- pattern -----
+final $Y = null
+
+----- end pattern -----
+
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 0 (0 blocking)
+ • Rules run: 1
+ • Targets scanned: 0
+ • Parsed lines: an unknown percentage
+ • No ignore information available
+Ran 1 rule on 0 files: 0 findings.
+Rule Content:
+rules:
+- id: null-assignment
+  patterns:
+    - pattern: |
+        $X = null
+    - pattern-not: |
+        final $Y = null
+    - pattern-not-inside: |
+        $VAR ... ? $X : $Y
+  message: Assigning null to a non-final variable may lead to NullPointerException
+  languages: 
+    - java
+  severity: WARNING
+  metadata:
+    category: error-prone
+    cwe:
+      - "CWE-476: NULL Pointer Dereference"
+    technology:
+      - java
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Gosec工具的规则内容将其迁移到Semgrep工具中,规则符合Semgrep的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            /**
+ * BSD-style license; for more info see http://pmd.sourceforge.net/license.html
+ */
+
+package net.sourceforge.pmd.lang.java.rule.errorprone;
+
+import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
+
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignableExpr.ASTNamedReferenceExpr;
+import net.sourceforge.pmd.lang.java.ast.ASTAssignmentExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTConditionalExpression;
+import net.sourceforge.pmd.lang.java.ast.ASTNullLiteral;
+import net.sourceforge.pmd.lang.java.ast.ASTVariableDeclarator;
+import net.sourceforge.pmd.lang.java.rule.AbstractJavaRulechainRule;
+import net.sourceforge.pmd.lang.java.symbols.JVariableSymbol;
+
+public class NullAssignmentRule extends AbstractJavaRulechainRule {
+
+    public NullAssignmentRule() {
+        super(ASTNullLiteral.class);
+    }
+
+    @Override
+    public Object visit(ASTNullLiteral node, Object data) {
+        if (node.getParent() instanceof ASTAssignmentExpression) {
+            ASTAssignmentExpression assignment = (ASTAssignmentExpression) node.getParent();
+            if (isAssignmentToFinal(assignment)) {
+                return data;
+            }
+            if (assignment.getRightOperand() == node) {
+                asCtx(data).addViolation(node);
+            }
+        } else if (node.getParent() instanceof ASTConditionalExpression) {
+            if (isBadTernary((ASTConditionalExpression) node.getParent(), node)) {
+                asCtx(data).addViolation(node);
+            }
+        }
+
+        return data;
+    }
+
+    private boolean isAssignmentToFinal(ASTAssignmentExpression n) {
+        @NonNull
+        ASTAssignableExpr leftOperand = n.getLeftOperand();
+        if (leftOperand instanceof ASTNamedReferenceExpr) {
+            @Nullable
+            JVariableSymbol symbol = ((ASTNamedReferenceExpr) leftOperand).getReferencedSym();
+            return symbol != null && symbol.isFinal();
+        }
+        return false;
+    }
+
+    private boolean isBadTernary(ASTConditionalExpression ternary, ASTNullLiteral nullLiteral) {
+        boolean isInitializer = false;
+
+        ASTVariableDeclarator variableDeclarator = ternary.ancestors(ASTVariableDeclarator.class).first();
+        isInitializer = variableDeclarator != null && variableDeclarator.getInitializer() == ternary;
+
+        boolean isThenOrElse = ternary.getThenBranch() == nullLiteral || ternary.getElseBranch() == nullLiteral;
+
+        // check for nested ternaries...
+        ASTConditionalExpression currentTernary = ternary;
+        while (currentTernary.getParent() instanceof ASTConditionalExpression) {
+            ASTConditionalExpression parentTernary = (ASTConditionalExpression) currentTernary.getParent();
+            isThenOrElse &= parentTernary.getThenBranch() == currentTernary || parentTernary.getElseBranch() == currentTernary;
+            currentTernary = parentTernary;
+        }
+
+        boolean isAssignment = currentTernary.getParent() instanceof ASTAssignmentExpression;
+
+        return isThenOrElse
+                && isAssignment
+                && !isInitializer;
+    }
+}
+            </origin_rule>
+            <example>
+            rules:
+- id: exported_activity
+  patterns:
+  - pattern-not-inside: <activity ... android:exported="false" ... />
+  - pattern-inside: "<activity  ... /> \n"
+  - pattern-either:
+    - pattern: |
+        <activity ... android:exported="true" ... />
+    - pattern: |
+        <activity ... <intent-filter> ... />
+  message: >-
+    The application exports an activity. Any application on the device can launch the exported activity which may compromise the integrity of your application or its data. 
+    Ensure that any exported activities do not have privileged access to your application's control plane.
+  languages:
+  - generic
+  severity: WARNING
+  paths:
+    exclude:
+    - sources/
+    - classes3.dex
+    - '*.so'
+    include:
+    - '*AndroidManifest.xml'
+  metadata:
+    category: security
+    subcategory:
+    - vuln
+    cwe:
+    - 'CWE-926: Improper Export of Android Application Components'
+    confidence: MEDIUM
+    likelihood: MEDIUM
+    impact: MEDIUM
+    owasp:
+    - A5:2021 Security Misconfiguration
+    technology:
+    - Android
+    references:
+    - https://cwe.mitre.org/data/definitions/926.html
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Semgrep 的java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml 
+            # 转换后的 Semgrep 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,80 @@
+from .base import PromptTemplate
+
+class TransformPrompt(PromptTemplate):
+    def format(self, code: str,language:str,sast:str,example) -> str:
+        return f"""
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则内容将其迁移到Gosec工具中,规则符合{sast}的语法规范。
+            </task>
+            <origin_rule>
+            以下是用户提交的规则代码，请进行转换：
+            {code}
+            </origin_rule>
+            <example>
+            请完全仿照下面提供的例子格式进行编写，
+            {example}
+            其中  MetaData 只包含以下字段：请注意不要添加其他字段
+            ```go
+            type MetaData struct 
+	            ID         string
+	            Severity   Score
+	            Confidence Score
+	            What       string
+             ```
+            额外的元信息可以添加在“What:”里：
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 {sast} 的{language}语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```go 
+            # 转换后的 {sast} 规则
+            ```
+            </output>
+        """
+class RepairPrompt(PromptTemplate):
+    def format(self, code: str,error:str,language:str,sast:str,advise:str) -> str:
+        return f"""
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            {error}
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            {advise}
+            </advise>
+            <output>
+            请以 Markdown 格式返回修改采取的策略，和修改后完整的规则，如下代码块，不多输出任何内容
+            【修改策略】
+            ```go
+            # 转换后的 {sast} 规则
+            ```
+            </output>
+        """
+class AbstractPrompt(PromptTemplate):
+    def format(self, code: str,error:str,language:str,sast:str) -> str:
+        return f"""
+            <role>
+            你是经验丰富的{sast}规则设计工程师，负责解决代码编写的报错。
+            </role>
+            <task>
+            在保证代码语义功能不变的前提下，根据error内容和{sast}语法规范修改代码中的错误提出有效的修改plan。
+            </task>
+            <origin_rule>
+            以下是存在问题的规则代码：
+            {code}
+            </origin_rule>
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            {error}
+            </error>
+            <output>
+            请查找{sast}工具相关语法，进行修改正，给出修复的步骤用于COT指导大模型修复。格式如下：
+            “”“
+            为解决以下错误：{error}，请按照以下步骤进行修复：
+            1.xxx
+            2.xxx
+            ”“”
+            </output>
+        """
