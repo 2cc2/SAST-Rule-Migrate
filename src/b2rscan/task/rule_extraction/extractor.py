@@ -30,18 +30,39 @@ class RuleExtractor:
         if options is None:
             options = {}
             
-        # 构造任务描述
+        # 构造更具元认知能力的任务描述
         task_description = f"""
-        Please extract security rules from the {sast_tool} repository located at {source_path}.
-        The rules should be converted to our unified xCPG-IR format.
+        You are a security rule extraction expert. Your task is to analyze the {sast_tool} repository 
+        and extract security rules, then convert them to our unified xCPG-IR format.
         
-        Requirements for the output:
-        1. Each rule should have: id, name, description, severity, sources, sinks, sanitizers, validators
-        2. Output should be in JSON format
-        3. Rules should follow the xCPG-IR schema
+        First, think about the approach:
+        1. Understand the structure and organization of the {sast_tool} repository
+        2. Identify where security rules are defined (file patterns, directory structures)
+        3. Recognize the rule format used by {sast_tool} (YAML, JSON, custom DSL, etc.)
+        4. Analyze example rules to understand their components and semantics
         
-        Additional options: {options}
+        Then, for each rule you find:
+        1. Extract the rule ID, name, and description
+        2. Determine the rule's severity level
+        3. Identify sources, sinks, sanitizers and validators in the rule
+        4. Map these elements to the xCPG-IR schema
+        
+        Rule extraction strategy:
+        - Look for files with extensions like .yml, .yaml, .json, .ql (for CodeQL)
+        - Examine directories like 'rules', 'queries', 'patterns', 'detections'
+        - Consider both built-in rules and example rules
+        - Pay attention to rule metadata and configuration files
+        
+        Output requirements:
+        1. Return a JSON array of rules in xCPG-IR format
+        2. Each rule must include: id, name, description, severity, sources, sinks, sanitizers, validators
+        3. Ensure the output follows the xCPG-IR schema
+        4. If you cannot find specific information, use appropriate default values
+        5. Do not include explanatory text, only the JSON array
+        
+        Additional context: {options}
         """
+        task_description = "say hello"
         
         result = self.llm_client.infer(task_description)
         print(result)
