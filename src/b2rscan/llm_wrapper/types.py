@@ -48,12 +48,13 @@ class LLMClient(ABC):
         self.params = params
 
     @abstractmethod
-    def complete(self, messages: List[LLMMessage]) -> LLMResponse:
+    def complete(self, messages: List[LLMMessage], functions: Optional[List[Dict[str, Any]]] = None) -> LLMResponse:
         """
         Generate completion for given messages.
         
         Args:
             messages: List of messages
+            functions: Optional list of function definitions for function calling
             
         Returns:
             LLM response

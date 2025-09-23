@@ -1,7 +1,7 @@
 """OpenAI LLM client implementation."""
 
 import os
-from typing import List, Dict, Any, cast
+from typing import List, Dict, Any, cast, Optional
 
 import openai
 import tiktoken
@@ -38,12 +38,13 @@ class OpenAIClient(LLMClient):
         except KeyError:
             self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
-    def complete(self, messages: List[LLMMessage]) -> LLMResponse:
+    def complete(self, messages: List[LLMMessage], functions: Optional[List[Dict[str, Any]]] = None) -> LLMResponse:
         """
         Generate completion using OpenAI API.
         
         Args:
             messages: List of messages
+            functions: Optional list of function definitions for function calling
             
         Returns:
             LLM response
@@ -56,12 +57,22 @@ class OpenAIClient(LLMClient):
                 "content": msg.content
             })
             
-        response = self.client.chat.completions.create(
-            model=self.params.model,
-            messages=cast(Any, openai_messages),
-            temperature=self.params.temperature,
-            max_tokens=self.params.max_tokens
-        )
+        # Prepare API call parameters
+        api_params = {
+            "model": self.params.model,
+            "messages": cast(Any, openai_messages),
+            "temperature": self.params.temperature,
+        }
+        
+        if self.params.max_tokens:
+            api_params["max_tokens"] = self.params.max_tokens
+            
+        # Add function definitions if provided
+        if functions:
+            api_params["functions"] = functions
+            api_params["function_call"] = "auto"
+            
+        response = self.client.chat.completions.create(**api_params)
         
         return LLMResponse(
             content=response.choices[0].message.content or "",

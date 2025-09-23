@@ -157,22 +157,7 @@ class Tool:
             self._log_call(False, start, call_id, run_id, input=kwargs, observation=None, error=str(e))
             return ToolResult(False, None, f"{self.name} error: {e}", elapsed_ms=int((time.time() - start) * 1000))
 
-class ToolRegistry:
-    def __init__(self):
-        self._tools: Dict[str, Tool] = {}
-    def register(self, tool: Tool):
-        if tool.name in self._tools:
-            raise ValueError(f"Tool {tool.name} already registered")
-        self._tools[tool.name] = tool
-    def has(self, name: str) -> bool:
-        return name in self._tools
-    def get(self, name: str) -> Tool:
-        if name not in self._tools:
-            raise ToolError(f"Unknown tool: {name}")
-        return self._tools[name]
-    def tool_specs_for_prompt(self) -> str:
-        lines = [f"- {t.name}: {t.description}" for t in self._tools.values()]
-        return "\n".join(lines)
+
 
 # =========================
 # Tools (same as before)

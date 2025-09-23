@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .types import LLMMessage, ModelParameters, LLMClient
 from .factory import LLMFactory
 
@@ -32,7 +32,7 @@ class LLMWrapper:
         )
         self.configure(modelparameters)
 
-    def configure(self, params: ModelParameters=None) -> 'LLMWrapper':
+    def configure(self, params: Optional[ModelParameters] = None) -> 'LLMWrapper':
         """
         Configure the LLM client.
         
@@ -42,6 +42,9 @@ class LLMWrapper:
         Returns:
             Self for chaining
         """
+        if params is None:
+            params = ModelParameters()
+            
         # 如果没有显式提供API密钥，则从环境变量中获取
         if not params.api_key:
             if self.provider == "dashscope":
@@ -62,12 +65,13 @@ class LLMWrapper:
         """
         self.messages.append(LLMMessage(role=role, content=content))
 
-    def infer(self, prompt: str) -> str:
+    def infer(self, prompt: str, functions: Optional[List[Dict[str, Any]]] = None) -> str:
         """
         Perform inference with context management.
         
         Args:
             prompt: User prompt
+            functions: Optional list of function definitions for function calling
             
         Returns:
             LLM response content
@@ -78,7 +82,7 @@ class LLMWrapper:
         self.add_message("user", prompt)
         self._manage_context()
 
-        response = self.client.complete(self.messages)
+        response = self.client.complete(self.messages, functions)
         self.add_message("assistant", response.content)
 
         self.logger.info(f"LLM Response: {response.content[:100]}...")
