@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from typing import Any, Dict, Optional
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -57,17 +56,3 @@ def _mk_logger(name: str, log_dir: str = "logs") -> logging.Logger:
 
     logger.propagate = False
     return logger
-
-# 创建默认的日志记录器
-DEFAULT_LOGGER = _mk_logger("b2rscan")
-
-def log_json(level: int, msg: str, **extra):
-    """
-    记录结构化日志消息
-    
-    Args:
-        level: 日志级别
-        msg: 日志消息
-        **extra: 额外的结构化数据
-    """
-    DEFAULT_LOGGER.log(level, msg, extra=extra)

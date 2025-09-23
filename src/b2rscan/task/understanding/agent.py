@@ -1,13 +1,12 @@
 import json
 import os
 import re
-import logging
 from typing import Optional, Dict, Any, List
 from b2rscan.llm_wrapper import LLMWrapper
 from b2rscan.toolbox.tool_registry import ToolRegistry
 from b2rscan.config.config_loader import ConfigLoader
 from b2rscan.task.understanding.specification import *
-from b2rscan.monitor.logging import log_json
+from b2rscan.monitor.logging import *
 
 class SASTUnderstandAgent:
     """Understand Agent for SAST tools."""
@@ -81,9 +80,6 @@ class SASTUnderstandAgent:
             self.knowledge_graph = deep_merge(self.knowledge_graph, knowledge_update)
 
     def _save_knowledge_graph(self):
-        log_json(logging.INFO, "Saving knowledge graph", 
-                sast_name=self.sast_name, 
-                step=self.current_step)
 
         os.makedirs(self.knowledge_graph_dir, exist_ok=True)
         
@@ -93,9 +89,7 @@ class SASTUnderstandAgent:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(self.knowledge_graph, f, indent=2, ensure_ascii=False)
         
-        log_json(logging.INFO, "Knowledge graph saved", 
-                filepath=filepath, 
-                sast_name=self.sast_name)
+        print(f"Knowledge graph saved to {filepath}")
 
     def _extract_json_from_response(self, response: str) -> Dict[str, Any]:
         """
@@ -176,10 +170,6 @@ class SASTUnderstandAgent:
         self.user_task = user_task
         scratch = ""
         
-        log_json(logging.INFO, "Starting SAST understanding task", 
-                sast_name=self.sast_name, 
-                sast_code_path=self.sast_code_path)
-        
         # 获取函数定义
         function_definitions = self._get_function_definitions()
         
@@ -187,24 +177,14 @@ class SASTUnderstandAgent:
             self.current_step = step
             prompt = self._compose_prompt(user_task=self.user_task) + "\n\nCurrent knowledge:\n" + json.dumps(self.knowledge_graph, indent=2, ensure_ascii=False) + "\n\nPrevious actions:\n" + scratch
             
-            log_json(logging.DEBUG, "Sending prompt to LLM", 
-                    step=step, 
-                    sast_name=self.sast_name)
-            
             # 使用函数调用
             raw_response = self.llm_client.infer(prompt, functions=function_definitions)
-            
-            log_json(logging.DEBUG, "Received response from LLM", 
-                    step=step, 
-                    response_length=len(raw_response))
             
             # 解析响应，使用更鲁棒的方法
             try:
                 action_obj = self._parse_llm_response(raw_response)
             except Exception as e:
-                log_json(logging.ERROR, "Error parsing LLM response", 
-                        error=str(e), 
-                        step=step)
+                print(f"Error parsing LLM response: {e}")
                 action_obj = {
                     "thought": "Failed to parse response, trying again...",
                     "action": "finish",
@@ -217,53 +197,39 @@ class SASTUnderstandAgent:
             action_input = action_obj.get("action_input", {})
             knowledge_update = action_obj.get("knowledge_update", {})
             
-            log_json(logging.INFO, "Processing LLM action", 
-                    step=step, 
-                    action=action, 
-                    thought=thought)
-            
             # 更新知识图谱
             self._update_knowledge_graph(knowledge_update)
             
-            # 执行工具
+            # 如果是结束动作
             if action == "finish":
-                log_json(logging.INFO, "Task finished", 
-                        step=step, 
-                        sast_name=self.sast_name)
+                print(f"Finished understanding {self.sast_name} after {step} steps.")
+                # 保存知识图谱到文件
                 self._save_knowledge_graph()
-                return self.knowledge_graph
-            elif action in self.tools._tools:
-                tool = self.tools._tools[action]
+                break
+            
+            # 执行工具调用
+            observation = ""
+            if self.tools.has(action):
                 try:
-                    log_json(logging.DEBUG, "Executing tool", 
-                            step=step, 
-                            tool_name=action)
-                    result = tool.run(**action_input)
-                    scratch += f"Step {step}: {thought}\nAction: {action}\nResult: {result.content}\n\n"
-                    log_json(logging.DEBUG, "Tool execution completed", 
-                            step=step, 
-                            tool_name=action, 
-                            success=result.ok)
+                    tool = self.tools.get(action)
+                    tool_result = tool.run(**action_input)
+                    observation = tool_result.content if tool_result.ok else f"ERROR: {tool_result.error}"
                 except Exception as e:
-                    error_msg = f"Error executing tool {action}: {str(e)}"
-                    log_json(logging.ERROR, "Tool execution failed", 
-                            step=step, 
-                            tool_name=action, 
-                            error=str(e))
-                    scratch += f"Step {step}: {thought}\nAction: {action}\nError: {error_msg}\n\n"
+                    observation = f"ERROR: Exception during tool execution: {str(e)}"
             else:
-                error_msg = f"Unknown action: {action}"
-                log_json(logging.WARNING, "Unknown action requested", 
-                        step=step, 
-                        action=action)
-                scratch += f"Step {step}: {thought}\nAction: {action}\nError: {error_msg}\n\n"
+                observation = f"ERROR: Unknown tool '{action}'"
+            
+            # 更新执行历史
+            scratch += f"\nStep {step}:\nTHOUGHT: {thought}\nACTION: {action}\nOBSERVATION: {str(observation)}\n"
+            
+            # 如果执行了很多步但没有进展，可以考虑结束
+            if step >= self.max_steps:
+                print(f"Reached maximum steps ({self.max_steps}) for understanding {self.sast_name}.")
+                # 保存知识图谱到文件
+                self._save_knowledge_graph()
         
-        # 达到最大步数仍未完成
-        log_json(logging.WARNING, "Maximum steps reached without finishing", 
-                max_steps=self.max_steps, 
-                sast_name=self.sast_name)
-        self._save_knowledge_graph()
-        return self.knowledge_graph
+        # 不再返回知识图谱，而是保存到文件
+        return f"Knowledge graph for {self.sast_name} has been saved to {self.output_dir} directory."
 
 
 if __name__ == "__main__":
