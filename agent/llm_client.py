@@ -27,7 +27,13 @@ class LLMBot:
         """清除上下文，仅保留系统提示"""
         self.messages = [{"role": "system", "content":"你是静态分析工具漏洞检测规则编写大师"}]
 
-    def inference(self, message, max_tokens=3000):
+    def inference(self, message, max_tokens=3000, preserve_context=True):
+        """
+        发送推理请求，并根据 preserve_context 参数决定是否保留上下文。
+        :param message: 用户输入的消息
+        :param max_tokens: 最大返回的 token 数
+        :param preserve_context: 是否保留上下文
+        """
         self.messages.append({"role": "user", "content": message})
         data = {
             "model": self.model,
@@ -44,11 +50,16 @@ class LLMBot:
             raise RuntimeError("Invalid response: 'message' or 'content' field is missing in choices.")
 
         content = response_json['choices'][0]['message']['content']
-        # self.messages = self.messages[:1]  # Reset messages to only include the system prompt
-        # 保留系统提示和最近两条消息
-        if len(self.messages) > 5:
-            self.messages = [self.messages[0]] + self.messages[-5:]
+
+        # 根据 preserve_context 参数决定是否保留上下文
+        if not preserve_context:
+            self.clear_context()
+        else:
+            # 保留系统提示和最近两条消息
+            if len(self.messages) > 5:
+                self.messages = [self.messages[0]] + self.messages[-5:]
         return content
+    
 
 class LLM:
 
@@ -61,6 +72,18 @@ class LLM:
         encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
         tokenized = encoding.encode(text)
         return len(tokenized)
+    def ExtIR(self, prompt: str, max_tokens: int = 3000) -> str:
+        """
+        GET IR
+        """
+        if self.verbose:
+            print(f"Input prompt: {prompt}")
+            print(f"Max tokens: {max_tokens}")
+
+        response = self.bot.inference(prompt, max_tokens=max_tokens,preserve_context=False)
+        if self.verbose:
+            print(f"LLM response: {response}")
+        return response.strip()
     
     def Transform_rules(self, prompt: str, code: str,max_tokens: int = 3000) -> str:
         """
@@ -73,14 +96,14 @@ class LLM:
         response = self.bot.inference(prompt, max_tokens=max_tokens)
         if self.verbose:
             print(f"LLM response: {response}")
-        return self.batch_prompt(prompt, var_key="code", var_value=code)
+        return self.batch_prompt(prompt, var_key="code", var_value=code,preserve_context=True)
     def clear_context(self):
         """清除上下文，仅保留系统提示"""
         self.bot.clear_context()
         print(self.bot.messages)   
     def Transform(self, prompt: str, max_tokens: int = 3000) -> str:
     
-        response = self.bot.inference(prompt, max_tokens=max_tokens)
+        response = self.bot.inference(prompt, max_tokens=max_tokens,preserve_context=True)
         if self.verbose:
             print(f"LLM response: {response}")
         return response.strip()

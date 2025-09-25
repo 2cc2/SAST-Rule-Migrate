@@ -1,0 +1,68 @@
+```json
+# 总结的中间表示
+id: tainted-sqli
+kind: taint
+interprocedural: true
+severity: WARNING
+message: Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead.
+
+sources:
+  - kind: PARAMETER
+    name: $EVENT
+    guard:
+      - pattern: |
+          $HANDLERTYPE $HANDLER($TYPE $EVENT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) {
+            ...
+          }
+      - pattern: |
+          $HANDLERTYPE $HANDLER(InputStream $EVENT, OutputStream $OUT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) {
+            ...
+          }
+
+sinks:
+  - select:
+      node: CALL
+      callee:
+        qname:
+          - java.sql.CallableStatement
+          - java.sql.Statement
+          - java.sql.PreparedStatement
+          - java.util.Map
+          - org.springframework.jdbc.support.rowset.SqlRowSet
+      arg_index: any
+  - select:
+      node: CALL
+      callee:
+        method_regex: (execute|query|executeUpdate|batchUpdate)
+      guard:
+        - pattern-inside: |
+            (String $SQL) = "$SQLSTR" + ...;
+            ...
+        - metavariable-regex:
+            metavariable: $SQLSTR
+            regex: (?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)
+
+sanitizers: []
+
+propagation: []
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+  cwe2022-top25: true
+  cwe2021-top25: true
+  subcategory: vuln
+  likelihood: MEDIUM
+  impact: HIGH
+  confidence: MEDIUM
+```

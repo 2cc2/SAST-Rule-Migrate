@@ -1,0 +1,63 @@
+/**
+ * @name Insecure JMS Deserialization
+ * @description Detected JMS ObjectMessage deserialization that could lead to remote code execution.
+ *              Deserialization of untrusted data can lead to security flaws; a remote attacker could
+ *              via a crafted JMS ObjectMessage to execute arbitrary code.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/insecure-jms-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class JmsMessageSource extends DataFlow::Node {
+  JmsMessageSource() {
+    exists(Method m, Parameter p |
+      m.hasName("onMessage") and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("javax.jms", "MessageListener") and
+      p = m.getParameter(0) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class JmsObjectMessageSink extends DataFlow::Node {
+  JmsObjectMessageSink() {
+    exists(MethodAccess ma |
+      ma.getCallee().hasName("getObject") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("javax.jms", "ObjectMessage") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class JmsListenerConstraint extends DataFlow::Node {
+  JmsListenerConstraint() {
+    exists(Class c |
+      c.getASupertype*().hasQualifiedName("javax.jms", "MessageListener") and
+      this.asExpr().getEnclosingCallable().getDeclaringType() = c
+    )
+  }
+}
+
+class JmsDeserializationConfig extends TaintTracking::Configuration {
+  JmsDeserializationConfig() { this = "JmsDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof JmsMessageSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof JmsObjectMessageSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    pred instanceof JmsListenerConstraint
+  }
+}
+
+from JmsDeserializationConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential insecure JMS deserialization from untrusted message"

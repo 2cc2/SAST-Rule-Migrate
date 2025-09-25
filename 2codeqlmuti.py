@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from sast_tools.codeql import validate_codeql_rule
 from agent.llm_client import LLM
-from agent.prompt.codeql import TransformPrompt, RepairPrompt,AbstractPrompt
+from agent.prompt.codeql import IRPrompt,IRTransformPrompt, RepairPrompt,AbstractPrompt
 def get_rule_from_llm(response: str) -> str:
     """
     从 LLM 响应中提取 Markdown 格式的规则内容。
@@ -24,11 +24,17 @@ def get_rule_from_llm(response: str) -> str:
 def save_rule(yaml_text: str,output_dir:str, base_name: str = "semgrep_rule"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs(output_dir, exist_ok=True)
-    file_path = os.path.join(output_dir, f"{base_name}_{timestamp}.go")
+    file_path = os.path.join(output_dir, f"{base_name}_{timestamp}.mql")
     with open(file_path, "w") as f:
         f.write(yaml_text)
     print(f"[✔] 规则已保存到 {file_path}")
-
+def save_IR(yaml_text: str,output_dir:str, base_name: str = "semgrep_rule"):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs(output_dir, exist_ok=True)
+    file_path = os.path.join(output_dir, f"{base_name}_{timestamp}.ir")
+    with open(file_path, "w") as f:
+        f.write(yaml_text)
+    print(f"[✔] 规则已保存到 {file_path}")
 def load_rule_from_file(file_path: str) -> str:
     """
     从指定文件中加载 YAML 规则内容。
@@ -51,7 +57,7 @@ def get_all_java_files(directory):
                 java_files.append(os.path.join(root, file))  # 保存文件的完整路径
     return java_files
 
-def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 3):
+def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 3):
     """
     迁移单个规则文件。
     :param input_file: 输入的 .go 文件路径
@@ -74,30 +80,38 @@ def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Co
     if not test_code:
         print(f"[❌] 无法加载文件 {input_file}")
         return
-    example = load_rule_from_file("/Users/djoker/Desktop/CTGA/demo/codeql.txt")
-    # 定义输入的 prompt 和代码
-    prompt = TransformPrompt().format(code=test_code, language="java", sast=sast,example=example)
     input_filename = os.path.splitext(os.path.basename(input_file))[0]
+   
+
+    example = load_rule_from_file("/Users/djoker/Desktop/CTGA/demo/codeql.txt")
+    IR_file = os.path.join(IR_dir, f"{input_filename}.ir")
     log_file = os.path.join(log_dir, f"{input_filename}.log")
     output_file = os.path.join(output_dir, f"{input_filename}.ql")
-
+    #获取中间表示
+    IR_prompt=IRPrompt().format(code=test_code)
+    
     # 自动创建日志和输出目录
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
-
+    os.makedirs(IR_dir, exist_ok=True)
+    print(f"提取IR")
+    IR_content = llm.ExtIR(prompt=IR_prompt, max_tokens=3000)
+    
     for attempt in range(1, max_retries + 1):
         print(f"\n🔄 第 {attempt} 次尝试生成规则...")
+        prompt = IRTransformPrompt().format(IR=IR_content, language="java", sast=sast,example=example)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
         print(f"[📜] LLM 响应内容：\n{response}")
         rule_content = get_rule_from_llm(response)
         if not rule_content:
             print("[❌] 未找到代码块内容，尝试更新提示词...")
-            prompt += " 请确保包含 markdown 格式的 yaml 代码块（```go ... ```）"
+            prompt += " 请确保包含 markdown 格式的 yaml 代码块（```ql ... ```）"
             continue
 
         result = validate_codeql_rule(rule_content)
         if result["valid"]:
             print("[✅] 规则验证通过！")
+            save_IR(IR_content, IR_dir,base_name=input_filename)
             save_rule(rule_content, output_dir,base_name=input_filename)
             llm.clear_context()  # 清除上下文，保留系统提示
             break
@@ -107,9 +121,10 @@ def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Co
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log.write(f"Timestamp: {timestamp}\n")
                 log.write(f"Attempt: {attempt}\n")
+                log.write(f"IR Content:\n{IR_content}\n")
                 log.write(f"Error: {result['error']}\n")
                 log.write(f"Rule Content:\n{rule_content}\n")
-                log.write(f"Prompt:\n{prompt}\n")
+                # log.write(f"Prompt:\n{prompt}\n")
                 log.write(f"{'=' * 80}\n")
             prompt = AbstractPrompt().format(code=rule_content, error=result['error'].strip(),  language="java", sast=sast)
             advise= llm.Transform(prompt=prompt, max_tokens=3000)
@@ -122,7 +137,7 @@ def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Co
         llm.clear_context()
 
 
-def process_multiple_files(directory: str, output_dir: str, log_dir: str):
+def process_multiple_files(directory: str,IR:str, output_dir: str, log_dir: str):
     """
     处理指定目录中的所有 .go 文件。
     :param directory: 输入目录，包含 .go 文件
@@ -148,16 +163,18 @@ def process_multiple_files(directory: str, output_dir: str, log_dir: str):
         if existing_files:
             print(f"[⏩] 文件 {base_name} 的规则已存在，跳过处理 {file_path}")
             continue
-        migrate_rule(file_path, output_dir, log_dir)
+        migrate_rule(file_path, IR,output_dir, log_dir)
   
 if __name__ == "__main__":
-    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java"  # 替换为你的 .go 文件目录
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql"
-    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql"
+    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java"  
+    IR_directory = "/Users/djoker/Desktop/CTGA/demo/IR_V2/" 
+    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_IR_v2"
+
+    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_IR"
     for directory in [input_directory, output_directory, log_directory]:
         if not os.path.exists(directory):
             os.makedirs(directory)
             print(f"[✅] 目录已创建: {directory}")
         else:
             print(f"[✔] 目录已存在: {directory}")
-    process_multiple_files(input_directory, output_directory, log_directory)
+    process_multiple_files(input_directory,IR_directory,output_directory, log_directory)

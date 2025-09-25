@@ -1,0 +1,392 @@
+Timestamp: 2025-09-25 19:08:51
+Attempt: 1
+IR Content:
+```json
+# 总结的中间表示
+id: xmlinputfactory-possible-xxe
+kind: pattern-match
+severity: WARNING
+message: XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting "javax.xml.stream.isSupportingExternalEntities" to false.
+
+patterns:
+  - pattern-either:
+      - pattern: javax.xml.stream.XMLInputFactory.newFactory(...)
+      - pattern: new XMLInputFactory(...)
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+        ...
+      }
+
+metadata:
+  cwe: 'CWE-611: Improper Restriction of XML External Entity Reference'
+  owasp:
+    - A04:2017 - XML External Entities (XXE)
+    - A05:2021 - Security Misconfiguration
+  asvs:
+    section: V5 Validation, Sanitization and Encoding
+    control_id: 5.5.2 Insecure XML Deserialization
+    control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v55-deserialization-prevention
+    version: '4'
+  references:
+    - https://semgrep.dev/blog/2022/xml-security-in-java
+    - https://semgrep.dev/docs/cheat-sheets/java-xxe/
+    - https://www.blackhat.com/docs/us-15/materials/us-15-Wang-FileCry-The-New-Age-Of-XXE-java-wp.pdf
+    - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#xmlinputfactory-a-stax-parser
+  technology:
+    - java
+  likelihood: LOW
+  impact: HIGH
+  confidence: MEDIUM
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTarget() cannot be resolved for type Expr::FieldAccess (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,42-51)
+ERROR: getTarget() cannot be resolved for type Expr::FieldAccess (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,42-51)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,65-83)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,56-57)
+Rule Content:
+/**
+ * @name XMLInputFactory XXE Vulnerability
+ * @description XML external entities are not explicitly disabled for this XMLInputFactory.
+ *              This could be vulnerable to XML external entity vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xmlinputfactory-possible-xxe
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04
+ *       external/owasp/a05
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class XMLInputFactoryCreation extends DataFlow::Node {
+  XMLInputFactoryCreation() {
+    exists(MethodAccess ma |
+      (ma.getCallee().getName() = "newFactory" and
+       ma.getCallee().getDeclaringType().hasQualifiedName("javax.xml.stream", "XMLInputFactory")) or
+      exists(ConstructorCall cc |
+        cc.getConstructedType().hasQualifiedName("javax.xml.stream", "XMLInputFactory") and
+        this.asExpr() = cc
+      )
+    )
+  }
+}
+
+class SafeXMLInputFactory extends DataFlow::Node {
+  SafeXMLInputFactory() {
+    exists(MethodAccess ma |
+      ma.getCallee().getName() = "setProperty" and
+      ma.getCallee().getDeclaringType().hasQualifiedName("javax.xml.stream", "XMLInputFactory") and
+      (
+        (ma.getArgument(0).(StringLiteral).getValue() = "javax.xml.stream.isSupportingExternalEntities" or
+         ma.getArgument(0).(FieldAccess).getTarget().getName() = "IS_SUPPORTING_EXTERNAL_ENTITIES") and
+        (ma.getArgument(1).(BooleanLiteral).getValue() = false or
+         ma.getArgument(1).(FieldAccess).getTarget().getName() = "FALSE")
+      ) and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class XMLInputFactoryTaintConfig extends TaintTracking::Configuration {
+  XMLInputFactoryTaintConfig() { this = "XMLInputFactoryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof XMLInputFactoryCreation }
+
+  override predicate isSink(DataFlow::Node sink) { not sink instanceof SafeXMLInputFactory }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from XMLInputFactoryTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting 'javax.xml.stream.isSupportingExternalEntities' to false."
+================================================================================
+Timestamp: 2025-09-25 19:10:44
+Attempt: 2
+IR Content:
+```json
+# 总结的中间表示
+id: xmlinputfactory-possible-xxe
+kind: pattern-match
+severity: WARNING
+message: XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting "javax.xml.stream.isSupportingExternalEntities" to false.
+
+patterns:
+  - pattern-either:
+      - pattern: javax.xml.stream.XMLInputFactory.newFactory(...)
+      - pattern: new XMLInputFactory(...)
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+        ...
+      }
+
+metadata:
+  cwe: 'CWE-611: Improper Restriction of XML External Entity Reference'
+  owasp:
+    - A04:2017 - XML External Entities (XXE)
+    - A05:2021 - Security Misconfiguration
+  asvs:
+    section: V5 Validation, Sanitization and Encoding
+    control_id: 5.5.2 Insecure XML Deserialization
+    control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v55-deserialization-prevention
+    version: '4'
+  references:
+    - https://semgrep.dev/blog/2022/xml-security-in-java
+    - https://semgrep.dev/docs/cheat-sheets/java-xxe/
+    - https://www.blackhat.com/docs/us-15/materials/us-15-Wang-FileCry-The-New-Age-Of-XXE-java-wp.pdf
+    - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#xmlinputfactory-a-stax-parser
+  technology:
+    - java
+  likelihood: LOW
+  impact: HIGH
+  confidence: MEDIUM
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTarget() cannot be resolved for type Expr::FieldAccess (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,42-51)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,40-68)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,63-81)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,56-57)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,56-57)
+Rule Content:
+/**
+ * @name XMLInputFactory Possible XXE
+ * @description XML external entities are not explicitly disabled for this XMLInputFactory.
+ *              This could be vulnerable to XML external entity vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xmlinputfactory-possible-xxe
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04
+ *       external/owasp/a05
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class XMLInputFactoryCreation extends DataFlow::Node {
+  XMLInputFactoryCreation() {
+    exists(MethodAccess ma |
+      (ma.getCallee().getName() = "newFactory" and
+       ma.getCallee().getDeclaringType().hasQualifiedName("javax.xml.stream", "XMLInputFactory")) or
+      exists(ConstructorCall cc |
+        cc.getConstructedType().hasQualifiedName("javax.xml.stream", "XMLInputFactory") and
+        this.asExpr() = cc
+      )
+    )
+  }
+}
+
+class SafeXMLInputFactory extends DataFlow::Node {
+  SafeXMLInputFactory() {
+    exists(MethodAccess ma |
+      ma.getCallee().getName() = "setProperty" and
+      ma.getCallee().getDeclaringType().hasQualifiedName("javax.xml.stream", "XMLInputFactory") and
+      (
+        (ma.getArgument(0).(StringLiteral).getValue() = "javax.xml.stream.isSupportingExternalEntities" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = false) or
+        (ma.getArgument(0).(FieldAccess).getTarget().hasQualifiedName("javax.xml.stream", "XMLInputFactory", "IS_SUPPORTING_EXTERNAL_ENTITIES") and
+         ma.getArgument(1).(BooleanLiteral).getValue() = false)
+      ) and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class XMLInputFactoryXXEConfig extends TaintTracking::Configuration {
+  XMLInputFactoryXXEConfig() { this = "XMLInputFactoryXXEConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof XMLInputFactoryCreation }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof XMLInputFactoryCreation }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SafeXMLInputFactory
+  }
+}
+
+from XMLInputFactoryXXEConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting 'javax.xml.stream.isSupportingExternalEntities' to false."
+================================================================================
+Timestamp: 2025-09-25 19:12:04
+Attempt: 3
+IR Content:
+```json
+# 总结的中间表示
+id: xmlinputfactory-possible-xxe
+kind: pattern-match
+severity: WARNING
+message: XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting "javax.xml.stream.isSupportingExternalEntities" to false.
+
+patterns:
+  - pattern-either:
+      - pattern: javax.xml.stream.XMLInputFactory.newFactory(...)
+      - pattern: new XMLInputFactory(...)
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+        ...
+      }
+  - pattern-not-inside: |
+      $METHOD(...) {
+        ...
+        $XMLFACTORY.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+        ...
+      }
+
+metadata:
+  cwe: 'CWE-611: Improper Restriction of XML External Entity Reference'
+  owasp:
+    - A04:2017 - XML External Entities (XXE)
+    - A05:2021 - Security Misconfiguration
+  asvs:
+    section: V5 Validation, Sanitization and Encoding
+    control_id: 5.5.2 Insecure XML Deserialization
+    control_url: https://github.com/OWASP/ASVS/blob/master/4.0/en/0x13-V5-Validation-Sanitization-Encoding.md#v55-deserialization-prevention
+    version: '4'
+  references:
+    - https://semgrep.dev/blog/2022/xml-security-in-java
+    - https://semgrep.dev/docs/cheat-sheets/java-xxe/
+    - https://www.blackhat.com/docs/us-15/materials/us-15-Wang-FileCry-The-New-Age-Of-XXE-java-wp.pdf
+    - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html#xmlinputfactory-a-stax-parser
+  technology:
+    - java
+  likelihood: LOW
+  impact: HIGH
+  confidence: MEDIUM
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAnArgument(int) cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,11-24)
+ERROR: getAnArgument(int) cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,11-24)
+ERROR: getAnArgument(int) cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,11-24)
+ERROR: getAnArgument(int) cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,11-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,65-83)
+Rule Content:
+/**
+ * @name XMLInputFactory XXE Vulnerability
+ * @description XMLInputFactory instances should explicitly disable external entities to prevent XXE attacks.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xmlinputfactory-possible-xxe
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04
+ *       external/owasp/a05
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class XMLInputFactoryCreation extends DataFlow::Node {
+  XMLInputFactoryCreation() {
+    exists(MethodAccess ma |
+      (ma.getCallee().getName() = "newFactory" and
+       ma.getCallee().getDeclaringType().hasQualifiedName("javax.xml.stream", "XMLInputFactory")) or
+      exists(ConstructorCall cc |
+        cc.getConstructedType().hasQualifiedName("javax.xml.stream", "XMLInputFactory") and
+        this.asExpr() = cc
+      )
+    )
+  }
+}
+
+class SafeXMLInputFactoryConfig extends DataFlow::Node {
+  SafeXMLInputFactoryConfig() {
+    exists(MethodAccess ma |
+      ma.getCallee().getName() = "setProperty" and
+      (ma.getAnArgument(0).(StringLiteral).getValue() = "javax.xml.stream.isSupportingExternalEntities" or
+       ma.getAnArgument(0).toString() = "XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES") and
+      (ma.getAnArgument(1).toString() = "false" or
+       ma.getAnArgument(1).toString() = "Boolean.FALSE") and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class XMLInputFactoryTaintConfig extends TaintTracking::Configuration {
+  XMLInputFactoryTaintConfig() { this = "XMLInputFactoryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof XMLInputFactoryCreation }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    not exists(SafeXMLInputFactoryConfig safe | DataFlow::localFlow(safe, sink))
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from XMLInputFactoryTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "XML external entities are not explicitly disabled for this XMLInputFactory. This could be vulnerable to XML external entity vulnerabilities. Explicitly disable external entities by setting 'javax.xml.stream.isSupportingExternalEntities' to false."
+================================================================================

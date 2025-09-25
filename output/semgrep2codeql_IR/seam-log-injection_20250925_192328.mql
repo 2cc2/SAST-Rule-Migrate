@@ -1,0 +1,42 @@
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language which can lead to unwanted code execution if dynamic values are not properly filtered.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class AnySource extends DataFlow::Node {
+  AnySource() {
+    exists(Variable v | this.asExpr() = v.getAnAccess())
+  }
+}
+
+class SeamLogSink extends DataFlow::Node {
+  SeamLogSink() {
+    exists(MethodAccess ma |
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      ma.getCallee().getName().matches("debug|error|fatal|info|trace|warn") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SeamLogTaintConfig extends TaintTracking::Configuration {
+  SeamLogTaintConfig() { this = "SeamLogTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof AnySource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SeamLogSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from SeamLogTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential log injection via Seam Logging API with unfiltered dynamic value"

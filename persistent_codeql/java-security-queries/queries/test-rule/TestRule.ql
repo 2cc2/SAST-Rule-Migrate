@@ -1,118 +1,45 @@
 /**
- * @name Tainted HTML String
- * @description Detects user input flowing into a manually constructed HTML string.
- *              This could create a cross-site scripting vulnerability if the HTML
- *              is not rendered safely.
- * @kind path-problem
- * @problem.severity error
- * @id java/tainted-html-string
+ * @name Insecure Cookie Configuration
+ * @description Detects when a cookie is created without setting the secure flag to true,
+ *              which could lead to sensitive data exposure over unencrypted connections.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/insecure-cookie-configuration
  * @tags security
- *       external/cwe/cwe-79
- *       external/owasp/a07
+ *       external/cwe/cwe-319
  *       external/owasp/a03
+ *       external/owasp/a02
  */
 
 import java
-import semmle.code.java.dataflow.TaintTracking
-import semmle.code.java.frameworks.spring.SpringRequest
-import semmle.code.java.StringOps
 
-class HtmlInputSource extends DataFlow::Node {
-  HtmlInputSource() {
-    exists(Method m, Parameter p |
-      m.getAnAnnotation().getType().getName() in [
-        "RequestBody", "PathVariable", "RequestParam", 
-        "RequestHeader", "CookieValue", "ModelAttribute"
-      ] and
-      p = m.getAParameter() and
-      not p.getType().hasName([
-        "Integer","Long","Float","Double","Char","Boolean",
-        "int","long","float","double","char","boolean"
-      ]) and
-      this.asParameter() = p
-    ) 
-  }
-}
-
-class HtmlStringLiteral extends DataFlow::Node {
-  HtmlStringLiteral() {
-    exists(StringLiteral sl |
-      sl.getText().regexpMatch("^<\\w+") and
-      this.asExpr() = sl
+class InsecureCookie extends Expr {
+  InsecureCookie() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      m.getName() = "setSecure" and
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        ma.getArgument(0).(BooleanLiteral).getValue() != true and
+        this = ma.getQualifier()
+      )
+    )
+    or
+    exists(Constructor c |
+      c.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      exists(ConstructorCall cc |
+        cc.getConstructor() = c and
+        not exists(MethodAccess ma |
+          ma.getQualifier() = cc and
+          ma.getMethod().getName() = "setSecure" and
+          ma.getArgument(0).(BooleanLiteral).getValue() = true
+        ) and
+        this = cc
+      )
     )
   }
 }
 
-class HtmlConcatenation extends DataFlow::Node {
-  HtmlConcatenation() {
-    exists(AddExpr add |
-      add.getLeftOperand().(StringLiteral).getText().regexpMatch("^<\\w+") and
-      this.asExpr() = add
-    ) or
-    exists(MethodAccess concat |
-      concat.getMethod().hasName("concat") and
-      concat.getQualifier().(StringLiteral).getText().regexpMatch("^<\\w+") and
-      this.asExpr() = concat
-    ) or
-    exists(MethodAccess append, StringLiteral sl |
-      append.getMethod().hasName("append") and
-      append.getQualifier().getType().hasName("StringBuilder") and
-      sl.getText().regexpMatch("^<\\w+") and
-      sl = append.getQualifier().getAValue() and
-      this.asExpr() = append
-    )
-  }
-}
-
-class HtmlSink extends DataFlow::Node {
-  HtmlSink() {
-    exists(ConstructorCall cc |
-      cc.getConstructedType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
-      this.asExpr() = cc.getArgument(0)
-    ) or
-    exists(Call bodyCall |
-      bodyCall.getCallee().hasName("body") and
-      bodyCall.getCallee().getDeclaringType().hasQualifiedName("org.springframework.http", "ResponseEntity") and
-      this.asExpr() = bodyCall.getArgument(0)  
-    )
-  }
-}
-
-class HtmlSanitizer extends DataFlow::Node {
-  HtmlSanitizer() {
-    exists(Call sanitizeCall |
-      sanitizeCall.getCallee().hasName("forHtml") and
-      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.esapi", "Encoder")
-    ) or
-    exists(Call sanitizeCall |
-      sanitizeCall.getCallee().hasName("sanitize") and
-      sanitizeCall.getCallee().getDeclaringType().hasQualifiedName("org.owasp.html", "PolicyFactory") 
-    )
-  }
-}
-
-class HtmlTaintConfig extends TaintTracking::Configuration {
-  HtmlTaintConfig() { this = "HtmlTaintConfig" }
-
-  override predicate isSource(DataFlow::Node source) {
-    source instanceof HtmlInputSource
-  }
-
-  override predicate isSink(DataFlow::Node sink) {
-    sink instanceof HtmlSink and
-    exists(DataFlow::Node html |
-      html instanceof HtmlStringLiteral or 
-      html instanceof HtmlConcatenation |
-      TaintTracking::localTaint(html, sink)
-    )
-  }
-
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer instanceof HtmlSanitizer
-  }
-}
-
-from HtmlTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
-where cfg.hasFlow(source, sink)
-select sink, source, sink,
-  "Detected user input flowing into a manually constructed HTML string. This could create a cross-site scripting vulnerability."
+from InsecureCookie ic
+select ic, "Default session middleware settings: `setSecure` not set to true. " +
+            "This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."

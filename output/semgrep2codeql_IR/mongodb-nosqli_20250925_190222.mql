@@ -1,0 +1,62 @@
+/**
+ * @name NoSQL Injection via MongoDB where operator
+ * @description Detected non-constant data passed into a NoSQL query using the 'where' evaluation operator.
+ *              This could lead to NoSQL injection if variables are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/mongodb-nosqli
+ * @tags security
+ *       external/cwe/cwe-943
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class NonConstantSource extends DataFlow::Node {
+  NonConstantSource() {
+    exists(Expr e |
+      not e instanceof StringLiteral and
+      this.asExpr() = e
+    )
+  }
+}
+
+class MongoDbSink extends DataFlow::Node {
+  MongoDbSink() {
+    // Method calls with $where as second argument
+    exists(MethodAccess ma |
+      (ma.getCallee().getName() = "put" or
+       ma.getCallee().getName() = "append" or
+       ma.getCallee().getName() = "add" or
+       ma.getCallee().getName() = "start") and
+      (ma.getCallee().getDeclaringType().hasQualifiedName("com.mongodb", "BasicDBObject") or
+       ma.getCallee().getDeclaringType().hasQualifiedName("com.mongodb", "BasicDBObjectBuilder")) and
+      ma.getArgument(1).toString() = "$where" and
+      this.asExpr() = ma.getAnArgument()
+    )
+    or
+    // Constructor calls with $where as first argument
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("com.mongodb", "BasicDBObject") and
+      cc.getArgument(0).toString() = "$where" and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class NoSqlTaintConfig extends TaintTracking::Configuration {
+  NoSqlTaintConfig() { this = "NoSqlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof NonConstantSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof MongoDbSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from NoSqlTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential NoSQL injection from non-constant data in MongoDB where operator"
