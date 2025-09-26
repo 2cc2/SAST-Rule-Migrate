@@ -1,0 +1,522 @@
+Timestamp: 2025-09-26 00:13:28
+Attempt: 1
+IR Content:
+```json
+{
+  "id": "documentbuilderfactory-disallow-doctype-decl-missing",
+  "kind": "taint",
+  "interprocedural": false,
+  "path_output": "full",
+  "severity": "ERROR",
+  "message": "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations. This can be done by setting the features \"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false.",
+  
+  "sources": [
+    {
+      "kind": "CONSTRUCTOR",
+      "type": "DocumentBuilderFactory",
+      "patterns": [
+        {
+          "pattern": "$FACTORY = DocumentBuilderFactory.newInstance();"
+        },
+        {
+          "pattern": "$FACTORY",
+          "context": {
+            "inside": "class $C { ... $V $FACTORY = DocumentBuilderFactory.newInstance(); ... }",
+            "not_inside": [
+              "class $C { ... $FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true); ... }",
+              "class $C { ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false); ... }"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  
+  "sinks": [
+    {
+      "select": {
+        "node": "CALL",
+        "callee": {
+          "qname": "javax.xml.parsers.DocumentBuilderFactory.newDocumentBuilder"
+        }
+      }
+    }
+  ],
+  
+  "sanitizers": [
+    {
+      "kind": "METHOD_CALL",
+      "patterns": [
+        {
+          "pattern": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true)"
+        },
+        {
+          "pattern": "$FACTORY.setFeature(\"http://xml.org/sax/features/external-general-entities\", false); ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false)"
+        }
+      ]
+    }
+  ],
+  
+  "fix": {
+    "code": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n$FACTORY.newDocumentBuilder();"
+  },
+  
+  "metadata": {
+    "cwe": ["CWE-611: Improper Restriction of XML External Entity Reference"],
+    "owasp": ["A04:2017 - XML External Entities (XXE)", "A05:2021 - Security Misconfiguration"],
+    "asvs": {
+      "section": "V5 Validation, Sanitization and Encoding",
+      "control_id": "5.5.2 Insecure XML Deserialization"
+    },
+    "references": [
+      "https://semgrep.dev/blog/2022/xml-security-in-java",
+      "https://semgrep.dev/docs/cheat-sheets/java-xxe/",
+      "https://blog.sonarsource.com/secure-xml-processor"
+    ],
+    "technology": ["java", "xml"],
+    "confidence": "HIGH",
+    "impact": "HIGH",
+    "likelihood": "LOW"
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getARead() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,28-36)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,46-58)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,45-57)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,34-46)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,49-77)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,45-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,72-90)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,57-58)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,59-60)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,59-60)
+Rule Content:
+/**
+ * @name DocumentBuilderFactory missing DOCTYPE declaration restriction
+ * @description DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/documentbuilderfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04:2017
+ *       external/owasp/a05:2021
+ *       external/asvs/V5.5.2
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class DocumentBuilderFactoryCreation extends MethodAccess {
+  DocumentBuilderFactoryCreation() {
+    this.getMethod().hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newInstance")
+  }
+}
+
+class UnsafeDocumentBuilderCreation extends MethodAccess {
+  UnsafeDocumentBuilderCreation() {
+    this.getMethod().hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newDocumentBuilder")
+  }
+}
+
+class SafeFeatureSetting extends MethodAccess {
+  SafeFeatureSetting() {
+    (
+      this.getMethod().hasName("setFeature") and
+      (
+        this.getArgument(0).(StringLiteral).getValue() = "http://apache.org/xml/features/disallow-doctype-decl" and
+        this.getArgument(1).(BooleanLiteral).getValue() = true
+        or
+        (
+          this.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-general-entities" and
+          this.getArgument(1).(BooleanLiteral).getValue() = false
+        )
+        or
+        (
+          this.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-parameter-entities" and
+          this.getArgument(1).(BooleanLiteral).getValue() = false
+        )
+      )
+    )
+  }
+}
+
+class DocumentBuilderFactoryTaintConfig extends TaintTracking::Configuration {
+  DocumentBuilderFactoryTaintConfig() { this = "DocumentBuilderFactoryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DocumentBuilderFactoryCreation dbc |
+      source.asExpr() = dbc and
+      not exists(SafeFeatureSetting sfs |
+        sfs.getQualifier().getARead() = source.asExpr() and
+        sfs.getEnclosingCallable() = dbc.getEnclosingCallable()
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(UnsafeDocumentBuilderCreation udbc | sink.asExpr() = udbc)
+  }
+}
+
+from DocumentBuilderFactoryTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. " +
+  "Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. " +
+  "Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations by setting " +
+  "\"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false."
+================================================================================
+Timestamp: 2025-09-26 00:14:31
+Attempt: 2
+IR Content:
+```json
+{
+  "id": "documentbuilderfactory-disallow-doctype-decl-missing",
+  "kind": "taint",
+  "interprocedural": false,
+  "path_output": "full",
+  "severity": "ERROR",
+  "message": "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations. This can be done by setting the features \"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false.",
+  
+  "sources": [
+    {
+      "kind": "CONSTRUCTOR",
+      "type": "DocumentBuilderFactory",
+      "patterns": [
+        {
+          "pattern": "$FACTORY = DocumentBuilderFactory.newInstance();"
+        },
+        {
+          "pattern": "$FACTORY",
+          "context": {
+            "inside": "class $C { ... $V $FACTORY = DocumentBuilderFactory.newInstance(); ... }",
+            "not_inside": [
+              "class $C { ... $FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true); ... }",
+              "class $C { ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false); ... }"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  
+  "sinks": [
+    {
+      "select": {
+        "node": "CALL",
+        "callee": {
+          "qname": "javax.xml.parsers.DocumentBuilderFactory.newDocumentBuilder"
+        }
+      }
+    }
+  ],
+  
+  "sanitizers": [
+    {
+      "kind": "METHOD_CALL",
+      "patterns": [
+        {
+          "pattern": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true)"
+        },
+        {
+          "pattern": "$FACTORY.setFeature(\"http://xml.org/sax/features/external-general-entities\", false); ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false)"
+        }
+      ]
+    }
+  ],
+  
+  "fix": {
+    "code": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n$FACTORY.newDocumentBuilder();"
+  },
+  
+  "metadata": {
+    "cwe": ["CWE-611: Improper Restriction of XML External Entity Reference"],
+    "owasp": ["A04:2017 - XML External Entities (XXE)", "A05:2021 - Security Misconfiguration"],
+    "asvs": {
+      "section": "V5 Validation, Sanitization and Encoding",
+      "control_id": "5.5.2 Insecure XML Deserialization"
+    },
+    "references": [
+      "https://semgrep.dev/blog/2022/xml-security-in-java",
+      "https://semgrep.dev/docs/cheat-sheets/java-xxe/",
+      "https://blog.sonarsource.com/secure-xml-processor"
+    ],
+    "technology": ["java", "xml"],
+    "confidence": "HIGH",
+    "impact": "HIGH",
+    "likelihood": "LOW"
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getQualifier() cannot be resolved for type SafeFeatureSetting (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,13-25)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,49-77)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,45-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,72-90)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,56-57)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,56-57)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,56-57)
+Rule Content:
+/**
+ * @name DocumentBuilderFactory missing DOCTYPE declaration restriction
+ * @description DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/documentbuilderfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04:2017
+ *       external/owasp/a05:2021
+ *       external/asvs/V5.5.2
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class DocumentBuilderFactoryCreation extends Expr {
+  DocumentBuilderFactoryCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newInstance") and
+      this = ma
+    )
+  }
+}
+
+class UnsafeDocumentBuilderCreation extends Expr {
+  UnsafeDocumentBuilderCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newDocumentBuilder") and
+      this = ma
+    )
+  }
+}
+
+class SafeFeatureSetting extends Expr {
+  SafeFeatureSetting() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setFeature") and
+      (
+        (ma.getArgument(0).(StringLiteral).getValue() = "http://apache.org/xml/features/disallow-doctype-decl" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = true)
+        or
+        (ma.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-general-entities" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = false)
+        or
+        (ma.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-parameter-entities" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = false)
+      ) and
+      this = ma
+    )
+  }
+}
+
+class DocumentBuilderFactoryTaintConfig extends TaintTracking::Configuration {
+  DocumentBuilderFactoryTaintConfig() { this = "DocumentBuilderFactoryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DocumentBuilderFactoryCreation dbc |
+      source.asExpr() = dbc and
+      not exists(SafeFeatureSetting sfs |
+        sfs.getQualifier().getAChild*() = source.asExpr() and
+        sfs.getEnclosingCallable() = dbc.getEnclosingCallable()
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(UnsafeDocumentBuilderCreation udbc | sink.asExpr() = udbc)
+  }
+}
+
+from DocumentBuilderFactoryTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. " +
+  "Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. " +
+  "Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations by setting " +
+  "\"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false."
+================================================================================
+Timestamp: 2025-09-26 00:15:37
+Attempt: 3
+IR Content:
+```json
+{
+  "id": "documentbuilderfactory-disallow-doctype-decl-missing",
+  "kind": "taint",
+  "interprocedural": false,
+  "path_output": "full",
+  "severity": "ERROR",
+  "message": "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations. This can be done by setting the features \"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false.",
+  
+  "sources": [
+    {
+      "kind": "CONSTRUCTOR",
+      "type": "DocumentBuilderFactory",
+      "patterns": [
+        {
+          "pattern": "$FACTORY = DocumentBuilderFactory.newInstance();"
+        },
+        {
+          "pattern": "$FACTORY",
+          "context": {
+            "inside": "class $C { ... $V $FACTORY = DocumentBuilderFactory.newInstance(); ... }",
+            "not_inside": [
+              "class $C { ... $FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true); ... }",
+              "class $C { ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false); ... }"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  
+  "sinks": [
+    {
+      "select": {
+        "node": "CALL",
+        "callee": {
+          "qname": "javax.xml.parsers.DocumentBuilderFactory.newDocumentBuilder"
+        }
+      }
+    }
+  ],
+  
+  "sanitizers": [
+    {
+      "kind": "METHOD_CALL",
+      "patterns": [
+        {
+          "pattern": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true)"
+        },
+        {
+          "pattern": "$FACTORY.setFeature(\"http://xml.org/sax/features/external-general-entities\", false); ... $FACTORY.setFeature(\"http://xml.org/sax/features/external-parameter-entities\", false)"
+        }
+      ]
+    }
+  ],
+  
+  "fix": {
+    "code": "$FACTORY.setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true);\n$FACTORY.newDocumentBuilder();"
+  },
+  
+  "metadata": {
+    "cwe": ["CWE-611: Improper Restriction of XML External Entity Reference"],
+    "owasp": ["A04:2017 - XML External Entities (XXE)", "A05:2021 - Security Misconfiguration"],
+    "asvs": {
+      "section": "V5 Validation, Sanitization and Encoding",
+      "control_id": "5.5.2 Insecure XML Deserialization"
+    },
+    "references": [
+      "https://semgrep.dev/blog/2022/xml-security-in-java",
+      "https://semgrep.dev/docs/cheat-sheets/java-xxe/",
+      "https://blog.sonarsource.com/secure-xml-processor"
+    ],
+    "technology": ["java", "xml"],
+    "confidence": "HIGH",
+    "impact": "HIGH",
+    "likelihood": "LOW"
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,16-24)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,16-24)
+ERROR: getImmediateQualifier() cannot be resolved for type SafeFeatureSetting (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,36-57)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,49-77)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:77,45-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:77,72-90)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,68-69)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,68-69)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,68-69)
+Rule Content:
+/**
+ * @name DocumentBuilderFactory missing DOCTYPE declaration restriction
+ * @description DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/documentbuilderfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ *       external/owasp/a04:2017
+ *       external/owasp/a05:2021
+ *       external/asvs/V5.5.2
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class DocumentBuilderFactoryCreation extends Expr {
+  DocumentBuilderFactoryCreation() {
+    exists(Method m |
+      m.hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newInstance") and
+      this = m.getACall()
+    )
+  }
+}
+
+class UnsafeDocumentBuilderCreation extends Expr {
+  UnsafeDocumentBuilderCreation() {
+    exists(Method m |
+      m.hasQualifiedName("javax.xml.parsers", "DocumentBuilderFactory", "newDocumentBuilder") and
+      this = m.getACall()
+    )
+  }
+}
+
+class SafeFeatureSetting extends Expr {
+  SafeFeatureSetting() {
+    exists(Method m, Call setFeatureCall |
+      m.hasName("setFeature") and
+      setFeatureCall.getCallee() = m and
+      (
+        (setFeatureCall.getArgument(0).(StringLiteral).getValue() = "http://apache.org/xml/features/disallow-doctype-decl" and
+         setFeatureCall.getArgument(1).(BooleanLiteral).getValue() = true)
+        or
+        (setFeatureCall.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-general-entities" and
+         setFeatureCall.getArgument(1).(BooleanLiteral).getValue() = false)
+        or
+        (setFeatureCall.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-parameter-entities" and
+         setFeatureCall.getArgument(1).(BooleanLiteral).getValue() = false)
+      ) and
+      this = setFeatureCall
+    )
+  }
+}
+
+class DocumentBuilderFactoryTaintConfig extends TaintTracking::Configuration {
+  DocumentBuilderFactoryTaintConfig() { this = "DocumentBuilderFactoryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DocumentBuilderFactoryCreation dbc |
+      source.asExpr() = dbc and
+      not exists(SafeFeatureSetting sfs |
+        sfs.getEnclosingCallable() = dbc.getEnclosingCallable() and
+        exists(DataFlow::Node qualifier |
+          qualifier.asExpr() = sfs.getImmediateQualifier() and
+          qualifier.asExpr() = source.asExpr()
+        )
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(UnsafeDocumentBuilderCreation udbc | sink.asExpr() = udbc)
+  }
+}
+
+from DocumentBuilderFactoryTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. " +
+  "Disable this by setting the feature \"http://apache.org/xml/features/disallow-doctype-decl\" to true. " +
+  "Alternatively, allow DOCTYPE declarations and only prohibit external entities declarations by setting " +
+  "\"http://xml.org/sax/features/external-general-entities\" and \"http://xml.org/sax/features/external-parameter-entities\" to false."
+================================================================================

@@ -1,0 +1,58 @@
+/**
+ * @name TransformerFactory DTDs Not Disabled
+ * @description DOCTYPE declarations are enabled for this TransformerFactory. This is vulnerable to XML external entity attacks. 
+ *              Disable this by setting the attributes "accessExternalDTD" and "accessExternalStylesheet" to "".
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/transformerfactory-dtds-not-disabled
+ * @tags security
+ *       external/cwe/cwe-611
+ *       owasp-a04:2017
+ *       owasp-a05:2021
+ *       asvs.5.5.2
+ *       cwe2021-top25
+ *       cwe2022-top25
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class TransformerFactoryConfig extends TaintTracking::Configuration {
+  TransformerFactoryConfig() { this = "TransformerFactoryConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "newInstance" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "newTransformer" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      sink.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setAttribute" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      (
+        ma.getArgument(0).toString() = "XMLConstants.ACCESS_EXTERNAL_DTD" or
+        ma.getArgument(0).toString() = "XMLConstants.ACCESS_EXTERNAL_STYLESHEET"
+      ) and
+      ma.getArgument(1).toString() = "\"\"" and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from TransformerFactoryConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "DOCTYPE declarations are enabled for this TransformerFactory. This is vulnerable to XML external entity attacks. " +
+  "Disable this by setting the attributes \"accessExternalDTD\" and \"accessExternalStylesheet\" to \"\"."

@@ -1,0 +1,50 @@
+/**
+ * @name Tainted LDAP input from HTTP request
+ * @description Detected input from a HTTPServletRequest going into an LDAP query. This could lead to LDAP injection if the input is not properly sanitized, which could result in attackers modifying objects in the LDAP tree structure.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-ldapi-from-http-request
+ * @tags security
+ *       external/cwe/cwe-90
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      ma = this.asExpr()
+    )
+  }
+}
+
+class LDAPSearchSink extends DataFlow::Node {
+  LDAPSearchSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("javax.naming.directory", "InitialDirContext") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("javax.naming.directory", "DirContext")) and
+      ma.getMethod().getName() = "search" and
+      ma = this.asExpr()
+    )
+  }
+}
+
+class LDAPInjectionConfig extends TaintTracking::Configuration {
+  LDAPInjectionConfig() { this = "LDAPInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof LDAPSearchSink
+  }
+}
+
+from LDAPInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential LDAP injection vulnerability from HTTP request input. $@", source, "Untrusted data flows here"

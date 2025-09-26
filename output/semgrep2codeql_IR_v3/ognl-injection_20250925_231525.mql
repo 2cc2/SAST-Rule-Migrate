@@ -1,0 +1,75 @@
+/**
+ * @name OGNL Injection
+ * @description A expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/ognl-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class OgnlInjectionConfig extends TaintTracking::Configuration {
+  OgnlInjectionConfig() { this = "OgnlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      p.getType().hasName("String") and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "getGetMethod" or
+       ma.getMethod().getName() = "getSetMethod" or
+       ma.getMethod().getName() = "getField" or
+       ma.getMethod().getName() = "setProperties" or
+       ma.getMethod().getName() = "setProperty" or
+       ma.getMethod().getName() = "getValue" or
+       ma.getMethod().getName() = "setValue" or
+       ma.getMethod().getName() = "translateVariables" or
+       ma.getMethod().getName() = "translateVariablesCollection" or
+       ma.getMethod().getName() = "shallBeIncluded" or
+       ma.getMethod().getName() = "commaDelimitedStringToSet" or
+       ma.getMethod().getName() = "evaluate" or
+       ma.getMethod().getName() = "callMethod" or
+       ma.getMethod().getName() = "compile" or
+       ma.getMethod().getName() = "isTrue" or
+       ma.getMethod().getName() = "findString" or
+       ma.getMethod().getName() = "findValue" or
+       ma.getMethod().getName() = "getText" or
+       ma.getMethod().getName() = "makeSelectList" or
+       ma.getMethod().getName() = "setParameter") and
+      (ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "ReflectionProvider") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "TextParseUtil") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "TextParser") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlTextParser") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlUtil") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "VelocityStrutsUtil") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "StrutsUtil") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlTool") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "ValueStack")) and
+      (sink.asExpr() = ma.getArgument(1) or sink.asExpr() = ma.getArgument(2))
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    exists(StringLiteral sl | node.asExpr() = sl) or
+    exists(Variable v, StringLiteral sl | 
+      node.asExpr() = v.getAnAccess() and
+      v.getInitializer() = sl
+    )
+  }
+}
+
+from OgnlInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, source, sink,
+  "A expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."

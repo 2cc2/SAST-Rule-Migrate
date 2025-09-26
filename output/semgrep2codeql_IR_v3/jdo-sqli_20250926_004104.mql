@@ -1,0 +1,46 @@
+/**
+ * @name JDO SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/jdo-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+
+predicate isJdoQueryMethod(Method m) {
+  m.getName() = "setFilter" or
+  m.getName() = "setGrouping"
+}
+
+predicate isJdoPersistenceManagerNewQuery(Method m) {
+  m.getName() = "newQuery" and
+  m.getDeclaringType().hasQualifiedName("javax.jdo", "PersistenceManager")
+}
+
+predicate isStringFormatOrConcat(Expr e) {
+  exists(MethodAccess ma | 
+    ma.getMethod().getName() = "format" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    e = ma
+  )
+  or
+  exists(AddExpr ae | e = ae)
+}
+
+from Call call, Expr sqlArg
+where
+  (
+    (isJdoQueryMethod(call.getCallee()) and sqlArg = call.getArgument(0)) or
+    (isJdoPersistenceManagerNewQuery(call.getCallee()) and exists(int i | sqlArg = call.getArgument(i)))
+  ) and
+  isStringFormatOrConcat(sqlArg) and
+  not exists(AddExpr ae | 
+    ae = sqlArg and
+    ae.getLeftOperand().(StringLiteral).getValue() != "" and
+    ae.getRightOperand().(StringLiteral).getValue() != ""
+  )
+select call, "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."

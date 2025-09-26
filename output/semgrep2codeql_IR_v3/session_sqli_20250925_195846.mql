@@ -1,0 +1,41 @@
+/**
+ * @name SQL string concatenation vulnerability
+ * @description Detects SQL queries constructed via string concatenation with user input
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/cwe/cwe-2021-top25
+ *       external/cwe/cwe-2022-top25
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       external/jboss
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("prepareStatement") and
+      m.getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(),
+  "In $@, $@ is used to construct a SQL query via string concatenation, which may lead to SQL injection.",
+  source.getNode(), "user input",
+  sink.getNode(), "SQL query construction"

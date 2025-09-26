@@ -1,0 +1,211 @@
+Timestamp: 2025-09-25 22:13:00
+Attempt: 1
+IR Content:
+```json
+{
+  "id": "unvalidated-redirect",
+  "kind": "pattern",
+  "severity": "WARNING",
+  "message": "Application redirects to a destination URL specified by a user-supplied parameter that is not validated. This could direct users to malicious locations. Consider using an allowlist to validate URLs.",
+  "metadata": {
+    "cwe": ["CWE-601: URL Redirection to Untrusted Site ('Open Redirect')"],
+    "owasp": ["A01:2021 - Broken Access Control"],
+    "asvs": {
+      "section": "V5: Validation, Sanitization and Encoding Verification Requirements",
+      "control_id": "5.1.5 Open Redirect",
+      "version": "4"
+    },
+    "category": "security",
+    "technology": ["java"],
+    "impact": "LOW",
+    "likelihood": "MEDIUM",
+    "confidence": "MEDIUM"
+  },
+  "patterns": [
+    {
+      "description": "Method with HttpServletResponse.sendRedirect using unvalidated String parameter",
+      "pattern": "$X $METHOD(...,HttpServletResponse $RES,...,String $URL,...) { ... $RES.sendRedirect($URL); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.sendRedirect using unvalidated request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... String $URL = $REQ.getParameter(...); ... $RES.sendRedirect($URL); ... }"
+    },
+    {
+      "description": "Method with direct HttpServletResponse.sendRedirect using request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... $RES.sendRedirect($REQ.getParameter(...)); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.addHeader('Location') using unvalidated String parameter",
+      "pattern": "$X $METHOD(...,HttpServletResponse $RES,...,String $URL,...) { ... $RES.addHeader(\"Location\",$URL); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.addHeader('Location') using unvalidated request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... String $URL = $REQ.getParameter(...); ... $RES.addHeader(\"Location\",$URL); ... }"
+    }
+  ],
+  "constraints": {
+    "language": "java",
+    "require_validation": false
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,38-79)
+ERROR: token recognition error at: '?' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,80-81)
+ERROR: token recognition error at: ': ' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,84-85)
+ERROR: unexpected input '0' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,82-83)
+ERROR: extraneous input ')' expecting one of: '}' (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,5-6)
+ERROR: getArgument() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,67-85)
+Rule Content:
+/**
+ * @name Unvalidated Redirect
+ * @description Application redirects to a destination URL specified by a user-supplied parameter that is not validated.
+ *              This could direct users to malicious locations. Consider using an allowlist to validate URLs.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/unvalidated-redirect
+ * @tags security
+ *       external/cwe/cwe-601
+ *       external/owasp/a01
+ *       external/asvs/V5:5.1.5
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class UnvalidatedRedirectConfig extends TaintTracking::Configuration {
+  UnvalidatedRedirectConfig() { this = "UnvalidatedRedirectConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getParameter" and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "sendRedirect" or
+       (ma.getMethod().getName() = "addHeader" and ma.getArgument(0).(StringLiteral).getValue() = "Location")) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      sink.asExpr() = ma.getArgument(ma.getMethod().getName() = "sendRedirect" ? 0 : 1)
+    )
+  }
+}
+
+from UnvalidatedRedirectConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Unvalidated redirect from user input found. This could enable open redirect attacks.", 
+  source.getNode(), "User input flows here",
+  sink.getNode(), "Redirect occurs here"
+================================================================================
+Timestamp: 2025-09-25 22:14:13
+Attempt: 2
+IR Content:
+```json
+{
+  "id": "unvalidated-redirect",
+  "kind": "pattern",
+  "severity": "WARNING",
+  "message": "Application redirects to a destination URL specified by a user-supplied parameter that is not validated. This could direct users to malicious locations. Consider using an allowlist to validate URLs.",
+  "metadata": {
+    "cwe": ["CWE-601: URL Redirection to Untrusted Site ('Open Redirect')"],
+    "owasp": ["A01:2021 - Broken Access Control"],
+    "asvs": {
+      "section": "V5: Validation, Sanitization and Encoding Verification Requirements",
+      "control_id": "5.1.5 Open Redirect",
+      "version": "4"
+    },
+    "category": "security",
+    "technology": ["java"],
+    "impact": "LOW",
+    "likelihood": "MEDIUM",
+    "confidence": "MEDIUM"
+  },
+  "patterns": [
+    {
+      "description": "Method with HttpServletResponse.sendRedirect using unvalidated String parameter",
+      "pattern": "$X $METHOD(...,HttpServletResponse $RES,...,String $URL,...) { ... $RES.sendRedirect($URL); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.sendRedirect using unvalidated request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... String $URL = $REQ.getParameter(...); ... $RES.sendRedirect($URL); ... }"
+    },
+    {
+      "description": "Method with direct HttpServletResponse.sendRedirect using request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... $RES.sendRedirect($REQ.getParameter(...)); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.addHeader('Location') using unvalidated String parameter",
+      "pattern": "$X $METHOD(...,HttpServletResponse $RES,...,String $URL,...) { ... $RES.addHeader(\"Location\",$URL); ... }"
+    },
+    {
+      "description": "Method with HttpServletResponse.addHeader('Location') using unvalidated request parameter",
+      "pattern": "$X $METHOD(...,HttpServletRequest $REQ,...,HttpServletResponse $RES,...) { ... String $URL = $REQ.getParameter(...); ... $RES.addHeader(\"Location\",$URL); ... }"
+    }
+  ],
+  "constraints": {
+    "language": "java",
+    "require_validation": false
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,27-35)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,67-85)
+Rule Content:
+/**
+ * @name Unvalidated Redirect
+ * @description Application redirects to a destination URL specified by a user-supplied parameter that is not validated.
+ *              This could direct users to malicious locations. Consider using an allowlist to validate URLs.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/unvalidated-redirect
+ * @tags security
+ *       external/cwe/cwe-601
+ *       external/owasp/a01
+ *       external/asvs/V5:5.1.5
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class UnvalidatedRedirectConfig extends TaintTracking::Configuration {
+  UnvalidatedRedirectConfig() { this = "UnvalidatedRedirectConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m |
+      m.getName() = "getParameter" and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      source.asExpr() = m.getACall()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "sendRedirect" or
+       (ma.getMethod().getName() = "addHeader" and
+        ma.getArgument(0).(StringLiteral).getValue() = "Location")) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      (
+        ma.getMethod().getName() = "sendRedirect" and sink.asExpr() = ma.getArgument(0) or
+        ma.getMethod().getName() = "addHeader" and sink.asExpr() = ma.getArgument(1)
+      )
+    )
+  }
+}
+
+from UnvalidatedRedirectConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Unvalidated redirect from user input found. This could enable open redirect attacks.", 
+  source.getNode(), "User input flows here",
+  sink.getNode(), "Redirect occurs here"
+================================================================================

@@ -1,0 +1,172 @@
+Timestamp: 2025-09-25 21:49:02
+Attempt: 1
+IR Content:
+```json
+{
+  "id": "tainted-sqli",
+  "kind": "taint",
+  "interprocedural": true,
+  "severity": "WARNING",
+  "message": "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead.",
+  
+  "sources": [
+    {
+      "kind": "PARAMETER",
+      "name": "$EVENT",
+      "constraints": [
+        {
+          "pattern-either": [
+            {
+              "pattern": "$HANDLERTYPE $HANDLER($TYPE $EVENT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) { ... }"
+            },
+            {
+              "pattern": "$HANDLERTYPE $HANDLER(InputStream $EVENT, OutputStream $OUT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) { ... }"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  
+  "sinks": [
+    {
+      "select": {
+        "node": "SQL_STATEMENT",
+        "patterns": [
+          {
+            "pattern-either": [
+              "(java.sql.CallableStatement $STMT) = ...;",
+              "(java.sql.Statement $STMT) = ...;",
+              "(java.sql.PreparedStatement $STMT) = ...;",
+              "$VAR = $CONN.prepareStatement(...)",
+              "$PATH.queryForObject(...)",
+              "(java.util.Map<String, Object> $STMT) = $PATH.queryForMap(...)",
+              "(org.springframework.jdbc.support.rowset.SqlRowSet $STMT) = ..."
+            ]
+          },
+          {
+            "pattern-inside": "(String $SQL) = \"$SQLSTR\" + ...; ...",
+            "pattern": "$PATH.$SQLCMD(..., $SQL, ...)",
+            "metavariable-regex": [
+              {
+                "metavariable": "$SQLSTR",
+                "regex": "(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)"
+              },
+              {
+                "metavariable": "$SQLCMD",
+                "regex": "(execute|query|executeUpdate|batchUpdate)"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  
+  "sanitizers": [],
+  
+  "metadata": {
+    "category": "security",
+    "technology": ["sql", "java", "aws-lambda"],
+    "cwe": ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"],
+    "owasp": ["A01:2017 - Injection", "A03:2021 - Injection"],
+    "references": ["https://owasp.org/Top10/A03_2021-Injection"],
+    "cwe2022-top25": true,
+    "cwe2021-top25": true,
+    "subcategory": "vuln",
+    "likelihood": "MEDIUM",
+    "impact": "HIGH",
+    "confidence": "MEDIUM"
+  }
+}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.aws.AWSLambda (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,8-49)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,10-19)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,10-19)
+ERROR: getString() cannot be resolved for type Expr::StringLiteral (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,10-19)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,14-26)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,43-71)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,39-57)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,66-84)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by $EVENT object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       cwe-89
+ *       owasp-a01
+ *       owasp-a03
+ *       cwe-top25
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.aws.AWSLambda
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m | 
+      (m.getName().matches("handleRequest%") or m.getName().matches("handle%")) and
+      (
+        exists(Parameter p | 
+          p = m.getParameter(0) and
+          (p.getType().getName() = "APIGatewayProxyRequestEvent" or
+           p.getType().getName() = "InputStream") and
+          this.asParameter() = p
+        )
+      )
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("execute%") or
+       ma.getMethod().getName().matches("query%") or
+       ma.getMethod().getName().matches("executeUpdate%") or
+       ma.getMethod().getName().matches("batchUpdate%")) and
+      ma.getMethod().getDeclaringType().getASupertype*().hasQualifiedName("java.sql", "Statement") and
+      this.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(StringLiteral sl |
+      sl.getString().matches("SELECT%") or
+      sl.getString().matches("INSERT%") or
+      sl.getString().matches("UPDATE%") and
+      exists(MethodAccess ma |
+        ma.getMethod().getName().matches("execute%") or
+        ma.getMethod().getName().matches("query%") or
+        ma.getMethod().getName().matches("executeUpdate%") or
+        ma.getMethod().getName().matches("batchUpdate%") and
+        this.asExpr() = sl
+      )
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof LambdaEventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+}
+
+from TaintedSqlFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Potential SQL injection vulnerability. User input from Lambda event flows into SQL statement without proper sanitization."
+================================================================================

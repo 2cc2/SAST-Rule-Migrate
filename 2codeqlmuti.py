@@ -167,8 +167,8 @@ def process_multiple_files(directory: str,IR:str, output_dir: str, log_dir: str)
   
 if __name__ == "__main__":
     input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java"  
-    IR_directory = "/Users/djoker/Desktop/CTGA/demo/IR_V2/" 
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_IR_v2"
+    IR_directory = "/Users/djoker/Desktop/CTGA/demo/IR_V3/" 
+    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_IR_v3"
 
     log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_IR"
     for directory in [input_directory, output_directory, log_directory]:

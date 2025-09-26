@@ -1,0 +1,72 @@
+/**
+ * @name HTTP Response Splitting
+ * @description Older Java application servers are vulnerable to HTTP response splitting, which may occur if an HTTP request can be injected with CRLF characters.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/http-response-splitting
+ * @tags security
+ *       external/cwe/cwe-113
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class HttpRequestParameterSource extends RemoteFlowSource {
+  HttpRequestParameterSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asExpr() = ma
+    )
+  }
+
+  override string getSourceType() { result = "HttpServletRequest.getParameter()" }
+}
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class ResponseAddCookie extends DataFlow::Node {
+  ResponseAddCookie() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "addCookie" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      this.asExpr() = ma.getAnArgument()
+    )
+  }
+}
+
+class PathVariableSource extends RemoteFlowSource {
+  PathVariableSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") and
+      this.asParameter() = p
+    )
+  }
+
+  override string getSourceType() { result = "@PathVariable parameter" }
+}
+
+predicate isResponseSplittingVulnerable(DataFlow::Node source, DataFlow::Node sink) {
+  exists(Method m | m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") |
+    source instanceof HttpRequestParameterSource or
+    source instanceof PathVariableSource
+  ) and
+  sink instanceof ResponseAddCookie and
+  exists(DataFlow::Node cookieCreation |
+    cookieCreation instanceof CookieCreation and
+    TaintTracking::localTaint(source, cookieCreation) and
+    TaintTracking::localTaint(cookieCreation, sink)
+  )
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where isResponseSplittingVulnerable(source, sink)
+select sink, "Potential HTTP response splitting vulnerability due to unvalidated user input in cookie value"
