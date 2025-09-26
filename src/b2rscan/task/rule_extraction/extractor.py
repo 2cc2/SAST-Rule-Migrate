@@ -1,8 +1,11 @@
 import os
+import json
 from typing import Dict, Any, List, Optional
-# from .parser import CodeQLRuleParser
-# from .ir_converter import IRConverter
+from dataclasses import asdict
+
 from b2rscan.llm_wrapper import LLMWrapper
+from b2rscan.xcpg_ir.validator import XCPGIRValidator
+from b2rscan.task.rule_extraction.ir_converter import IRConverter
 
 class RuleExtractor:
    
@@ -10,10 +13,8 @@ class RuleExtractor:
         """
         初始化规则提取器
         """
-        
-        # self.codeql_parser = CodeQLRuleParser()
-        # self.ir_converter = IRConverter()
         self.llm_client = LLMWrapper("dashscope")
+        self.ir_converter = IRConverter()
         
     def extract_rules(self, sast_tool: str, source_path: str, options: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
@@ -33,7 +34,7 @@ class RuleExtractor:
         # 构造更具元认知能力的任务描述
         task_description = f"""
         You are a security rule extraction expert. Your task is to analyze the {sast_tool} repository 
-        and extract security rules, then convert them to our unified xCPG-IR format.
+        located at {source_path} and extract security rules, then convert them to our unified xCPG-IR format.
         
         First, think about the approach:
         1. Understand the structure and organization of the {sast_tool} repository
@@ -44,8 +45,8 @@ class RuleExtractor:
         Then, for each rule you find:
         1. Extract the rule ID, name, and description
         2. Determine the rule's severity level
-        3. Identify sources, sinks, sanitizers and validators in the rule
-        4. Map these elements to the xCPG-IR schema
+        3. Identify sources, sinks, sanitizers and barriers in the rule
+        4. Map these elements to the xCPG-IR schema as defined in the XCPG-IR Specification v1.0
         
         Rule extraction strategy:
         - Look for files with extensions like .yml, .yaml, .json, .ql (for CodeQL)
@@ -55,37 +56,26 @@ class RuleExtractor:
         
         Output requirements:
         1. Return a JSON array of rules in xCPG-IR format
-        2. Each rule must include: id, name, description, severity, sources, sinks, sanitizers, validators
-        3. Ensure the output follows the xCPG-IR schema
-        4. If you cannot find specific information, use appropriate default values
+        2. Each rule must follow the XCPG-IR schema with all required fields
+        3. Include proper sources, sinks, sanitizers, barriers, and flows
+        4. Ensure the output is valid against the XCPG-IR schema
         5. Do not include explanatory text, only the JSON array
         
-        Additional context: {options}
+        Additional context: {json.dumps(options)}
         """
-        task_description = "say hello"
         
         result = self.llm_client.infer(task_description)
-        print(result)
-        # 解析结果并返回规则列表
-        # 在实际实现中，这里需要解析agent的输出结果
-        # 目前返回一个示例结构
-        rules = [
-            {
-                "id": f"{sast_tool}-example-rule-1",
-                "name": "Example Rule",
-                "source": sast_tool,
-                "pattern": "example-pattern",
-                "severity": "high",
-                "description": "Example rule extracted by agent",
-                "sources": ["example-source"],
-                "sinks": ["example-sink"],
-                "sanitizers": ["example-sanitizer"],
-                "validators": ["example-validator"]
-            }
-        ]
         
-        return rules
-        
+        # 尝试解析JSON结果
+        try:
+            rules = json.loads(result)
+            # 转换为XCPG-IR并验证
+            xcpg_ir_rules = self.ir_converter.convert(rules, sast_tool)
+            # 转换为字典列表以便返回
+            return [asdict(ir_rule) for ir_rule in xcpg_ir_rules]
+        except json.JSONDecodeError:
+            print("Failed to parse LLM response as JSON")
+            return []
 
 if __name__ == "__main__":
     extractor = RuleExtractor()
