@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import asdict
 
 from b2rscan.xcpg_ir.schema import XCPGIR
-from b2rscan.xcpg_ir.flow import RuleMetadata, Scope, Environment, Report, TestCases
+from b2rscan.xcpg_ir.flow import RuleMetadata, Scope, Environment, Report, TestCases, Flow
 from b2rscan.xcpg_ir.entities import Source, Sink, Sanitizer, Barrier, Propagation
 from b2rscan.xcpg_ir.validator import XCPGIRValidator
 from b2rscan.xcpg_ir.match import Match, ApiSignature, TypeMatch, WhereClause
@@ -54,89 +54,109 @@ class IRConverter:
             xCPG-IR格式的规则或None（如果转换失败）
         """
         try:
+            # 确保rule是一个字典
+            if not isinstance(rule, dict):
+                print(f"规则不是字典类型: {type(rule)}")
+                return None
+                
             # 创建基础元数据
             rule_metadata = RuleMetadata(
-                id=rule.get("id", f"{source_tool}-{hash(str(rule))}"),
-                kind=rule.get("kind", "taint"),
-                severity=rule.get("severity", "medium"),
-                message=rule.get("description", "Security rule")
+                id=str(rule.get("id", f"{source_tool}-{hash(str(rule))}")),
+                kind=RuleKind(rule.get("kind", "taint")),
+                severity=SeverityLevel(rule.get("severity", "medium")),
+                message=str(rule.get("message", rule.get("description", "Security rule")))
             )
             
             # 创建作用域
+            scope_data = rule.get("scope", {})
+            if not isinstance(scope_data, dict):
+                scope_data = {}
+                
             scope = Scope(
-                languages=rule.get("languages", ["*"]),
-                frameworks=rule.get("frameworks", ["*"]),
+                languages=scope_data.get("languages", ["*"]),
+                frameworks=scope_data.get("frameworks", ["*"]),
                 env=Environment(
-                    os=rule.get("os", ["*"]),
-                    shell=rule.get("shell", ["*"])
-                ) if rule.get("os") or rule.get("shell") else None
+                    os=scope_data.get("env", {}).get("os", ["*"]),
+                    shell=scope_data.get("env", {}).get("shell", ["*"])
+                ) if scope_data.get("env") else None
             )
             
             # 转换sources
             sources = []
             for source in rule.get("sources", []):
-                sources.append(Source(
-                    id=source.get("id", f"source-{len(sources)}"),
-                    match=self._create_match(source)
-                ))
+                if isinstance(source, dict):
+                    sources.append(Source(
+                        id=str(source.get("id", f"source-{len(sources)}")),
+                        match=self._create_match(source)
+                    ))
             
             # 转换sinks
             sinks = []
             for sink in rule.get("sinks", []):
-                sinks.append(Sink(
-                    id=sink.get("id", f"sink-{len(sinks)}"),
-                    match=self._create_match(sink)
-                ))
+                if isinstance(sink, dict):
+                    sinks.append(Sink(
+                        id=str(sink.get("id", f"sink-{len(sinks)}")),
+                        match=self._create_match(sink)
+                    ))
             
             # 转换sanitizers
             sanitizers = []
             for sanitizer in rule.get("sanitizers", []):
-                sanitizers.append(Sanitizer(
-                    id=sanitizer.get("id", f"sanitizer-{len(sanitizers)}"),
-                    match=self._create_match(sanitizer),
-                    effect=sanitizer.get("effect", "neutralize"),
-                    effect_config=self._create_sanitizer_effect(sanitizer)
-                ))
+                if isinstance(sanitizer, dict):
+                    sanitizers.append(Sanitizer(
+                        id=str(sanitizer.get("id", f"sanitizer-{len(sanitizers)}")),
+                        match=self._create_match(sanitizer),
+                        effect=sanitizer.get("effect", "neutralize")
+                    ))
             
             # 转换barriers
             barriers = []
             for barrier in rule.get("barriers", []):
-                barriers.append(Barrier(
-                    id=barrier.get("id", f"barrier-{len(barriers)}"),
-                    match=self._create_match(barrier),
-                    effect=barrier.get("effect", "stop")
-                ))
+                if isinstance(barrier, dict):
+                    barriers.append(Barrier(
+                        id=str(barrier.get("id", f"barrier-{len(barriers)}")),
+                        match=self._create_match(barrier),
+                        effect=barrier.get("effect", "stop")
+                    ))
             
             # 转换propagations
             propagations = []
             for propagation in rule.get("propagations", []):
-                propagations.append(Propagation(
-                    id=propagation.get("id", f"propagation-{len(propagations)}"),
-                    edge=propagation.get("edge", "arg->param"),
-                    kind=propagation.get("kind", "taint")
-                ))
+                if isinstance(propagation, dict):
+                    propagations.append(Propagation(
+                        id=str(propagation.get("id", f"propagation-{len(propagations)}")),
+                        edge=str(propagation.get("edge", "arg->param")),
+                        kind=str(propagation.get("kind", "taint"))
+                    ))
             
             # 转换flows
             flows = []
             for flow in rule.get("flows", []):
-                flows.append(Flow(
-                    source=flow.get("source", ""),
-                    sink=flow.get("sink", ""),
-                    through=flow.get("through", []),
-                    constraints=self._create_flow_constraints(flow)
-                ))
+                if isinstance(flow, dict):
+                    flows.append(Flow(
+                        source=str(flow.get("source", "")),
+                        sink=str(flow.get("sink", "")),
+                        through=flow.get("through", []),
+                    ))
             
             # 创建报告
+            report_data = rule.get("report", {})
+            if not isinstance(report_data, dict):
+                report_data = {}
+                
             report = Report(
-                message=rule.get("description", "Security rule violation detected"),
-                locations=rule.get("locations", ["source", "sink"]),
-                evidence=self._create_evidence(rule)
+                message=str(report_data.get("message", "Security rule violation detected")),
+                locations=report_data.get("locations", ["source", "sink"])
             )
             
             # 创建测试用例
+            tests_data = rule.get("tests", {})
+            if not isinstance(tests_data, dict):
+                tests_data = {}
+                
             tests = TestCases(
-                positive=rule.get("positive_tests", []),
-                negative=rule.get("negative_tests", [])
+                positive=tests_data.get("positive", []),
+                negative=tests_data.get("negative", [])
             )
             
             # 构建完整XCPG-IR

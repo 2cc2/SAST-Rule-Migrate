@@ -2,9 +2,6 @@ from enum import Enum
 
 class RuleKind(str, Enum):
     TAINT = "taint"
-    PATTERN = "pattern"
-    HYBRID = "hybrid"
-    VALUE = "value"
 
 class SeverityLevel(str, Enum):
     INFO = "info"
