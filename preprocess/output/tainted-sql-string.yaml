@@ -1,0 +1,87 @@
+xcpgir_version: '1.0'
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: Detected user input used to manually construct a SQL string. This could
+    result in SQL injection. Use parameterized queries or ORM instead.
+  metadata:
+    cwe:
+    - CWE-704
+    owasp:
+    - A01:2017
+    - A03:2021
+    references:
+    - https://docs.sqlalchemy.org/en/14/core/tutorial.html#using-textual-sql
+    - https://www.tutorialspoint.com/sqlalchemy/sqlalchemy_quick_guide.htm
+scope:
+  languages:
+  - python
+  frameworks:
+  - flask
+  - sqlalchemy
+sources:
+- id: FLASK_ROUTE_PARAM
+  match:
+    node: PARAM
+    where:
+    - op: inside
+      left: location
+      right: '@$APP.route(...)'
+- id: FLASK_REQUEST
+  match:
+    node: CALL
+    api:
+      type: flask.request
+      method: '*'
+sinks:
+- id: UNSAFE_SQL_CONCAT
+  match:
+    node: CALL
+    where:
+    - op: regex
+      left: code
+      right: (?i)(select|delete|insert|create|update|alter|drop).*
+    - op: or
+      conditions:
+      - op: contains
+        left: code
+        right: +
+      - op: contains
+        left: code
+        right: '%'
+      - op: contains
+        left: code
+        right: .format(
+      - op: contains
+        left: code
+        right: f"
+propagations:
+- id: PARAM_TO_EXPR
+  edge:
+  - arg->param
+  - local->expr
+  kind: taint
+flows:
+- source:
+  - FLASK_ROUTE_PARAM
+  - FLASK_REQUEST
+  sink: UNSAFE_SQL_CONCAT
+  through:
+  - PARAM_TO_EXPR*
+report:
+  message: 'Potential SQL injection: user input flows directly into SQL string construction'
+  locations:
+  - source
+  - sink
+  evidence:
+    capture:
+    - source: $FLASK_INPUT
+      sink: $SQL_EXPR
+tests:
+  positive:
+  - "@app.route('/search')\ndef search(query):\n    sql = \"SELECT * FROM users WHERE\
+    \ name = \" + query\n    cursor.execute(sql)\n"
+  negative:
+  - "@app.route('/search')\ndef search(query):\n    sql = \"SELECT * FROM users WHERE\
+    \ name = ?\"\n    cursor.execute(sql, (query,))"

@@ -1,0 +1,104 @@
+rules:
+- id: tainted-sqli
+  message: >-
+    Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL
+    injection if variables in the SQL statement are not properly sanitized.
+    Use parameterized SQL queries or properly sanitize user input instead.
+  languages: [java]
+  severity: WARNING
+  mode: taint
+
+  pattern-sources:
+  - patterns:
+    - focus-metavariable: $EVENT
+    - pattern-either:
+      - pattern: |
+          $HANDLERTYPE $HANDLER($TYPE $EVENT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) {
+            ...
+          }
+      - pattern: |
+          $HANDLERTYPE $HANDLER(InputStream $EVENT, OutputStream $OUT, com.amazonaws.services.lambda.runtime.Context $CONTEXT) {
+            ...
+          }
+  
+  pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (java.sql.CallableStatement $STMT) = ...; 
+      - pattern: |
+          (java.sql.Statement $STMT) = ...;
+      - pattern: |
+          (java.sql.PreparedStatement $STMT) = ...;
+      - pattern: |
+          $VAR = $CONN.prepareStatement(...)
+      - pattern: |
+          $PATH.queryForObject(...);
+      - pattern: |
+          (java.util.Map<String, Object> $STMT) = $PATH.queryForMap(...);
+      - pattern: |
+          (org.springframework.jdbc.support.rowset.SqlRowSet $STMT) = ...;
+      - patterns:
+        - pattern-inside: |
+            (String $SQL) = "$SQLSTR" + ...;
+            ...
+        - pattern: $PATH.$SQLCMD(..., $SQL, ...);
+        - metavariable-regex:
+            metavariable: $SQLSTR
+            regex: (?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)
+        - metavariable-regex:
+            metavariable: $SQLCMD
+            regex: (execute|query|executeUpdate|batchUpdate)
+  
+  options:
+    interfile: true
+  metadata:
+    category: security
+    technology:
+    - sql
+    - java
+    - aws-lambda
+    cwe:
+    - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+    interfile: true
+
+#  v1
+# 优点:
+# 实现较为简单，逻辑清晰。
+# 数据汇检测涵盖了常见的 SQL 执行方法。
+# 缺点:
+# 数据源范围较窄，仅支持特定方法和参数。
+# 未明确检测动态 SQL 拼接，可能漏报一些漏洞。
+# 精确度较低，未对 SQL 字符串内容进行深入分析。
+# v2
+# 优点:
+# 数据源范围更广，支持更多类型的 Lambda 事件参数。
+# 数据汇检测更全面，特别是动态 SQL 拼接的检测。
+# 更贴合原规则的目标和实现。
+# 缺点:
+# 实现较为复杂，可能增加维护成本。
+# 动态 SQL 拼接的检测可能存在误报风险。
+# 3. 与原规则的贴合度
+# v1:
+# 数据源范围较窄，未完全覆盖原规则的目标。
+# 数据汇检测较为基础，未覆盖动态 SQL 拼接。
+# 整体实现与原规则目标范围的贴合度较低。
+# v2:
+# 数据源范围更广，覆盖了原规则的目标。
+# 数据汇检测更全面，特别是动态 SQL 拼接的检测。
+# 整体实现与原规则目标范围的贴合度较高。
+# 结论
+# 更贴合原规则的版本: v2
+# 原因: v2 在数据源和数据汇的覆盖范围上更接近原规则的目标，特别是动态 SQL 拼接的检测更符合原规则的实现意图。

@@ -1,0 +1,54 @@
+/**
+ * @name Tainted XPath from HTTP Request
+ * @description Detected input from a HTTPServletRequest going into a XPath evaluate or compile command. 
+ * This could lead to xpath injection if variables passed into the evaluate or compile commands are not 
+ * properly sanitized. Xpath injection could lead to unauthorized access to sensitive information in 
+ * XML documents. Instead, thoroughly sanitize user input or use parameterized xpath queries if you can.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-xpath-from-http-request
+ * @tags security
+ *       vulnerability
+ *       cwe/643
+ *       owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class HttpServletRequestSource extends DataFlow::Node {
+  HttpServletRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet.http", "HttpServletRequest", ["getParameter", "getHeader", "getQueryString"]) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class XPathSink extends DataFlow::Node {
+  XPathSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().hasQualifiedName("javax.xml.xpath", "XPath", "evaluate") or
+       ma.getMethod().hasQualifiedName("javax.xml.xpath", "XPath", "compile")) and
+      this.asExpr() = ma.getAnArgument()
+    )
+  }
+}
+
+class TaintedXPathFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedXPathFromHttpRequestConfig() {
+    this = "TaintedXPathFromHttpRequestConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpServletRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof XPathSink
+  }
+}
+
+from TaintedXPathFromHttpRequestConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Potential XPath injection vulnerability from HTTP request input to XPath evaluation"
