@@ -1,11 +1,11 @@
 #!/bin/bash
 
 
-TARGET_DIR="/Users/djoker/Desktop/CTGA/100scan/data/repo"
-CSV_FILE="/Users/djoker/Desktop/CTGA/100scan/data/100.csv"
+TARGET_DIR="/Users/djoker/Desktop/CTGA/demo/100scan/data/repo"
+CSV_FILE="/Users/djoker/Desktop/CTGA/demo/100scan/data/100.csv"
 
 mkdir -p "$TARGET_DIR"
-tail -n +2 "$CSV_FILE" | head -n 50 | while IFS=, read -r project_name repo_url; do
+tail -n +2 "$CSV_FILE" | while IFS=, read -r project_name repo_url; do
     if [ -z "$repo_url" ]; then
         echo "跳过 $project_name，因为没有提供 repo_url"
         continue

@@ -1,108 +1,13 @@
-xcpgir_version: '1.0'
-rule:
-  id: tainted-url-host
-  kind: taint
-  severity: WARNING
-  message: User data flows into the host portion of this manually-constructed URL,
-    potentially leading to SSRF vulnerability
-scope:
-  languages:
-  - python
-  frameworks:
-  - flask
 sources:
-- id: WEB_INPUT
+- id: USER_INPUT
   match:
-    node: CALL | IDENTIFIER
+    node: CALL
     api:
       type: flask.request
       method: $ANYTHING
-    where:
-    - op: eq
-      left: methodFullName
-      right: flask.request.$ANYTHING
-- id: ROUTE_PARAM
+- id: ROUTE_PARAMETER
   match:
-    node: IDENTIFIER
+    node: PARAM
     where:
-    - op: pattern-inside
-      left: '@$APP.route(...)
-
-        def $FUNC(..., $ROUTEVAR, ...):
-
-        '
-sinks:
-- id: URL_CONSTRUCTION
-  match:
-    node: EXPRESSION
-    where:
-    - op: or
-      conditions:
-      - op: pattern-match
-        args:
-        - '"$URLSTR" % ...'
-        - metavariable: $URLSTR
-          pattern: $SCHEME://%s
-      - op: pattern-match
-        args:
-        - '"$URLSTR" % ...'
-        - metavariable: $URLSTR
-          pattern: $SCHEME://%r
-      - op: pattern-match
-        args:
-        - '"$URLSTR".format(...)'
-        - metavariable: $URLSTR
-          pattern: $SCHEME:// { ... }
-      - op: pattern-match
-        args:
-        - '"$URLSTR" + ...'
-        - metavariable: $URLSTR
-          regex: .*://$
-      - op: pattern-match
-        args:
-        - f"$URLSTR{...}..."
-        - metavariable: $URLSTR
-          regex: .*://$
-      - op: pattern-match
-        args:
-        - $URL = "$URLSTR"... $URL += ...
-        - metavariable: $URLSTR
-          regex: .*://$
-propagations:
-- id: STRING_CONCAT
-  edge: dfg
-  kind: taint
-  where:
-  - op: match
-    left: operation
-    right:
-    - format
-    - +
-    - '%'
-    - +=
-flows:
-- source: WEB_INPUT | ROUTE_PARAM
-  sink: URL_CONSTRUCTION
-  through:
-  - STRING_CONCAT*
-  provenance: SSRF
-  constraints:
-    path:
-      must_not:
-      - pattern: CALL(flask.escape)
-report:
-  metadata:
-    cwe:
-    - 'CWE-918: Server-Side Request Forgery (SSRF)'
-    owasp:
-    - A10:2021 - Server-Side Request Forgery (SSRF)
-    references:
-    - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
-  locations:
-  - source
-  - sink
-  - path
-  evidence:
-    capture:
-    - argument: 0
-    - variable: $URLSTR
+    - op: inside
+      pattern: "@$APP.route(...)\ndef $FUNC(..., $ROUTEVAR, ...):\n  ..."

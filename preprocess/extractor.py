@@ -15,7 +15,7 @@ from collections import OrderedDict
 load_dotenv()
 
 RULES_DIR = "/Users/djoker/Desktop/CTGA/demo/preprocess/input/python"
-OUTPUT_YAML_PATH = "/Users/djoker/Desktop/CTGA/demo/preprocess/output/sink"
+OUTPUT_YAML_PATH = "/Users/djoker/Desktop/CTGA/demo/preprocess/output/source"
 VISITED_LOG_PATH = "visited_log.txt"
 PROMPTS_LOG_PATH = "prompts_log.txt"
 
@@ -60,8 +60,8 @@ def batch_process_rules():
         raw_name = os.path.splitext(os.path.basename(file))[0]
         rule_text = parse_rule_file(file)
        
-        # prompt= SourcePrompt().format(code=rule_text.strip())
-        prompt= SinkPrompt().format(code=rule_text.strip())
+        prompt= SourcePrompt().format(code=rule_text.strip())
+        # prompt= SinkPrompt().format(code=rule_text.strip())
         # prompt= SanitazerPrompt().format(code=rule_text.strip())
         # prompt= PropagationPrompt().format(code=rule_text.strip())
         save_to_file(PROMPTS_LOG_PATH, f"Prompt for {file}:\n{prompt}")
@@ -80,7 +80,7 @@ def batch_process_rules():
                 ordered_rule_yaml.update(rule_yaml)
                 results.append(ordered_rule_yaml)
                 output_file_path = os.path.join(
-                    os.path.dirname(OUTPUT_YAML_PATH), f"{raw_name}.yaml"
+                    OUTPUT_YAML_PATH, f"{raw_name}.yaml"
                 )
                 print(f"[✔] 正在保存规则到 {output_file_path}...")
                 with open(output_file_path, "w", encoding="utf-8") as f:

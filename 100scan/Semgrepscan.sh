@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # 定义目标目录和结果目录
-REPO_DIR="/Users/djoker/Desktop/CTGA/100scan/data/repo"
-RESULT_DIR="/Users/djoker/Desktop/CTGA/100scan/data/semgrep_results"
+REPO_DIR="/Users/djoker/Desktop/CTGA/demo/100scan/data/repo"
+RESULT_DIR="/Users/djoker/Desktop/CTGA/demo/100scan/data/semgrep_results"
 
 # 创建结果目录
 mkdir -p "$RESULT_DIR"

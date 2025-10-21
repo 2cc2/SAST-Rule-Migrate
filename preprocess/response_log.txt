@@ -633,3 +633,658 @@ tests:
 4. 提供了测试用例来验证规则的准确性和可靠性
 5. 保留了原始规则的语义和严重性等级
 6. 包含了相关的元数据信息
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-sql-string.yaml:
+根据输入的Codeql规则的Python SQL注入检测规则，我将为其生成XCPG-IR中间表示规范：
+
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected user input used to manually construct a SQL string. Use parameterized queries or ORM instead."
+  metadata:
+    cwe: ["CWE-704"]
+    owasp: ["A01:2017", "A03:2021"]
+    references: ["sqlalchemy文档","tutorialspoint"]
+    impact: MEDIUM
+    likelihood: MEDIUM
+    confidence: MEDIUM
+
+scope:
+  languages: [python]
+  frameworks: ["flask", "sqlalchemy"]
+
+sources:
+  - id: FLASK_USER_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: "*" }
+    match:
+      node: PARAM
+      where:
+        - op: inside
+          left: location
+          right: "@$APP.route(...)\n  def $FUNC(..., $ROUTEVAR, ...)"
+
+sinks:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL | OPERATOR
+      where:
+        - op: or
+          conditions:
+            - op: match
+              left: code
+              right: '\"\$SQLSTR\" \+'
+            - op: match
+              left: code
+              right: '\"\$SQLSTR\" %'
+            - op: match
+              left: code
+              right: '\"\$SQLSTR\"\.format'
+            - op: match
+              left: code
+              right: 'f\"\$SQLSTR\{'
+        - op: regex
+          left: code
+          right: '\s*(?i)(select|delete|insert|create|update|alter|drop)\b.*'
+
+propagations:
+  - id: STRING_OP
+    edge: arg->param|return|field
+    kind: taint
+
+flows:
+  - source: FLASK_USER_INPUT
+    sink: SQL_STRING_CONCAT
+    through: [STRING_OP*]
+    constraints:
+      path:
+        must_not: ["CALL(sqlalchemy.text)"]
+
+report:
+  message: "Potential SQL injection vulnerability from ${source} to ${sink}"
+  locations: ["source","sink","path"]
+  evidence:
+    capture:
+      - { node: "source", property: "code" }
+      - { node: "sink", property: "code" }
+
+tests:
+  positive:
+    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
+  negative:
+    - "query = text(\"SELECT * FROM users WHERE name = :name\").params(name=request.args.get('name'))"
+```
+
+关键转换说明：
+1. 将原规则中的Flask请求输入抽象为`FLASK_USER_INPUT`源
+2. SQL字符串拼接操作识别为`SQL_STRING_CONCAT`汇聚点
+3. 保留了原规则中对SQL关键字的正则检测
+4. 添加了通过SQLAlchemy的text()作为净化点的约束
+5. 测试用例保留了原规则的意图，展示了正面和反面案例
+6. 元数据(CWE/OWASP等)完全保留
+7. 传播路径通过字符串操作(`STRING_OP`)进行抽象
+
+这个表示可以迁移到其他支持Python分析的SAST工具，同时保持了原规则的检测意图和精度。
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-url-host.yaml:
+根据输入的CodeQL规则内容和XCPG-IR规范文档，我将SSRF漏洞检测规则转换为中间表示格式：
+
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: WARNING
+  message: "User data flows into the host portion of manually-constructed URL. Possible SSRF vulnerability: ${sink.arg0.preview}"
+
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: ANY }
+    match:
+      node: LOCAL
+      where:
+        - op: inside
+          pattern: |
+            @route(...)
+            def func(..., $VAR, ...):
+
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: .*://
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - pattern: '"$URLSTR" % ...'
+            - pattern: '"$URLSTR".format(...)'
+            - pattern: '"$URLSTR" + ...'
+            - pattern: 'f"$URLSTR{...}..."'
+            - pattern: '$URL += ...'
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param | assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "LITERAL(regex:.*://)" }
+          - { pattern: "CALL(str.__mod__ || str.format || str.__add__)" }
+
+report:
+  message: "User input reaches URL host construction - potential SSRF vulnerability"
+  locations: ["source","sink","path"]
+  evidence: 
+    capture: 
+      - { node: "sink", property: "code" }
+
+metadata:
+  cwe: "CWE-918"
+  owasp: "A10:2021"
+  references:
+    - "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+  impact: MEDIUM
+  likelihood: MEDIUM
+```
+
+关键转换点说明：
+
+1. Sources部分：
+   - 将flask.request转换为了通用的API调用匹配模式
+   - 保留了路由参数的特殊匹配逻辑
+
+2. Sinks部分：
+   - 将多种URL字符串构造方式统一为字符串操作和格式化调用
+   - 使用正则表达式保留了URL模式匹配特性
+
+3. 增加了传播规则：
+   - 定义了字符串连接和格式化操作的污点传播
+
+4. 路径约束：
+   - 确保路径中必须包含URL构造操作
+
+5. 保留原规则的metadata作为附加信息
+
+这种表示可以跨引擎支持SSRF检测，保持了原CodeQL规则的语义并适配了XCPG-IR规范。
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/unsanitized-input.yaml:
+根据输入的CodeQL规则和XCPG-IR规范文档，我将分析并提取"response-contains-unsanitized-input"规则的中间表示用于规则迁移：
+
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: response-contains-unsanitized-input
+  kind: taint
+  severity: WARNING
+  message: "Flask response reflects unsanitized user input. This could lead to XSS vulnerability."
+  scope:
+    languages: [python]
+    frameworks: ["flask"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: "flask.request", method: "args.get" }
+
+sinks:
+  - id: XSS_RESPONSE
+    match:
+      node: CALL
+      api: { type: "flask", method: "make_response" }
+      arg_index: 0
+
+propagations:
+  - id: DIRECT_ASSIGNMENT
+    edge: arg->param | assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: XSS_RESPONSE
+    through: [DIRECT_ASSIGNMENT*]
+    constraints:
+      path:
+        must_not: 
+          - pattern: "CALL(flask.Markup.escape)"
+          - pattern: "CALL(flask.render_template)"
+
+report:
+  message: "User input reaches Flask response without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture: 
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "x = flask.request.args.get('param'); flask.make_response(f'Value: {x}')"
+    - "x = flask.request.args.get('param'); flask.make_response('<div>'+x+'</div>')"
+  negative:
+    - "x = flask.request.args.get('param'); flask.make_response(flask.Markup.escape(x))"
+    - "x = flask.request.args.get('param'); flask.make_response(flask.render_template('page.html', data=x))"
+```
+
+关键点说明：
+1. 将CodeQL中的模式匹配转换为XCPG-IR中的source/sink定义
+2. 保留了原始规则的核心语义：检测用户输入直接流向响应的情况
+3. 添加了显式的propagation规则来处理变量赋值和参数传递
+4. 包含了测试用例以验证规则的有效性
+5. 通过constraints中的must_not来编码预期的sanitizer行为
+6. 保留了原始规则的严重级别(WARNING)和技术栈(Flask)信息
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-sql-string.yaml:
+```yaml
+sources:
+  - id: TAINTED_ROUTE_INPUT
+    match:
+      node: CALL
+      api:
+        type: flask.request
+        method: $ANYTHING
+    where:
+      - op: regex
+        left: methodFullName
+        right: "flask\\.request\\..*"
+
+  - id: ROUTE_PARAM_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: pattern
+          left: code
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-url-host.yaml:
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: inside
+          left: location
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/unsanitized-input.yaml:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: response-contains-unsanitized-input
+  kind: taint
+  severity: WARNING
+  message: "Flask response reflects unsanitized user input - potential XSS vulnerability"
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: 
+        package: flask
+        type: Request
+        method: args.get
+      arg_index: 0
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: 
+        package: flask
+        type: Flask
+        method: make_response
+      arg_index: 0
+    where:
+      - op: contains
+        left: arg0.value
+        right: "{...}"
+
+propagations:
+  - id: ASSIGNMENT_FLOW
+    edge: arg->local
+    kind: taint
+  - id: STRING_FORMAT_FLOW
+    edge: arg->arg
+    kind: taint
+
+sanitizers:
+  - id: JINJA_ESCAPE
+    match:
+      node: CALL
+      api:
+        package: jinja2
+        method: escape
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+
+flows:
+  - source: USER_INPUT
+    sink: XSS_SINK
+    through: [ASSIGNMENT_FLOW*, STRING_FORMAT_FLOW*]
+    constraints:
+      path:
+        must_not: 
+          - pattern: "CALL(jinja2.escape)"
+          - pattern: "CALL(flask.escape)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+      - argument: 1
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/wtf-csrf-disabled.yaml:
+```yaml
+sources:
+  - id: CSRF_DISABLED
+    match:
+      node: FIELD_IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: "WTF_CSRF_ENABLED"
+        - op: eq
+          left: value 
+          right: "False"
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/csv-writer-injection.yaml:
+根据输入的Python CSV注入漏洞检测规则，提取的Source中间表示如下：
+
+```yaml
+sources:
+  - id: FLASK_REQUEST_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: form }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+  - id: FLASK_ARGS_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: args }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+  - id: FLASK_VALUES_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: values }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+  - id: FLASK_COOKIES_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: cookies }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+  - id: FLASK_HEADERS_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: headers }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+  - id: FLASK_VIEW_ARGS_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: view_args }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__]
+```
+
+这些source定义捕获了所有来自用户输入的请求参数，包括：
+1. 表单数据 (form)
+2. 查询参数 (args)
+3. 组合取值 (values) 
+4. Cookies数据
+5. 请求头
+6. 视图参数
+
+每个source都通过匹配对应的Flask请求API调用并检查方法名称来识别潜在的用户输入来源。
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-sql-string.yaml:
+根据输入的Codeql规则和XCPG-IR规范，我为您提取并转换为对应的中间表示：
+
+```yaml
+sources:
+  - id: WEB_INPUT
+    match:
+      node: CALL
+      api:
+        type: flask.request
+        method: $ANYTHING
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: inside
+          left: parent
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $METHOD_PARAM, ...):
+              ...
+sinks:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: LITERAL
+      op: concat
+      formats:
+        - "$SQLSTR" + ...
+        - "$SQLSTR" % ...
+        - "$SQLSTR".format(...)
+        - f"$SQLSTR{...}..."
+      where:
+        - op: regex
+          left: contains
+          right: \s*(?i)(select|delete|insert|create|update|alter|drop)\b.*
+flows:
+  - source: WEB_INPUT
+    sink: SQL_STRING_CONCAT
+  - source: ROUTE_PARAM
+    sink: SQL_STRING_CONCAT
+report:
+  message: "Detected user input used to manually construct a SQL string"
+  cwe:
+    - "CWE-704: Incorrect Type Conversion or Cast"
+  owasp:
+    - "A01:2017 - Injection"
+    - "A03:2021 - Injection"
+metadata:
+  languages: [python]
+  frameworks: [flask, sqlalchemy]
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-url-host.yaml:
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: 
+        type: flask.request
+        method: $ANYTHING
+  - id: ROUTE_PARAMETER
+    match:
+      node: PARAM
+      where:
+        - op: inside
+          pattern: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/unsanitized-input.yaml:
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { package: flask, type: flask.Request, method: args.get }
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/wtf-csrf-disabled.yaml:
+```yaml
+sources:
+  - id: CSRF_CONFIG_DISABLED
+    match:
+      node: CALL
+      api:
+        type: flask.Config
+        method: __setitem__
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "WTF_CSRF_ENABLED"
+        - op: eq
+          left: arg[1].value
+          right: "False"
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/csv-writer-injection.yaml:
+```yaml
+sources:
+  - id: FLASK_USER_INPUT
+    match:
+      node: CALL
+      api: 
+        type: flask.request
+        methods: 
+          - form.get
+          - form[]
+          - args.get  
+          - args[]
+          - values.get
+          - values[]
+          - cookies.get
+          - cookies[]
+          - stream
+          - headers.get
+          - headers[]
+          - data
+          - full_path
+          - url
+          - json
+          - get_json
+          - view_args.get
+          - view_args[]
+  - id: ROUTE_PARAM_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: inside
+          left: context
+          right: |
+            @$APP.route(...)
+            def $FUNC(...):
+              ...
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-sql-string.yaml:
+根据输入的Codeql规则内容和XCPG-IR规范，我将规则迁移为中间表示格式，专注于SOURCE部分的提取：
+
+```yaml
+sources:
+  - id: FLASK_USER_INPUT
+    match:
+      node: CALL
+      api:
+        type: flask.request
+        method: "$ANYTHING"
+  - id: ROUTE_PARAM_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: pattern-inside
+          left: annotation
+          right: "@$APP.route(...)"
+        - op: pattern-inside
+          left: function
+          right: "def $FUNC(..., $ROUTEVAR, ...):"
+```
+
+说明：
+1. 第一条source对应于规则中的`flask.request.$ANYTHING`模式
+2. 第二条source对应于Flask路由参数变量`$ROUTEVAR`，通过WHERE子句添加了注解和函数定义的上下文件约束
+3. 使用了CPG中的CALL和PARAM节点类型来对应原始规则的匹配模式
+4. 保留了原始规则中对Flask框架特定入口点的关注
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/tainted-url-host.yaml:
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: $ROUTEVAR
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/unsanitized-input.yaml:
+```yaml
+sources:
+  - id: UNSANITIZED_USER_INPUT
+    match:
+      node: CALL
+      api:
+        package: flask
+        type: request.args
+        method: get
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/wtf-csrf-disabled.yaml:
+```yaml
+sources:
+  - id: CSRF_DISABLED_CONFIG
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: target.identifier
+          right: "WTF_CSRF_ENABLED"
+        - op: eq
+          left: value.value
+          right: "False"
+```
+Response for /Users/djoker/Desktop/CTGA/demo/preprocess/input/python/csv-writer-injection.yaml:
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: flask.request, methods: [form.get, form.__getitem__, args.get, args.__getitem__, values.get, values.__getitem__, cookies.get, cookies.__getitem__, stream, headers.get, headers.__getitem__, data, full_path, url, json, get_json, view_args.get, view_args.__getitem__] }
+```

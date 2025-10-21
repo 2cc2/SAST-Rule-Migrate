@@ -247,23 +247,30 @@ class BasePrompt(PromptTemplate):
 <doc>
 {Doc_content}
 <doc/>
-<example>
-{example_content}
-<example/>
-<output>
 {specific_content}
-<output>
 """
     
 class SourcePrompt(BasePrompt):
     def format(self,code) -> str:
         specific_content = """
+<example>
+sources:
+  - id: REL_PATH_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\\.|^\\.\\.|^\\./|^\\.\\./"
+<example/>   
+<output>   
 请参照文档内容直接返回如下格式的yaml文件，只描述Source，不输出其他内容：
 sources:
   - id: USER_INPUT
     match:
       node: CALL
       api: {{ type: javax.servlet.ServletRequest, method: getParameter }}
+</output>
 """
         return super().format(code,specific_content)
 
