@@ -57,7 +57,7 @@ def get_all_java_files(directory):
                 java_files.append(os.path.join(root, file))  # 保存文件的完整路径
     return java_files
 
-def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 3):
+def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 5):
     """
     迁移单个规则文件。
     :param input_file: 输入的 .go 文件路径
@@ -83,7 +83,7 @@ def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast
     input_filename = os.path.splitext(os.path.basename(input_file))[0]
    
 
-    example = load_rule_from_file("/Users/djoker/Desktop/CTGA/demo/codeql.txt")
+    example = load_rule_from_file("/Users/djoker/Desktop/CTGA/demo/migrate/codeql.txt")
     IR_file = os.path.join(IR_dir, f"{input_filename}.ir")
     log_file = os.path.join(log_dir, f"{input_filename}.log")
     output_file = os.path.join(output_dir, f"{input_filename}.ql")
