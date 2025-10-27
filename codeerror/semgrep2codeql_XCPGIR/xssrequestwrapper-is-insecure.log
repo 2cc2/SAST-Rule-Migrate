@@ -1,0 +1,479 @@
+Timestamp: 2025-10-23 13:48:14
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: xssrequestwrapper-is-insecure
+  kind: pattern
+  severity: WARNING
+  message: "It looks like you're using an implementation of XSSRequestWrapper from dzone. The XSS filtering in this code is not secure and can be bypassed by malicious actors. It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: XSS_REQUEST_WRAPPER_CLASS
+    match:
+      node: TYPE_DECL
+      where:
+        - op: regex
+          left: code
+          right: "class XSSRequestWrapper extends HttpServletRequestWrapper"
+        
+  - id: UNSAFE_XSS_FILTER
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\\.compile\\(\"</script>\", .*CASE_INSENSITIVE\\)"
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletRequest, method: getParameter }
+
+sanitizers:
+  - id: SECURE_ESCAPING
+    match:
+      node: CALL
+      api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml }
+
+flows:
+  - source: XSS_REQUEST_WRAPPER_CLASS
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+  
+  - source: UNSAFE_XSS_FILTER
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+
+report:
+  message: "Insecure XSSRequestWrapper implementation detected"
+  locations: ["source"]
+  evidence: { capture: [{ node: "XSS_REQUEST_WRAPPER_CLASS" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,28-29)
+ERROR: could not resolve predicate isXSSRequestWrapper/1 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,22-41)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,5-14)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,43-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,16-28)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,10-22)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,39-57)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,66-84)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,80-84)
+WARNING: unused predicate 'hasUnsafeXSSFilter' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,11-29)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper Implementation
+ * @description Detects insecure implementations of XSSRequestWrapper from dzone that lack proper XSS filtering
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+predicate isXSSRequestWrapper(Class c) {
+  exists(c.getASupertype() | 
+    c.getASupertype().hasQualifiedName("javax.servlet.http", "HttpServletRequestWrapper") and
+    c.getName().matches("XSSRequestWrapper")
+  )
+}
+
+predicate hasUnsafeXSSFilter(Expr e) {
+  e instanceof MethodAccess and
+  e.getMethod().getName() = "compile" and
+  exists(MethodAccess ma | 
+    ma.getArgument(0).toString().matches("\"</script>\"") and
+    ma.getArgument(1).toString().matches(".*CASE_INSENSITIVE.*")
+  )
+}
+
+predicate isXSSTaintSource(DataFlow::Node source) {
+  exists(MethodAccess ma |
+    ma.getMethod().hasQualifiedName("javax.servlet.http", "HttpServletRequest", "getParameter") and
+    source.asExpr() = ma
+  )
+}
+
+predicate isSafeSanitizer(DataFlow::Node sanitizer) {
+  exists(MethodAccess ma |
+    ma.getMethod().hasQualifiedName("org.apache.commons.lang", "StringEscapeUtils", "escapeHtml") and
+    sanitizer.asExpr() = ma
+  )
+}
+
+class XSSRequestWrapperFlowConfig extends TaintTracking::Configuration {
+  XSSRequestWrapperFlowConfig() { this = "XSSRequestWrapperFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isXSSTaintSource(source) or
+    exists(Class c | isXSSRequestWrapper(c) and source.asExpr() instanceof ClassInstanceExpr)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet.http", "HttpServletRequest", "getParameter") and
+      sink.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isSafeSanitizer(sanitizer)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma | ma.getMethod().hasName("getParameter") and pred.asExpr() = ma.getQualifier())
+  }
+}
+
+from XSSRequestWrapperFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Insecure XSSRequestWrapper implementation detected. $@ flows here and may be vulnerable to XSS.",
+  source.getNode(), "Potential XSS source"
+================================================================================
+Timestamp: 2025-10-23 13:48:56
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: xssrequestwrapper-is-insecure
+  kind: pattern
+  severity: WARNING
+  message: "It looks like you're using an implementation of XSSRequestWrapper from dzone. The XSS filtering in this code is not secure and can be bypassed by malicious actors. It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: XSS_REQUEST_WRAPPER_CLASS
+    match:
+      node: TYPE_DECL
+      where:
+        - op: regex
+          left: code
+          right: "class XSSRequestWrapper extends HttpServletRequestWrapper"
+        
+  - id: UNSAFE_XSS_FILTER
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\\.compile\\(\"</script>\", .*CASE_INSENSITIVE\\)"
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletRequest, method: getParameter }
+
+sanitizers:
+  - id: SECURE_ESCAPING
+    match:
+      node: CALL
+      api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml }
+
+flows:
+  - source: XSS_REQUEST_WRAPPER_CLASS
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+  
+  - source: UNSAFE_XSS_FILTER
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+
+report:
+  message: "Insecure XSSRequestWrapper implementation detected"
+  locations: ["source"]
+  evidence: { capture: [{ node: "XSS_REQUEST_WRAPPER_CLASS" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,28-29)
+ERROR: could not resolve module semmle.code.java.frameworks.HttpServlets (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-48)
+ERROR: could not resolve predicate isXSSRequestWrapper/1 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,3-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,10-22)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper Implementation
+ * @description Detects insecure implementations of XSSRequestWrapper from dzone that lack proper XSS filtering
+ * @kind problem
+ * @problem.severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.frameworks.HttpServlets
+import semmle.code.java.security.XSS
+
+predicate isXSSRequestWrapper(Class c) {
+  exists(c.getASupertype() | 
+    c.getASupertype().hasQualifiedName("javax.servlet.http", "HttpServletRequestWrapper") and
+    c.getName().matches("XSSRequestWrapper")
+  )
+}
+
+predicate hasUnsafeXSSFilter(Method m) {
+  m.getName() = "compile" and
+  m.getDeclaringType().getSourceDeclaration().getName().matches("Pattern") and
+  exists(MethodAccess ma |
+    ma.getMethod() = m and
+    ma.getArgument(0).toString().matches("\"</script>\"") and
+    ma.getArgument(1).toString().matches(".*CASE_INSENSITIVE.*")
+  )
+}
+
+from Class c, Method unsafeFilter
+where 
+  isXSSRequestWrapper(c) or
+  hasUnsafeXSSFilter(unsafeFilter)
+select c, "Insecure XSSRequestWrapper implementation detected. $@ may be vulnerable to XSS attacks due to insufficient filtering.",
+  c.getName(), "Potentially vulnerable XSSRequestWrapper implementation"
+================================================================================
+Timestamp: 2025-10-23 13:49:32
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: xssrequestwrapper-is-insecure
+  kind: pattern
+  severity: WARNING
+  message: "It looks like you're using an implementation of XSSRequestWrapper from dzone. The XSS filtering in this code is not secure and can be bypassed by malicious actors. It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: XSS_REQUEST_WRAPPER_CLASS
+    match:
+      node: TYPE_DECL
+      where:
+        - op: regex
+          left: code
+          right: "class XSSRequestWrapper extends HttpServletRequestWrapper"
+        
+  - id: UNSAFE_XSS_FILTER
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\\.compile\\(\"</script>\", .*CASE_INSENSITIVE\\)"
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletRequest, method: getParameter }
+
+sanitizers:
+  - id: SECURE_ESCAPING
+    match:
+      node: CALL
+      api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml }
+
+flows:
+  - source: XSS_REQUEST_WRAPPER_CLASS
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+  
+  - source: UNSAFE_XSS_FILTER
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" } ]
+
+report:
+  message: "Insecure XSSRequestWrapper implementation detected"
+  locations: ["source"]
+  evidence: { capture: [{ node: "XSS_REQUEST_WRAPPER_CLASS" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getConstructor() cannot be resolved for type Type::Class (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,27-41)
+ERROR: getConstructor() cannot be resolved for type Type::Class (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,27-41)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,6-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,10-22)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,35-53)
+ERROR: DataFlowNodes::Public::Node is not compatible with DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,7-36)
+WARNING: unused predicate 'hasUnsafeXSSFilter' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,11-29)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper Implementation
+ * @description Detects insecure implementations of XSSRequestWrapper from dzone that lack proper XSS filtering
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+predicate isXSSRequestWrapper(Class c) {
+  exists(Method m | m = c.getConstructor() | 
+    c.getASupertype().hasQualifiedName("javax.servlet.http", "HttpServletRequestWrapper") and
+    c.getName().matches("XSSRequestWrapper%")
+  )
+}
+
+predicate hasUnsafeXSSFilter(Expr e) {
+  e.(MethodAccess).getMethod().getName() = "compile" and
+  exists(MethodAccess ma | 
+    ma.getArgument(0).toString() = "</script>" and
+    ma.getArgument(1).toString().regexpMatch(".*CASE_INSENSITIVE.*")
+  )
+}
+
+class XSSRequestWrapperConfig extends TaintTracking::Configuration {
+  XSSRequestWrapperConfig() { this = "XSSRequestWrapperConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Class c |
+      isXSSRequestWrapper(c) and
+      source.asExpr() = c.getConstructor().getACall()
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getParameter" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      sink.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "escapeHtml" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.lang", "StringEscapeUtils") and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from XSSRequestWrapperConfig cfg, DataFlow::PathNode source, DataFlow::Node sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Insecure XSSRequestWrapper implementation detected. Potential XSS vulnerability due to insufficient filtering.",
+  source.getNode(), "Source of potentially unsafe input"
+================================================================================
+Timestamp: 2025-10-23 19:18:33
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "xssrequestwrapper-is-insecure"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "It looks like you're using an implementation of XSSRequestWrapper from dzone. The XSS filtering in this code is not secure and can be bypassed by malicious actors. It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources: []
+
+sinks:
+  - id: "XSS_REQUEST_WRAPPER"
+    match:
+      node: "TYPE_DECL"
+      where:
+        - op: "regex"
+          left: "typeFullName"
+          right: "XSSRequestWrapper"
+
+  - id: "INSECURE_SCRIPT_REPLACE"
+    match:
+      node: "CALL"
+      api: { method: "replaceAll" }
+      where:
+        - op: "eq"
+          left: "receiver.value"
+          right: "</script>"
+
+sanitizers: []
+
+barriers: []
+
+propagations: []
+
+flows:
+  - source: "XSS_REQUEST_WRAPPER"
+    sink: "INSECURE_SCRIPT_REPLACE"
+    constraints:
+      path:
+        must: []
+
+report:
+  message: "Insecure XSSRequestWrapper implementation detected"
+  locations: ["sink"]
+  evidence: {}
+
+tests:
+  positive: []
+  negative: []
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getAValue() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,21-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,33-45)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,23-35)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper Implementation
+ * @description Detects usage of XSSRequestWrapper from dzone which has insecure XSS filtering that can be bypassed
+ * @kind problem
+ * @severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ */
+
+import java
+
+predicate isXSSRequestWrapper(RefType r) {
+  r.getQualifiedName().matches("XSSRequestWrapper")
+}
+
+predicate insecureScriptReplace(MethodAccess ma) {
+  ma.getMethod().hasName("replaceAll") and
+  ma.getQualifier().getAValue().(StringLiteral).getValue() = "</script>"
+}
+
+from RefType wrapper, MethodAccess replaceCall
+where
+  isXSSRequestWrapper(wrapper) and
+  insecureScriptReplace(replaceCall) and
+  replaceCall.getQualifier().getType() = wrapper
+select replaceCall,
+  "Insecure XSSRequestWrapper implementation detected. The XSS filtering in this code is not secure and can be bypassed by malicious actors. " +
+  "It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+================================================================================

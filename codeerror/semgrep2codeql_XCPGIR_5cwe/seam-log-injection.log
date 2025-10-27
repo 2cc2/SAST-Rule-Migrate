@@ -1,0 +1,981 @@
+Timestamp: 2025-10-24 16:42:13
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: "java.lang.String.concat"
+        - op: regex
+          left: receiver.value
+          right: ".*"
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: 
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      arg_index: 0
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [STRING_CONCAT*]
+report:
+  message: "Potential Seam Log Injection detected"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "log.info(userInput + \"...\");"
+  negative:
+    - "log.info(\"static message\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,19-26)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.seam.SeamLogging (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-52)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,27-39)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,3-14)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,7-18)
+WARNING: unused class 'SeamLogCall' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,7-18)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language which can lead to unwanted code execution
+ *              when dynamic values are used in log messages.
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.seam.SeamLogging
+
+class SeamLogCall extends MethodAccess {
+  SeamLogCall() {
+    exists(Method m |
+      m.getDeclaringType().getQualifiedName() = "org.jboss.seam.log.Log" and
+      m.getName() matches "debug|error|fatal|info|trace|warn" and
+      this.getMethod() = m
+    )
+  }
+}
+
+class DynamicStringConcat extends MethodAccess {
+  DynamicStringConcat() {
+    this.getMethod().getName() = "concat" and
+    this.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    // Match any receiver value (dynamic)
+    exists(Expr receiver | receiver = this.getQualifier() | not receiver.isConstant())
+  }
+}
+
+class LogInjectionConfig extends TaintTracking::Configuration {
+  LogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() = any(DynamicStringConcat dsc).getAnArgument()
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SeamLogCall slc |
+      sink.asExpr() = slc.getArgument(0)
+    )
+  }
+}
+
+from LogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential Seam Log Injection detected. User-controlled data flows into log message " +
+  "which supports expression language evaluation.", 
+  sink.getNode(),
+  "User input comes from here",
+  source.getNode(),
+  "Flow through string concatenation"
+================================================================================
+Timestamp: 2025-10-24 16:43:16
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: "java.lang.String.concat"
+        - op: regex
+          left: receiver.value
+          right: ".*"
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: 
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      arg_index: 0
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [STRING_CONCAT*]
+report:
+  message: "Potential Seam Log Injection detected"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "log.info(userInput + \"...\");"
+  negative:
+    - "log.info(\"static message\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringConcat (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-37)
+ERROR: getMethod() cannot be resolved for type SeamLogCall.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-21)
+ERROR: getMethod() cannot be resolved for type DynamicStringConcat.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-19)
+ERROR: getMethod() cannot be resolved for type DynamicStringConcat.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,10-19)
+ERROR: isConstant() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,27-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,34-62)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,60-78)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API support an expression language to introduce bean property to log messages.
+ *              The expression language can lead to unwanted code execution when dynamic values are used.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringConcat
+
+class SeamLogCall extends Call {
+  SeamLogCall() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      (m.getName() = "debug" or 
+       m.getName() = "error" or 
+       m.getName() = "fatal" or 
+       m.getName() = "info" or 
+       m.getName() = "trace" or 
+       m.getName() = "warn") and
+      this.getMethod() = m
+    )
+  }
+}
+
+class DynamicStringConcat extends Call {
+  DynamicStringConcat() {
+    this.getMethod().getName() = "concat" and
+    this.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")
+  }
+}
+
+class LogInjectionConfig extends TaintTracking::Configuration {
+  LogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DynamicStringConcat dsc |
+      source.asExpr() = dsc.getQualifier() and
+      not source.asExpr().isConstant()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SeamLogCall slc |
+      sink.asExpr() = slc.getArgument(0)
+    )
+  }
+}
+
+from LogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential Seam Log Injection detected. User-controlled data flows into log message which supports expression language evaluation.",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================
+Timestamp: 2025-10-24 16:44:03
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: "java.lang.String.concat"
+        - op: regex
+          left: receiver.value
+          right: ".*"
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: 
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      arg_index: 0
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [STRING_CONCAT*]
+report:
+  message: "Potential Seam Log Injection detected"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "log.info(userInput + \"...\");"
+  negative:
+    - "log.info(\"static message\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOperations (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-41)
+ERROR: isConstant() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,29-39)
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,34-47)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,35-47)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,60-78)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language which can lead to unwanted code execution
+ *              when dynamic values are used in log messages.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringOperations
+
+class SeamLogCall extends MethodAccess {
+  SeamLogCall() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      (m.getName() = "debug" or 
+       m.getName() = "error" or 
+       m.getName() = "fatal" or 
+       m.getName() = "info" or 
+       m.getName() = "trace" or 
+       m.getName() = "warn") and
+      this.getMethod() = m
+    )
+  }
+}
+
+class DynamicStringConcat extends MethodAccess {
+  DynamicStringConcat() {
+    this.getMethod().getName() = "concat" and
+    this.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    not this.getQualifier().isConstant()
+  }
+}
+
+class LogInjectionConfig extends TaintTracking::Configuration {
+  LogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DynamicStringConcat dsc | source.asExpr() = dsc.getQualifier())
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SeamLogCall slc | sink.asExpr() = slc.getArgument(0))
+  }
+}
+
+from LogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential Seam Log Injection detected. User-controlled data flows into log message " +
+  "which supports expression language evaluation.",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================
+Timestamp: 2025-10-24 16:44:52
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: "java.lang.String.concat"
+        - op: regex
+          left: receiver.value
+          right: ".*"
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: 
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      arg_index: 0
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [STRING_CONCAT*]
+report:
+  message: "Potential Seam Log Injection detected"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "log.info(userInput + \"...\");"
+  negative:
+    - "log.info(\"static message\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,27-45)
+ERROR: getMethod() cannot be resolved for type SeamLogCall.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-21)
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,35-53)
+ERROR: getMethod() cannot be resolved for type DynamicStringConcat.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-19)
+ERROR: getMethod() cannot be resolved for type DynamicStringConcat.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,10-19)
+ERROR: getReceiver() cannot be resolved for type DynamicStringConcat.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,14-25)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,34-62)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,60-78)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language which can lead to unwanted code execution
+ *              when dynamic values are used in log messages.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SeamLogCall extends DataFlow::CallNode {
+  SeamLogCall() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      (m.getName() = "debug" or 
+       m.getName() = "error" or 
+       m.getName() = "fatal" or 
+       m.getName() = "info" or 
+       m.getName() = "trace" or 
+       m.getName() = "warn") and
+      this.getMethod() = m
+    )
+  }
+}
+
+class DynamicStringConcat extends DataFlow::CallNode {
+  DynamicStringConcat() {
+    this.getMethod().getName() = "concat" and
+    this.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    not this.getReceiver().isConstant()
+  }
+}
+
+class LogInjectionConfig extends TaintTracking::Configuration {
+  LogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DynamicStringConcat dsc | source.asExpr() = dsc.getReceiver())
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SeamLogCall slc | sink.asExpr() = slc.getArgument(0))
+  }
+}
+
+from LogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential Seam Log Injection detected. User-controlled data flows into log message " +
+  "which supports expression language evaluation.",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================
+Timestamp: 2025-10-24 16:45:49
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: "java.lang.String.concat"
+        - op: regex
+          left: receiver.value
+          right: ".*"
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: 
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      arg_index: 0
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [STRING_CONCAT*]
+report:
+  message: "Potential Seam Log Injection detected"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "log.info(userInput + \"...\");"
+  negative:
+    - "log.info(\"static message\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringTemplate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,18-29)
+ERROR: isConstant() cannot be resolved for type DynamicStringConcatExpr.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,45-55)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,34-62)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,60-78)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language which can lead to 
+ *              unwanted code execution when dynamic values are used in log messages.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.StringTemplate
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SeamLogCall extends Call {
+  SeamLogCall() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      (m.getName() = "debug" or 
+       m.getName() = "error" or 
+       m.getName() = "fatal" or 
+       m.getName() = "info" or 
+       m.getName() = "trace" or 
+       m.getName() = "warn") and
+      this.getCallee() = m
+    )
+  }
+}
+
+class DynamicStringConcatExpr extends Expr {
+  DynamicStringConcatExpr() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("concat") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      (this = ma.getReceiver() and not this.isConstant())
+    )
+  }
+}
+
+class LogInjectionConfig extends TaintTracking::Configuration {
+  LogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof DynamicStringConcatExpr
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SeamLogCall slc | sink.asExpr() = slc.getArgument(0))
+  }
+}
+
+from LogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential Seam Log Injection detected. User-controlled data flows into log message " +
+  "which supports expression language evaluation.",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================
+Timestamp: 2025-10-24 19:16:46
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+
+sources:
+  - id: DYNAMIC_LOG_VALUE
+    match:
+      node: ARGUMENT
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: value
+          right: ".+"
+
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: { package: org.jboss.seam.log, type: Log, method: debug|error|fatal|info|trace|warn }
+      arg_index: 0
+
+propagations:
+  - id: CONCAT_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_LOG_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [CONCAT_TO_ARG*]
+
+report:
+  locations: ["source","sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+  owasp: ["A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Seam (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-40)
+ERROR: isConstant() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,29-39)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,26-37)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,33-51)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects expression language injection in JBoss Seam logging API
+ * @kind problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Seam
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      source.asExpr() = ma.getArgument(0) and
+      not ma.getArgument(0).isConstant()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      sink.asExpr() = ma.getReceiver()
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SeamLogInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potential Seam log expression language injection from $@ to $@.", source, sink,
+  "Unsanitized user input in JBoss Seam logging API that may lead to code execution.",
+  source.getNode(), "This input originates from here"
+================================================================================
+Timestamp: 2025-10-24 19:17:31
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+
+sources:
+  - id: DYNAMIC_LOG_VALUE
+    match:
+      node: ARGUMENT
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: value
+          right: ".+"
+
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: { package: org.jboss.seam.log, type: Log, method: debug|error|fatal|info|trace|warn }
+      arg_index: 0
+
+propagations:
+  - id: CONCAT_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_LOG_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [CONCAT_TO_ARG*]
+
+report:
+  locations: ["source","sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+  owasp: ["A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasText() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,39-46)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,22-34)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,33-51)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects expression language injection in JBoss Seam logging API
+ * @kind path-problem
+ * @problem.severity error
+ * @id seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, MethodAccess ma |
+      m.hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      ma.getMethod() = m and
+      source.asExpr() = ma.getArgument(0) and
+      not ma.getArgument(0).(Literal).hasText()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      m.hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SeamLogInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(),
+  "Potential Seam log expression language injection from $@ to $@.", 
+  source.getNode(), sink.getNode(),
+  "Unsanitized user input in JBoss Seam logging API that may lead to code execution."
+================================================================================
+Timestamp: 2025-10-24 19:18:22
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+
+sources:
+  - id: DYNAMIC_LOG_VALUE
+    match:
+      node: ARGUMENT
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: value
+          right: ".+"
+
+sinks:
+  - id: SEAM_LOG_EVAL
+    match:
+      node: CALL
+      api: { package: org.jboss.seam.log, type: Log, method: debug|error|fatal|info|trace|warn }
+      arg_index: 0
+
+propagations:
+  - id: CONCAT_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_LOG_VALUE
+    sink: SEAM_LOG_EVAL
+    through: [CONCAT_TO_ARG*]
+
+report:
+  locations: ["source","sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  cwe: ["CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"]
+  owasp: ["A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getStringValue() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,36-50)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,29-57)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,33-51)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects expression language injection in JBoss Seam logging API
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SeamLogConfig extends TaintTracking::Configuration {
+  SeamLogConfig() { this = "SeamLogConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Call ma |
+      m.hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      ma.getCallee() = m and
+      source.asExpr() = ma.getArgument(0) and
+      not exists(ma.getArgument(0).getStringValue())
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call ma |
+      m.hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      ma.getCallee() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SeamLogConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(),
+  "Potential Seam log expression language injection from $@.",
+  source.getNode(), sink.getNode(),
+  "Unsanitized user input in JBoss Seam logging API that may lead to code execution."
+================================================================================

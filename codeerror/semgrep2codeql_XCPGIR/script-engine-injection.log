@@ -1,0 +1,232 @@
+Timestamp: 2025-10-23 13:07:02
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "script-engine-injection"
+  kind: taint
+  severity: WARNING
+  message: "Detected potential code injection using ScriptEngine. Ensure user-controlled data cannot enter '.eval()', otherwise, this is a code injection vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+sinks:
+  - id: SCRIPT_EVAL
+    match:
+      node: CALL
+      api: { type: javax.script.ScriptEngine, method: eval }
+      arg_index: 0
+sanitizers:
+  - id: CONSTANT_STRING
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: nodeType
+          right: "STRING_LITERAL"
+    effect: neutralize
+barriers: []
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SCRIPT_EVAL
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(STRING_LITERAL)" } ]
+report:
+  message: "User input reaches ScriptEngine.eval() without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "ScriptEngine engine = ...; engine.eval(userControlledInput);"
+  negative:
+    - "ScriptEngine engine = ...; engine.eval(\"constant string\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: regexpMatch(string) cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,26-37)
+ERROR: could not resolve type StringType (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,31-41)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,36-48)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,65-83)
+Rule Content:
+/**
+ * @name Script Engine Injection
+ * @description Detected potential code injection using ScriptEngine. Ensure user-controlled data cannot enter '.eval()', otherwise, this is a code injection vulnerability.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/script-engine-injection
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class ScriptEngineEvalCall extends MethodAccess {
+  ScriptEngineEvalCall() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.script", "ScriptEngine") and
+      m.getName() = "eval" and
+      this.getMethod() = m
+    )
+  }
+}
+
+class ScriptEngineTaintConfig extends TaintTracking::Configuration {
+  ScriptEngineTaintConfig() { this = "ScriptEngineTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asParameter().regexpMatch(".*")
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ScriptEngineEvalCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof StringType and
+    node.asExpr() instanceof StringLiteral
+  }
+}
+
+from ScriptEngineTaintConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches ScriptEngine.eval() without sanitization",
+  source, sink,
+  "User-controlled data flows to ScriptEngine.eval() call"
+================================================================================
+Timestamp: 2025-10-23 13:07:44
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "script-engine-injection"
+  kind: taint
+  severity: WARNING
+  message: "Detected potential code injection using ScriptEngine. Ensure user-controlled data cannot enter '.eval()', otherwise, this is a code injection vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+sinks:
+  - id: SCRIPT_EVAL
+    match:
+      node: CALL
+      api: { type: javax.script.ScriptEngine, method: eval }
+      arg_index: 0
+sanitizers:
+  - id: CONSTANT_STRING
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: nodeType
+          right: "STRING_LITERAL"
+    effect: neutralize
+barriers: []
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SCRIPT_EVAL
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(STRING_LITERAL)" } ]
+report:
+  message: "User input reaches ScriptEngine.eval() without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "ScriptEngine engine = ...; engine.eval(userControlledInput);"
+  negative:
+    - "ScriptEngine engine = ...; engine.eval(\"constant string\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,16-24)
+ERROR: getArgument(int) cannot be resolved for type ScriptEngineEvalCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,28-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,39-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,65-83)
+Rule Content:
+/**
+ * @name Script Engine Injection
+ * @description Detected potential code injection using ScriptEngine. Ensure user-controlled data cannot enter '.eval()', otherwise, this is a code injection vulnerability.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/script-engine-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class ScriptEngineEvalCall extends Expr {
+  ScriptEngineEvalCall() {
+    exists(Method m | 
+      m.getDeclaringType().hasQualifiedName("javax.script", "ScriptEngine") and
+      m.getName() = "eval" and
+      this = m.getACall()
+    )
+  }
+}
+
+class ScriptEngineTaintConfig extends TaintTracking::Configuration {
+  ScriptEngineTaintConfig() { this = "ScriptEngineTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asParameter().getType().hasName("*")
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ScriptEngineEvalCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(StringLiteral lit | node.asExpr() = lit)
+  }
+}
+
+from ScriptEngineTaintConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches ScriptEngine.eval() without sanitization",
+  source, sink,
+  "User-controlled data flows to ScriptEngine.eval() call"
+================================================================================

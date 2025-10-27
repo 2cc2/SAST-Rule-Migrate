@@ -1,0 +1,66 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api: { type: javax.servlet.http.HttpServletRequest, method: "" }
+      where:
+        - op: eq
+          left: methodFullName
+          right: ".*HttpServletRequest.*"
+  - id: STRING_CONCAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format|concat|join }
+      arg_index: "*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare }
+      arg_index: "*"
+    where:
+      - op: not_regex
+        left: arg[0].value
+        right: ".*TABLE *$|.*TABLE %s$"
+
+propagations:
+  - id: CONCAT_PROPAGATION
+    edge: arg->param|field-store|return
+    kind: taint
+  - id: STRINGBUILDER_PROPAGATION
+    match:
+      node: CALL
+      api: { type: java.lang.StringBuilder|java.lang.StringBuffer, method: append }
+    effect: forward
+
+sanitizers:
+  - id: CRITERIA_BUILDER
+    match: { node: CALL, api: { type: javax.persistence.criteria.CriteriaBuilder } }
+    effect: neutralize
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [CONCAT_PROPAGATION*, STRINGBUILDER_PROPAGATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.Statement.*)" } ]
+        must_not: [ { pattern: "CALL(javax.persistence.criteria.CriteriaBuilder.*)" } ]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```

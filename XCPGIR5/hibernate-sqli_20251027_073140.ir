@@ -1,0 +1,84 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: hibernate-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [hibernate]
+
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT 
+      where:
+        - op: regex
+          left: code
+          right: "String \\$SQL = .*\\+.*"
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: {type: java.lang.String, method: format}
+
+sinks:
+  - id: SQL_RESTRICTION
+    match:
+      node: CALL
+      api: {type: org.hibernate.criterion.Restrictions, method: sqlRestriction}
+      arg_index: 0
+  - id: SESSION_QUERY
+    match:
+      node: CALL
+      api: {type: org.hibernate.Session, method: createQuery, method: createSQLQuery}
+      arg_index: 0
+
+propagations:
+  - id: ASSIGN_TO_VAR
+    edge: assignment->local
+    kind: taint
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+
+sanitizers:
+  - id: SAFE_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: 'String \\$SQL = ".*" \\+ ".*"'
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: {node: RETURN}
+    effect: stop
+
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_RESTRICTION
+    through: [ASSIGN_TO_VAR, ARG_TO_PARAM]
+    constraints:
+      path:
+        must_not: [ {pattern: "SAFE_CONCAT"} ]
+  - source: STRING_FORMAT
+    sink: SQL_RESTRICTION
+    through: [ARG_TO_PARAM]
+  - source: STRING_CONCAT
+    sink: SESSION_QUERY  
+    through: [ASSIGN_TO_VAR, ARG_TO_PARAM]
+    constraints:
+      path:
+        must_not: [ {pattern: "SAFE_CONCAT"} ]
+  - source: STRING_FORMAT
+    sink: SESSION_QUERY
+    through: [ARG_TO_PARAM]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: {capture: [{argument: 0}]}
+```

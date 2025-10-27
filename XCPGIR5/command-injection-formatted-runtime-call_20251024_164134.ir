@@ -1,0 +1,60 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: command-injection-formatted-runtime-call
+  kind: taint
+  severity: ERROR
+  message: "A formatted or concatenated string was detected as input to a java.lang.Runtime call. This is dangerous if a variable is controlled by user input and could result in a command injection. Ensure your variables are not controlled by users or sufficiently sanitized."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+sinks:
+  - id: RUNTIME_EXEC
+    match:
+      node: CALL
+      api: { type: java.lang.Runtime, method: exec }
+      arg_index: 0
+  - id: RUNTIME_LOADLIB
+    match:
+      node: CALL
+      api: { type: java.lang.Runtime, method: loadLibrary }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: RUNTIME_EXEC
+    through: [ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not:
+          - { pattern: "LITERAL(\"...\")" }
+          - { pattern: "CALL(java.lang.Runtime.exec) WITH (\"...,...,...\")" }
+  - source: USER_INPUT
+    sink: RUNTIME_LOADLIB
+    through: [ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not:
+          - { pattern: "LITERAL(\"...\")" }
+          - { pattern: "CALL(java.lang.Runtime.loadLibrary) WITH (\"...,...,...\")" }
+report:
+  message: "Command injection detected in Runtime.exec or Runtime.loadLibrary call"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "Runtime.getRuntime().exec(request.getParameter(\"cmd\"));"
+    - "Runtime.getRuntime().loadLibrary(String.format(\"%s\", userInput));"
+  negative:
+    - "Runtime.getRuntime().exec(\"fixed_command\");"
+    - "Runtime.getRuntime().loadLibrary(\"safe_library\");"
+```

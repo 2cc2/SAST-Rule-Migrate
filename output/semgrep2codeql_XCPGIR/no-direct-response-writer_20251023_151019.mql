@@ -1,0 +1,89 @@
+/**
+ * @name No Direct Response Writer
+ * @description Detected a request with potential user-input going into a OutputStream or Writer object.
+ *              This bypasses any view or template environments, including HTML escaping, which may
+ *              expose this application to cross-site scripting (XSS) vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/no-direct-response-writer
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class ServletRequestInput extends DataFlow::Node {
+  ServletRequestInput() {
+    exists(Method m |
+      m.hasName(
+        ["getParameter", "getInputStream", "getParameterMap", "getParameterValues",
+         "getReader", "getCookies", "getHeader", "getHeaderNames", "getHeaders",
+         "getPart", "getParts", "getQueryString"]
+      ) and
+      m.getDeclaringType().hasQualifiedName("javax.servlet", "ServletRequest") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class ResponseWriterSink extends DataFlow::Node {
+  ResponseWriterSink() {
+    exists(Method m |
+      m.hasName(["getWriter", "getOutputStream"]) and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class OutputStreamWriterSink extends DataFlow::Node {
+  OutputStreamWriterSink() {
+    exists(Method m |
+      m.hasName("write") and
+      (
+        m.getDeclaringType().hasQualifiedName("java.io", "PrintWriter") or
+        m.getDeclaringType().hasQualifiedName("javax.servlet", "ServletOutputStream") or
+        m.getDeclaringType().hasQualifiedName("java.io", "OutputStream")
+      ) and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(Method m |
+      (
+        m.hasQualifiedName("org.apache.commons.lang", "StringEscapeUtils", "escapeHtml") or
+        m.hasQualifiedName("org.springframework.web.util", "HtmlUtils", "htmlEscape") or
+        m.hasQualifiedName("org.owasp.esapi", "ESAPI", "encodeForHTML")
+      ) and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class DirectResponseWriterConfig extends TaintTracking::Configuration {
+  DirectResponseWriterConfig() { this = "DirectResponseWriterConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestInput
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ResponseWriterSink or
+    sink instanceof OutputStreamWriterSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from DirectResponseWriterConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(),
+  "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping",
+  source.getNode(), sink.getNode()

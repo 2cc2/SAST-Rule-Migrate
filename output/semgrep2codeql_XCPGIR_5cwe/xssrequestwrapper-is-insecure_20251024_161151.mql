@@ -1,0 +1,65 @@
+/**
+ * @name Insecure XSSRequestWrapper Implementation
+ * @description Detects insecure implementation of XSSRequestWrapper with vulnerable script removal
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class XSSRequestWrapper extends RefType {
+  XSSRequestWrapper() {
+    this.getQualifiedName().matches("%XSSRequestWrapper") and
+    this.getASupertype().hasQualifiedName("javax.servlet.http", "HttpServletRequestWrapper")
+  }
+}
+
+class InsecureScriptRemoval extends DataFlow::Node {
+  InsecureScriptRemoval() {
+    exists(Method m, Call compileCall |
+      m.hasQualifiedName("java.util.regex", "Pattern", "compile") and
+      compileCall.getCallee() = m and
+      exists(StringLiteral pattern |
+        pattern = compileCall.getArgument(0) and
+        pattern.getValue().toLowerCase() = "</script>"
+      ) and
+      exists(Call replaceAllCall |
+        replaceAllCall.getCallee().hasQualifiedName("java.lang", "String", "replaceAll") and
+        replaceAllCall.getQualifier() = compileCall and
+        exists(StringLiteral replacement |
+          replacement = replaceAllCall.getArgument(0) and
+          replacement.getValue() = ""
+        )
+      ) and
+      this.asExpr() = compileCall
+    )
+  }
+}
+
+class XSSRequestWrapperConfig extends DataFlow::Configuration {
+  XSSRequestWrapperConfig() { this = "XSSRequestWrapperConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(XSSRequestWrapper wrapper |
+      source.asExpr().getType() = wrapper
+    )
+    or
+    source instanceof InsecureScriptRemoval
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call c |
+      m.hasQualifiedName("javax.servlet.http", "HttpServletRequest", "getParameter") and
+      c.getCallee() = m and
+      sink.asExpr() = c
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, XSSRequestWrapperConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, "Insecure XSS filtering detected in XSSRequestWrapper implementation", source,
+  "Potential XSS vulnerability due to insecure script removal"

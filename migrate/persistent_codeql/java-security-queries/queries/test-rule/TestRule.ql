@@ -1,52 +1,64 @@
 /**
- * @name Seam Log Injection
- * @description Seam Logging API supports expression language which may lead to code injection when dynamic values are used without validation.
+ * @name JDBC SQL Formatted String Injection
+ * @description Detects possible JDBC injection when using string formatting/concatenation
+ *              instead of parameterized queries with JdbcTemplate methods.
  * @kind path-problem
- * @problem.severity error
- * @id java/seam-log-injection
+ * @problem.severity warning
+ * @id java/jdbc-sql-formatted-string
  * @tags security
- *       external/jboss
+ *       external/cwe/cwe-089
  */
 
 import java
-import semmle.code.java.dataflow.FlowSources
 import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.JdbcTemplate
 
-class SeamLogMethod extends Method {
-  SeamLogMethod() {
-    this.getDeclaringType().getQualifiedName() = "org.jboss.seam.log.Log" and
-    this.getName().matches("debug|error|fatal|info|trace|warn")
-  }
-}
-
-class LogCall extends Call {
-  LogCall() {
-    exists(SeamLogMethod m | this.getCallee() = m)
-  }
-}
-
-class SeamLogInjectionConfig extends TaintTracking::Configuration {
-  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
-
-  override predicate isSource(DataFlow::Node source) {
-    exists(Expr e | source.asExpr() = e | e instanceof Literal or e instanceof VariableAccess)
-  }
-
-  override predicate isSink(DataFlow::Node sink) {
-    exists(LogCall lc | sink.asExpr() = lc.getArgument(0))
-  }
-
-  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
-    exists(MethodAccess mc |
-      node1.asExpr() = mc.getArgument(0) and
-      node2.asExpr() = mc
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(Method m, Call ma |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getCallee() = m and
+      this.asExpr() = ma
     )
   }
 }
 
-from DataFlow::PathNode source, DataFlow::PathNode sink, SeamLogInjectionConfig config
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(AddExpr e |
+      e.getLeftOperand().getType() instanceof TypeString and
+      e.getRightOperand().getType() instanceof TypeString and
+      this.asExpr() = e
+    )
+  }
+}
+
+class JdbcSink extends DataFlow::Node {
+  JdbcSink() {
+    exists(Method m, Call ma |
+      m.hasName(["queryForObject", "update", "execute", "insert"]) and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      ma.getCallee() = m and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JdbcTaintConfig extends TaintTracking::Configuration {
+  JdbcTaintConfig() { this = "JdbcTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or source instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JdbcSink
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JdbcTaintConfig config
 where config.hasFlowPath(source, sink)
-select sink.getNode(), 
-  "Unfiltered dynamic value reaches Seam Logging API which may evaluate expressions",
-  source.getNode(), "Dynamic value from here",
-  sink.getNode(), "Flows to seam log API call here"
+select sink, "Possible JDBC injection detected. Use parameterized queries instead of string concatenation/formatting.",
+  source, "This is the source of the formatted/concatenated string",
+  sink, "This is the JDBC query sink"

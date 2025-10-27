@@ -1,0 +1,56 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: annotations
+          right: "@PathParam"
+
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api: { type: java.io.File }
+      arg_index: "*"
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: param->arg
+    kind: taint
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match: { node: CALL, api: { type: org.apache.commons.io.FilenameUtils, method: getName } }
+    effect: neutralize
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CREATION
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "new File(@PathParam('name') String name) {...}"
+  negative:
+    - "String safeName = FilenameUtils.getName(name); new File(safeName);"
+```

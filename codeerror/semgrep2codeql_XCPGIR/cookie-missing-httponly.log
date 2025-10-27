@@ -1,0 +1,471 @@
+Timestamp: 2025-10-23 13:55:50
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-missing-httponly"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "A cookie was detected without setting the 'HttpOnly' flag. The 'HttpOnly' flag for cookies instructs the browser to forbid client-side scripts from reading the cookie. Set the 'HttpOnly' flag by calling 'cookie.setHttpOnly(true);'"
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_SOURCE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setValue"
+sinks:
+  - id: "HTTPONLY_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+  - id: "RESPONSE_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.HttpServletResponse"
+        method: "addCookie"
+sanitizers:
+  - id: "HTTPONLY_TRUE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+flows:
+  - source: "COOKIE_SOURCE"
+    sink: "HTTPONLY_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+  - source: "COOKIE_SOURCE"
+    sink: "RESPONSE_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+report:
+  message: "Cookie without 'HttpOnly' flag detected"
+  locations: ["sink"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getIntValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,35-46)
+ERROR: getIntValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,35-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,40-68)
+Rule Content:
+/**
+ * @name Cookie without HttpOnly flag
+ * @description Detects cookies that are created without setting the HttpOnly flag.
+ * @kind problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/cookie-missing-httponly
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setValue" and
+      ma.getMethod().getDeclaringType().hasName("Cookie") and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieWithoutHttpOnly extends DataFlow::Node {
+  CookieWithoutHttpOnly() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setHttpOnly" and
+      ma.getMethod().getDeclaringType().hasName("Cookie") and
+      ma.getArgument(0).(Literal).getIntValue() = 0 and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class HttpOnlyTrueSanitizer extends DataFlow::Node {
+  HttpOnlyTrueSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setHttpOnly" and
+      ma.getMethod().getDeclaringType().hasName("Cookie") and
+      ma.getArgument(0).(Literal).getIntValue() = 1 and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieAddition extends DataFlow::Node {
+  CookieAddition() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "addCookie" and
+      ma.getMethod().getDeclaringType().hasName("HttpServletResponse") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class CookieHttpOnlyFlowConfig extends TaintTracking::Configuration {
+  CookieHttpOnlyFlowConfig() { this = "CookieHttpOnlyFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CookieWithoutHttpOnly or sink instanceof CookieAddition
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HttpOnlyTrueSanitizer
+  }
+}
+
+from CookieHttpOnlyFlowConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Cookie without 'HttpOnly' flag detected"
+================================================================================
+Timestamp: 2025-10-23 13:56:40
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-missing-httponly"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "A cookie was detected without setting the 'HttpOnly' flag. The 'HttpOnly' flag for cookies instructs the browser to forbid client-side scripts from reading the cookie. Set the 'HttpOnly' flag by calling 'cookie.setHttpOnly(true);'"
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_SOURCE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setValue"
+sinks:
+  - id: "HTTPONLY_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+  - id: "RESPONSE_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.HttpServletResponse"
+        method: "addCookie"
+sanitizers:
+  - id: "HTTPONLY_TRUE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+flows:
+  - source: "COOKIE_SOURCE"
+    sink: "HTTPONLY_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+  - source: "COOKIE_SOURCE"
+    sink: "RESPONSE_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+report:
+  message: "Cookie without 'HttpOnly' flag detected"
+  locations: ["sink"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Barrierguard (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,33-55)
+ERROR: asExpr() cannot be resolved for type HttpOnlySanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,12-18)
+ERROR: could not resolve type DataFlow::Barrierguard (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,37-59)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,22-34)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,34-57)
+ERROR: predicate 'isBarrierGuard' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,3-75,4)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,53-54)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,53-54)
+Rule Content:
+/**
+ * @name Cookie without HttpOnly flag
+ * @description Detects cookies that are created without setting the HttpOnly flag.
+ * @kind problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/cookie-missing-httponly
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class CookieSource extends DataFlow::Node {
+  CookieSource() {
+    exists(Method m, MethodAccess ma |
+      ma.getMethod() = m and
+      m.hasName("setValue") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieWithoutHttpOnlySink extends DataFlow::Node {
+  CookieWithoutHttpOnlySink() {
+    exists(Method m, MethodAccess ma |
+      ma.getMethod() = m and
+      m.hasName("setHttpOnly") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getArgument(0).(BooleanLiteral).getValue() = false and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieAdditionSink extends DataFlow::Node {
+  CookieAdditionSink() {
+    exists(Method m, MethodAccess ma |
+      ma.getMethod() = m and
+      m.hasName("addCookie") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class HttpOnlySanitizer extends DataFlow::Barrierguard {
+  HttpOnlySanitizer() {
+    exists(Method m, MethodAccess ma |
+      ma.getMethod() = m and
+      m.hasName("setHttpOnly") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getArgument(0).(BooleanLiteral).getValue() = true and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class CookieHttpOnlyFlow extends DataFlow::Configuration {
+  CookieHttpOnlyFlow() { this = "CookieHttpOnlyFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CookieWithoutHttpOnlySink or
+    sink instanceof CookieAdditionSink
+  }
+
+  override predicate isBarrierGuard(DataFlow::Barrierguard guard) {
+    guard instanceof HttpOnlySanitizer
+  }
+}
+
+from CookieHttpOnlyFlow flow, DataFlow::Node source, DataFlow::Node sink
+where flow.hasFlow(source, sink)
+select sink, "Cookie without 'HttpOnly' flag detected", source, 
+  "This cookie is missing the HttpOnly flag which prevents client-side script access"
+================================================================================
+Timestamp: 2025-10-23 13:57:52
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-missing-httponly"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "A cookie was detected without setting the 'HttpOnly' flag. The 'HttpOnly' flag for cookies instructs the browser to forbid client-side scripts from reading the cookie. Set the 'HttpOnly' flag by calling 'cookie.setHttpOnly(true);'"
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_SOURCE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setValue"
+sinks:
+  - id: "HTTPONLY_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+  - id: "RESPONSE_SINK"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.HttpServletResponse"
+        method: "addCookie"
+sanitizers:
+  - id: "HTTPONLY_TRUE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+flows:
+  - source: "COOKIE_SOURCE"
+    sink: "HTTPONLY_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+  - source: "COOKIE_SOURCE"
+    sink: "RESPONSE_SINK"
+    constraints:
+      path:
+        must_not: ["HTTPONLY_TRUE"]
+report:
+  message: "Cookie without 'HttpOnly' flag detected"
+  locations: ["sink"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,34-47)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,75-76)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,75-76)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,22-33)
+Rule Content:
+/**
+ * @name Cookie without HttpOnly flag
+ * @description Detects cookies that are created without setting the HttpOnly flag.
+ * @kind problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/cookie-missing-httponly
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class CookieSource extends DataFlow::Node {
+  CookieSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setValue" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class HttpOnlyFalseSink extends DataFlow::Node {
+  HttpOnlyFalseSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setHttpOnly" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      exists(BooleanLiteral bl | ma.getArgument(0) = bl and bl.getValue() = false) and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieAdditionSink extends DataFlow::Node {
+  CookieAdditionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "addCookie" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class HttpOnlySanitizer extends DataFlow::Node {
+  HttpOnlySanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setHttpOnly" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      exists(BooleanLiteral bl | ma.getArgument(0) = bl and bl.getValue() = true) and
+      ma.getQualifier() = this.asExpr()
+    )
+  }
+}
+
+class CookieHttpOnlyFlow extends TaintTracking::Configuration {
+  CookieHttpOnlyFlow() { this = "CookieHttpOnlyFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof HttpOnlyFalseSink or sink instanceof CookieAdditionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof HttpOnlySanitizer
+  }
+}
+
+from CookieHttpOnlyFlow flow, DataFlow::Node source, DataFlow::Node sink
+where flow.hasFlow(source, sink)
+select sink, "Cookie without 'HttpOnly' flag detected", source,
+  "This cookie is missing the HttpOnly flag which prevents client-side script access"
+================================================================================

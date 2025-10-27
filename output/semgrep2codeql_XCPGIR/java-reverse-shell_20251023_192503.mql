@@ -1,0 +1,76 @@
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior in Java code
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java-reverse-shell
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class SocketCreation extends DataFlow::Node {
+  SocketCreation() {
+    exists(Method m |
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      this.asParameter() = m.getAParameter()
+    )
+  }
+}
+
+class ProcessBuilderStart extends DataFlow::Node {
+  ProcessBuilderStart() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("start") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class IOOperation extends DataFlow::Node {
+  IOOperation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("read") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "InputStream") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SocketToInputStreamStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getInputStream") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      pred.asExpr() = ma.getQualifier() and
+      succ.asExpr() = ma
+    )
+  }
+}
+
+predicate socketToIOShell(DataFlow::Node source, DataFlow::Node sink) {
+  exists(DataFlow::Node inputStream |
+    exists(MethodAccess getInput |
+      getInput.getMethod().hasName("getInputStream") and
+      getInput.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      inputStream.asExpr() = getInput 
+    ) and
+    TaintTracking::localTaint(source, inputStream) and
+    TaintTracking::localTaint(inputStream, sink)
+  )
+}
+
+predicate processBuilderToIOShell(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaint(source, sink)
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  (source.getNode() instanceof SocketCreation and sink.getNode() instanceof IOOperation and
+   socketToIOShell(source.getNode(), sink.getNode())) or
+  (source.getNode() instanceof ProcessBuilderStart and sink.getNode() instanceof IOOperation and
+   processBuilderToIOShell(source.getNode(), sink.getNode()))
+select sink, "Potential reverse shell behavior detected", source, sink

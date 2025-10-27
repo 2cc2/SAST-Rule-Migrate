@@ -1,0 +1,68 @@
+/**
+ * @name Insecure SMTP connection
+ * @id insecure-smtp-connection
+ * @kind path-problem
+ * @problem.severity WARNING
+ * @description Insecure SMTP connection detected. This connection will trust any SSL certificate. Enable certificate verification by setting 'email.setSSLCheckServerIdentity(true)'.
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SimpleEmailCreation extends MethodAccess {
+  SimpleEmailCreation() {
+    (
+      this.getMethod().hasName("<init>") and
+      this.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.mail", "SimpleEmail")
+    )
+  }
+}
+
+class InsecureSend extends MethodAccess {
+  InsecureSend() {
+    (
+      this.getMethod().hasName("send") and
+      this.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.mail", "SimpleEmail")
+    )
+  }
+}
+
+class SSLCheckCall extends MethodAccess {
+  SSLCheckCall() {
+    (
+      this.getMethod().hasName("setSSLCheckServerIdentity") and
+      this.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.mail", "SimpleEmail") and
+      this.getArgument(0).toString().toLowerCase() = "true"
+    )
+  }
+}
+
+class InsecureSMTPConfiguration extends TaintTracking::Configuration {
+  InsecureSMTPConfiguration() { this = "InsecureSMTPConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(SimpleEmailCreation sec | source.asExpr() = sec)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(InsecureSend is | sink.asExpr() = is)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SSLCheckCall scc | sanitizer.asExpr() = scc)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma, Field f |
+      succ.asExpr() = ma and
+      pred.asExpr() = ma.getQualifier() and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.mail", "SimpleEmail")
+    )
+  }
+}
+
+from InsecureSMTPConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Insecure SMTP connection detected. $@", source.getNode(),
+  "Enable certificate verification by setting 'email.setSSLCheckServerIdentity(true)'."

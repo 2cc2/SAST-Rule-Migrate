@@ -1,0 +1,52 @@
+/**
+ * @name Blowfish Insufficient Key Size
+ * @description Using less than 128 bits for Blowfish is considered insecure. Use 128 bits or more, or switch to use AES instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/blowfish-insufficient-key-size
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class BlowfishKeyGeneratorCall extends MethodAccess {
+  BlowfishKeyGeneratorCall() {
+    exists(Method m |
+      m.getName() = "getInstance" and
+      m.getDeclaringType().hasQualifiedName("javax.crypto", "KeyGenerator") and
+      this.getMethod() = m and
+      this.getArgument(0).(Literal).getValue() = "Blowfish"
+    )
+  }
+}
+
+class InsecureKeySizeInitCall extends MethodAccess {
+  InsecureKeySizeInitCall() {
+    exists(Method m |
+      m.getName() = "init" and
+      m.getDeclaringType().hasQualifiedName("javax.crypto", "KeyGenerator") and
+      this.getMethod() = m and
+      this.getArgument(0).(Literal).getValue().toInt() < 128
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "BlowfishInsecureKeySize" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(BlowfishKeyGeneratorCall call | source.asExpr() = call)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(InsecureKeySizeInitCall call | sink.asExpr() = call)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, Config config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Insecure Blowfish key size detected. Use 128 bits or more, or switch to use AES instead.",
+  source.getNode(), "Insecure key generator source",
+  sink.getNode(), "Insecure key size initialization"

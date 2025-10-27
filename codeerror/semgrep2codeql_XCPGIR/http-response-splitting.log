@@ -1,0 +1,313 @@
+Timestamp: 2025-10-23 13:27:32
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: http-response-splitting
+  kind: taint
+  severity: INFO
+  message: "Older Java application servers are vulnerable to HTTP response splitting, which may occur if an HTTP request can be injected with CRLF characters."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+  - id: PATH_VARIABLE
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: annotationName
+          right: "PathVariable"
+
+sinks:
+  - id: COOKIE_CONSTRUCTOR
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: "<init>" }
+      arg_index: 1
+  - id: RESPONSE_ADD_COOKIE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletResponse, method: addCookie }
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: VAR_TO_COOKIE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: COOKIE_CONSTRUCTOR
+    through: [ARG_TO_PARAM]
+  - source: USER_INPUT
+    sink: RESPONSE_ADD_COOKIE
+    through: [ARG_TO_PARAM, VAR_TO_COOKIE]
+  - source: PATH_VARIABLE
+    sink: COOKIE_CONSTRUCTOR
+    through: [ARG_TO_PARAM]
+  - source: PATH_VARIABLE
+    sink: RESPONSE_ADD_COOKIE
+    through: [ARG_TO_PARAM, VAR_TO_COOKIE]
+
+report:
+  message: "Potential HTTP Response Splitting vulnerability via unvalidated user input in cookie"
+  locations: ["source", "sink"]
+  evidence: 
+    capture: 
+      - argument: 1
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-42)
+ERROR: isConstructor() cannot be resolved for type CookieConstructor.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,10-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+ERROR: test is always false, as CookieConstructor is incompatible with the expression type Member::Constructor (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,38-55)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,43-71)
+Rule Content:
+/**
+ * @name HTTP Response Splitting Vulnerability
+ * @description Older Java application servers are vulnerable to HTTP response splitting, which may occur if an HTTP request 
+ *              can be injected with CRLF characters.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @id java/http-response-splitting
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Spring
+
+class HttpServletRequestGetParameterMethod extends Method {
+  HttpServletRequestGetParameterMethod() {
+    this.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet", "ServletRequest") and
+    this.hasName("getParameter")
+  }
+}
+
+class CookieConstructor extends Method {
+  CookieConstructor() {
+    this.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.isConstructor()
+  }
+}
+
+class HttpServletResponseAddCookieMethod extends Method {
+  HttpServletResponseAddCookieMethod() {
+    this.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+    this.hasName("addCookie")
+  }
+}
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(MethodAccess ma |
+      ma.getMethod() instanceof HttpServletRequestGetParameterMethod and
+      this.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class CookieSink extends DataFlow::Node {
+  CookieSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructor() instanceof CookieConstructor and
+      this.asExpr() = cc.getArgument(1)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod() instanceof HttpServletResponseAddCookieMethod and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class HttpResponseSplittingConfig extends TaintTracking::Configuration {
+  HttpResponseSplittingConfig() {
+    this = "HttpResponseSplittingConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CookieSink
+  }
+}
+
+from HttpResponseSplittingConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential HTTP Response Splitting vulnerability via unvalidated user input in cookie", 
+source, "User input from $@ flows to cookie creation here", 
+source, "this user input"
+================================================================================
+Timestamp: 2025-10-23 13:28:23
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: http-response-splitting
+  kind: taint
+  severity: INFO
+  message: "Older Java application servers are vulnerable to HTTP response splitting, which may occur if an HTTP request can be injected with CRLF characters."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+  - id: PATH_VARIABLE
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: annotationName
+          right: "PathVariable"
+
+sinks:
+  - id: COOKIE_CONSTRUCTOR
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: "<init>" }
+      arg_index: 1
+  - id: RESPONSE_ADD_COOKIE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletResponse, method: addCookie }
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: VAR_TO_COOKIE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: COOKIE_CONSTRUCTOR
+    through: [ARG_TO_PARAM]
+  - source: USER_INPUT
+    sink: RESPONSE_ADD_COOKIE
+    through: [ARG_TO_PARAM, VAR_TO_COOKIE]
+  - source: PATH_VARIABLE
+    sink: COOKIE_CONSTRUCTOR
+    through: [ARG_TO_PARAM]
+  - source: PATH_VARIABLE
+    sink: RESPONSE_ADD_COOKIE
+    through: [ARG_TO_PARAM, VAR_TO_COOKIE]
+
+report:
+  message: "Potential HTTP Response Splitting vulnerability via unvalidated user input in cookie"
+  locations: ["source", "sink"]
+  evidence: 
+    capture: 
+      - argument: 1
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: test is always false, as CookieConstructor is incompatible with the expression type Member::Constructor (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,38-55)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,43-71)
+Rule Content:
+/**
+ * @name HTTP Response Splitting Vulnerability
+ * @description Older Java application servers are vulnerable to HTTP response splitting, which may occur if an HTTP request 
+ *              can be injected with CRLF characters.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @id java/http-response-splitting
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class HttpServletRequestGetParameterMethod extends Method {
+  HttpServletRequestGetParameterMethod() {
+    this.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet", "ServletRequest") and
+    this.hasName("getParameter")
+  }
+}
+
+class CookieConstructor extends Method {
+  CookieConstructor() {
+    this.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.getName() = "<init>"
+  }
+}
+
+class HttpServletResponseAddCookieMethod extends Method {
+  HttpServletResponseAddCookieMethod() {
+    this.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+    this.hasName("addCookie")
+  }
+}
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Call call |
+      call.getCallee() instanceof HttpServletRequestGetParameterMethod and
+      this.asExpr() = call.getArgument(0)
+    )
+    or
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class CookieSink extends DataFlow::Node {
+  CookieSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructor() instanceof CookieConstructor and
+      this.asExpr() = cc.getArgument(1)
+    )
+    or
+    exists(Call call |
+      call.getCallee() instanceof HttpServletResponseAddCookieMethod and
+      this.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+class HttpResponseSplittingConfig extends TaintTracking::Configuration {
+  HttpResponseSplittingConfig() {
+    this = "HttpResponseSplittingConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CookieSink
+  }
+}
+
+from HttpResponseSplittingConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential HTTP Response Splitting vulnerability via unvalidated user input in cookie", 
+source, "User input from $@ flows to cookie creation here", 
+source, "this user input"
+================================================================================

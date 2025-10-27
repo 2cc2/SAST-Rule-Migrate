@@ -1,0 +1,121 @@
+Timestamp: 2025-10-24 16:12:29
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "servletresponse-writer-xss"
+  kind: taint
+  severity: ERROR
+  message: "Cross-site scripting detected in HttpServletResponse writer with variable '$VAR'. User input was detected going directly from the HttpServletRequest into output. Ensure your data is properly encoded using org.owasp.encoder.Encode.forHtml: 'Encode.forHtml($VAR)'."
+
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletRequest", method: "getParameter" }
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletResponse", method: "getWriter" }
+    match_chained:
+      - node: CALL
+        api: { method: "write" }
+        arg_index: 1
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: XSS_SINK
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(org.owasp.encoder.Encode.forHtml)"
+
+report:
+  message: "Cross-site scripting detected in HttpServletResponse writer"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 1
+
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter('input'));"
+  negative:
+    - "response.getWriter().write(Encode.forHtml(request.getParameter('input')));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-38)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,22-38)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,46-74)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,29-41)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,45-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,72-90)
+Rule Content:
+/**
+ * @name ServletResponse writer XSS
+ * @description Cross-site scripting detected in HttpServletResponse writer.
+ *              User input was detected going directly from the HttpServletRequest into output.
+ *              Ensure your data is properly encoded using org.owasp.encoder.Encode.forHtml.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/servletresponse-writer-xss
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.security.XSS
+import DataFlow::PathGraph
+
+class ServletResponseWriterXssConfig extends TaintTracking::Configuration {
+  ServletResponseWriterXssConfig() { this = "ServletResponseWriterXssConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet.http.HttpServletRequest", "getParameter") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma, MethodAccess writeCall |
+      ma.getMethod().hasQualifiedName("javax.servlet.http.HttpServletResponse", "getWriter") and
+      writeCall.getMethod().getName() = "write" and
+      DataFlow::localExprFlow(ma, writeCall.getQualifier()) and
+      sink.asExpr() = writeCall.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.owasp.encoder", "Encode", "forHtml") and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from ServletResponseWriterXssConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Cross-site scripting detected in HttpServletResponse writer with user input from $@.",
+  source, source.toString()
+================================================================================

@@ -1,0 +1,939 @@
+Timestamp: 2025-10-24 16:21:33
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LOCAL
+      type:
+        name: "java.lang.String"
+
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createValueExpression" }
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createMethodExpression" }
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      api: { method: "buildConstraintViolationWithTemplate" }
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^".*"$'
+    effect: neutralize
+
+barriers:
+  - id: SAFE_ASSIGNMENT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: "rhs.value"
+          right: '^".*"$'
+    effect: stop
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: LOCAL_TO_ARG
+    edge: local->arg
+    kind: taint
+
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [PARAM_TO_ARG*]
+
+report:
+  message: "Potential Expression Language Injection vulnerability"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "factory.createValueExpression(context, userInput, Object.class);"
+    - "factory.createMethodExpression(context, request.getParameter(\"expr\"), Object.class, new Class[0]);"
+  negative:
+    - "factory.createValueExpression(context, \"staticValue\", Object.class);"
+    - "String safeExpr = \"safe\"; factory.createMethodExpression(context, safeExpr, Object.class, new Class[0]);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type AssignmentExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-26)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,65-83)
+Rule Content:
+/** 
+ * @name EL Injection
+ * @description Detects Expression Language injection vulnerabilities where dynamic input
+ *              flows into EL expression evaluation methods without proper sanitization.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class ExpressionFactoryConfig extends TaintTracking::Configuration {
+  ExpressionFactoryConfig() { this = "ExpressionFactoryConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p, LocalVariableDecl lv |
+      (m.getAParameter() = p and source.asParameter() = p) or
+      (lv.getAnAccess() = source.asExpr() and lv.getType() instanceof TypeString)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (
+        // Check for createValueExpression calls
+        (ma.getMethod().getName() = "createValueExpression" and
+         ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         sink.asExpr() = ma.getArgument(1)) or
+        // Check for createMethodExpression calls
+        (ma.getMethod().getName() = "createMethodExpression" and
+         ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         sink.asExpr() = ma.getArgument(1)) or
+        // Check for buildConstraintViolationWithTemplate calls
+        (ma.getMethod().getName() = "buildConstraintViolationWithTemplate" and
+         sink.asExpr() = ma.getArgument(0))
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral sl | sanitizer.asExpr() = sl)
+      or
+    exists(AssignmentExpr ae | sanitizer.asExpr() = ae.getRight() and ae.getRight() instanceof StringLiteral)
+  }
+}
+
+from ExpressionFactoryConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential Expression Language Injection vulnerability", source, sink,
+  "An expression is built with a dynamic value $@. The source should be verified to avoid unfiltered values in code evaluation.",
+  source.getNode(), "this user input"
+================================================================================
+Timestamp: 2025-10-24 16:22:26
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LOCAL
+      type:
+        name: "java.lang.String"
+
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createValueExpression" }
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createMethodExpression" }
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      api: { method: "buildConstraintViolationWithTemplate" }
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^".*"$'
+    effect: neutralize
+
+barriers:
+  - id: SAFE_ASSIGNMENT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: "rhs.value"
+          right: '^".*"$'
+    effect: stop
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: LOCAL_TO_ARG
+    edge: local->arg
+    kind: taint
+
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [PARAM_TO_ARG*]
+
+report:
+  message: "Potential Expression Language Injection vulnerability"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "factory.createValueExpression(context, userInput, Object.class);"
+    - "factory.createMethodExpression(context, request.getParameter(\"expr\"), Object.class, new Class[0]);"
+  negative:
+    - "factory.createValueExpression(context, \"staticValue\", Object.class);"
+    - "String safeExpr = \"safe\"; factory.createMethodExpression(context, safeExpr, Object.class, new Class[0]);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asVariable() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,42-52)
+ERROR: getRight() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,52-60)
+ERROR: getRight() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,70-78)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,39-67)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-34)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,65-83)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects Expression Language injection vulnerabilities where dynamic input
+ *              flows into EL expression evaluation methods without proper sanitization.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class ExpressionFactoryConfig extends TaintTracking::Configuration {
+  ExpressionFactoryConfig() { this = "ExpressionFactoryConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String")) or
+    exists(LocalVariableDecl lv | source.asVariable() = lv and lv.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      (
+        (m.hasName("createValueExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(1)) or
+        (m.hasName("createMethodExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(1)) or
+        (m.hasName("buildConstraintViolationWithTemplate") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(0))
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral sl | sanitizer.asExpr() = sl) or
+    exists(AssignExpr ae | sanitizer.asExpr() = ae.getRight() and ae.getRight() instanceof StringLiteral)
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    exists(StringLiteral sl | barrier.asExpr() = sl)
+  }
+}
+
+from ExpressionFactoryConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential Expression Language Injection vulnerability", source, sink,
+  "An expression is built with a dynamic value $@. The source should be verified to avoid unfiltered values in code evaluation.",
+  source.getNode(), "this user input"
+================================================================================
+Timestamp: 2025-10-24 16:23:29
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LOCAL
+      type:
+        name: "java.lang.String"
+
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createValueExpression" }
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createMethodExpression" }
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      api: { method: "buildConstraintViolationWithTemplate" }
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^".*"$'
+    effect: neutralize
+
+barriers:
+  - id: SAFE_ASSIGNMENT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: "rhs.value"
+          right: '^".*"$'
+    effect: stop
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: LOCAL_TO_ARG
+    edge: local->arg
+    kind: taint
+
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [PARAM_TO_ARG*]
+
+report:
+  message: "Potential Expression Language Injection vulnerability"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "factory.createValueExpression(context, userInput, Object.class);"
+    - "factory.createMethodExpression(context, request.getParameter(\"expr\"), Object.class, new Class[0]);"
+  negative:
+    - "factory.createValueExpression(context, \"staticValue\", Object.class);"
+    - "String safeExpr = \"safe\"; factory.createMethodExpression(context, safeExpr, Object.class, new Class[0]);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'AssignExpr' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,17-27)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,1-2)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,33-61)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects Expression Language injection vulnerabilities where dynamic input
+ *              flows into EL expression evaluation methods without proper sanitization.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String")) or
+    exists(LocalVariableDecl lv | source.asExpr() = lv.getAnAccess() and lv.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method ma, Call call |
+      (
+        (ma.getName() = "createValueExpression" and
+         ma.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         call.getCallee() = ma and
+         sink.asExpr() = call.getArgument(1)) or
+        (ma.getName() = "createMethodExpression" and
+         ma.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         call.getCallee() = ma and
+         sink.asExpr() = call.getArgument(1)) or
+        (ma.getName() = "buildConstraintViolationWithTemplate" and
+         call.getCallee() = ma and
+         sink.asExpr() = call.getArgument(0))
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(StringLiteral sl | node.asExpr() = sl) or
+    exists(Expr.AssignExpr ae | node.asExpr() = ae.getRhs() and ae.getRhs() instanceof StringLiteral)
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential Expression Language Injection vulnerability", source, sink,
+  "An expression is built with dynamic value $@. The source should be verified to avoid unfiltered values in code evaluation.",
+  source.getNode(), "this user input"
+================================================================================
+Timestamp: 2025-10-24 16:24:27
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LOCAL
+      type:
+        name: "java.lang.String"
+
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createValueExpression" }
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createMethodExpression" }
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      api: { method: "buildConstraintViolationWithTemplate" }
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^".*"$'
+    effect: neutralize
+
+barriers:
+  - id: SAFE_ASSIGNMENT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: "rhs.value"
+          right: '^".*"$'
+    effect: stop
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: LOCAL_TO_ARG
+    edge: local->arg
+    kind: taint
+
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [PARAM_TO_ARG*]
+
+report:
+  message: "Potential Expression Language Injection vulnerability"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "factory.createValueExpression(context, userInput, Object.class);"
+    - "factory.createMethodExpression(context, request.getParameter(\"expr\"), Object.class, new Class[0]);"
+  negative:
+    - "factory.createValueExpression(context, \"staticValue\", Object.class);"
+    - "String safeExpr = \"safe\"; factory.createMethodExpression(context, safeExpr, Object.class, new Class[0]);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asVariable() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,42-52)
+ERROR: could not resolve type InfixExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-21)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,33-61)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,22-34)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,59-77)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects Expression Language injection vulnerabilities where dynamic input
+ *              flows into EL expression evaluation methods without proper sanitization.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String")) or
+    exists(LocalVariableDecl lv | source.asVariable() = lv and lv.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      (
+        (m.hasName("createValueExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(1)) or
+        (m.hasName("createMethodExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(1)) or
+        (m.hasName("buildConstraintViolationWithTemplate") and
+         ma.getMethod() = m and
+         sink.asExpr() = ma.getArgument(0))
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral sl | sanitizer.asExpr() = sl) or
+    exists(InfixExpr ie | 
+      ie.getOperator() = "=" and
+      sanitizer.asExpr() = ie.getRightOperand() and
+      ie.getRightOperand() instanceof StringLiteral
+    )
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential Expression Language Injection vulnerability", source, sink,
+  "An expression is built with a dynamic value $@. The source should be verified to avoid unfiltered values in code evaluation.",
+  source.getNode(), "this user input"
+================================================================================
+Timestamp: 2025-10-24 16:25:25
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LOCAL
+      type:
+        name: "java.lang.String"
+
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createValueExpression" }
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api: { type: "javax.el.ExpressionFactory", method: "createMethodExpression" }
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      api: { method: "buildConstraintViolationWithTemplate" }
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^".*"$'
+    effect: neutralize
+
+barriers:
+  - id: SAFE_ASSIGNMENT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: eq
+          left: "rhs.value"
+          right: '^".*"$'
+    effect: stop
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: LOCAL_TO_ARG
+    edge: local->arg
+    kind: taint
+
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [PARAM_TO_ARG*, LOCAL_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" }, { pattern: "ASSIGNMENT(rhs=LITERAL)" } ]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [PARAM_TO_ARG*]
+
+report:
+  message: "Potential Expression Language Injection vulnerability"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "factory.createValueExpression(context, userInput, Object.class);"
+    - "factory.createMethodExpression(context, request.getParameter(\"expr\"), Object.class, new Class[0]);"
+  negative:
+    - "factory.createValueExpression(context, \"staticValue\", Object.class);"
+    - "String safeExpr = \"safe\"; factory.createMethodExpression(context, safeExpr, Object.class, new Class[0]);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asVariable() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,42-52)
+ERROR: getVariable() cannot be resolved for type Variable::LocalVariableDecl (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,60-71)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,59-77)
+Rule Content:
+/**
+ * @name EL Injection
+ * @description Detects Expression Language injection vulnerabilities where dynamic input
+ *              flows into EL expression evaluation methods without proper sanitization.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/el-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | source.asParameter() = p and p.getType().hasName("String")) or
+    exists(LocalVariableDecl lv | source.asVariable() = lv.getVariable() and lv.getType().hasName("String"))
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call call |
+      (
+        (m.hasName("createValueExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         call.getCallee() = m and
+         sink.asExpr() = call.getArgument(1)) or
+        (m.hasName("createMethodExpression") and
+         m.getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+         call.getCallee() = m and
+         sink.asExpr() = call.getArgument(1)) or
+        (m.hasName("buildConstraintViolationWithTemplate") and
+         call.getCallee() = m and
+         sink.asExpr() = call.getArgument(0))
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(StringLiteral sl | node.asExpr() = sl) or
+    exists(AssignExpr ae | node.asExpr() = ae.getRhs() and ae.getRhs() instanceof StringLiteral)
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential Expression Language Injection vulnerability", source, sink,
+  "An expression is built with dynamic value $@. The source should be verified to avoid unfiltered values in code evaluation.",
+  source.getNode(), "this user input"
+================================================================================
+Timestamp: 2025-10-24 19:04:45
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api:
+        type: javax.el.ExpressionFactory
+        method: createValueExpression
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api:
+        type: javax.el.ExpressionFactory
+        method: createMethodExpression
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      method: buildConstraintViolationWithTemplate
+      arg_index: 0
+sanitizers:
+  - id: STRING_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+    effect: neutralize
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [ARG_TO_PARAM*]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [ARG_TO_PARAM*]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [ARG_TO_PARAM*]
+report:
+  message: "Expression injection risk detected with dynamic input: ${sink.arg1.preview}"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - {argument: 1}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.El (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-38)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,48-62)
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,48-62)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,59-77)
+Rule Content:
+/**
+ * @id el-injection
+ * @severity Warning
+ * @name Expression Language Injection
+ * @description An expression is built with a dynamic value. The source of the value(s) should be 
+ *              verified to avoid that unfiltered values fall into this risky code evaluation.
+ * @kind path-problem
+ * @problem.severity warning
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.El
+
+/** The source of potentially dangerous dynamic input */
+class DynamicInput extends DataFlow::Node {
+  DynamicInput() {
+    exists(Parameter p | this.asParameter() = p) or
+    exists(Literal l | this.asExpr() = l and l.getStringValue() != "...") or
+    exists(MethodAccess ma | this.asExpr() = ma)
+  }
+}
+
+/** The sink where untrusted input could lead to EL injection */
+class ElSink extends DataFlow::Node {
+  ElSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "createValueExpression" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+      this.asExpr() = ma.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "createMethodExpression" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+      this.asExpr() = ma.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "buildConstraintViolationWithTemplate" and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+/** Sanitizer for string literals which are considered safe */
+class StringLiteralSanitizer extends DataFlow::Node {
+  StringLiteralSanitizer() {
+    exists(Literal l | this.asExpr() = l and l.getStringValue() = "...")
+  }
+}
+
+/** Taint tracking configuration for EL injection */
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof DynamicInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof ElSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof StringLiteralSanitizer
+  }
+}
+
+from ElInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Expression injection risk detected with dynamic input: " + sink.getNode().toString(),
+  source, sink, "Potential EL injection vulnerability"
+================================================================================

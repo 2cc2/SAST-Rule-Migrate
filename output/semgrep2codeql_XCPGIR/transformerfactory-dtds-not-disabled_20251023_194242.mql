@@ -1,0 +1,75 @@
+/**
+ * @name TransformerFactory XXE vulnerability
+ * @description Detects when DOCTYPE declarations are enabled for TransformerFactory,
+ *              making it vulnerable to XML external entity attacks.
+ * @severity ERROR
+ * @kind path-problem
+ * @id java/transformerfactory-dtds-not-disabled
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class UnsafeTransformerFactoryCreation extends Expr {
+  UnsafeTransformerFactoryCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("newInstance") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      this = ma
+    )
+  }
+}
+
+class SafeTransformerFactoryConfiguration extends Expr {
+  SafeTransformerFactoryConfiguration() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setAttribute") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      (
+        (ma.getArgument(0).toString() = "XMLConstants.ACCESS_EXTERNAL_DTD" and
+         ma.getArgument(1).toString() = "\"\"") or
+        (ma.getArgument(0).toString() = "XMLConstants.ACCESS_EXTERNAL_STYLESHEET" and
+         ma.getArgument(1).toString() = "\"\"")
+      ) and
+      this = ma
+    )
+  }
+}
+
+class TransformerUsage extends Expr {
+  TransformerUsage() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("newTransformer") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform", "TransformerFactory") and
+      this = ma
+    )
+  }
+}
+
+class TransformerFactoryXXEFlowConfiguration extends TaintTracking::Configuration {
+  TransformerFactoryXXEFlowConfiguration() {
+    this = "TransformerFactory XXE Flow Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof UnsafeTransformerFactoryCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof TransformerUsage
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof SafeTransformerFactoryConfiguration
+  }
+}
+
+from TransformerFactoryXXEFlowConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "DOCTYPE declarations are enabled for this TransformerFactory. This is vulnerable to XML external entity attacks. " +
+  "Disable this by setting the attributes 'accessExternalDTD' and 'accessExternalStylesheet' to ''.", 
+  source, sink,
+  "Unsafe TransformerFactory configuration"

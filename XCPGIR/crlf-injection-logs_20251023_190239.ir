@@ -1,0 +1,51 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "crlf-injection-logs"
+  kind: taint
+  severity: WARNING
+  message: "When data from an untrusted source is put into a logger and not neutralized correctly, an attacker could forge log entries or include malicious content."
+scope:
+  languages: [java]
+  frameworks: ["servlet"]
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: 
+        type: javax.servlet.http.HttpServletRequest
+        method: getParameter
+      arg_index: 0
+sinks:
+  - id: LOG_INJECTION
+    match:
+      node: CALL
+      api:
+        type: org.slf4j.Logger
+        method: $LEVEL
+      arg_index: 0
+    where:
+      - op: eq
+        left: method
+        right: [$LEVEL, log]
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: LOG_INJECTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "CRLF injection vulnerability in logger detected"
+  locations: ["source", "sink"]
+  evidence:
+    capture: 
+      - argument: 0
+tests:
+  positive:
+    - "String val = request.getParameter(\"input\"); logger.info(val);"
+    - "logger.log(Level.INFO, request.getParameter(\"input\"));"
+  negative:
+    - "String val = sanitize(request.getParameter(\"input\")); logger.info(val);"
+```

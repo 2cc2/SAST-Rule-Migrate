@@ -1,0 +1,112 @@
+Timestamp: 2025-10-23 12:59:36
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: java.unsafe-reflection
+  kind: taint
+  severity: WARNING
+  message: "Use of externally-controlled input to select classes may allow bypassing authentication or access control checks"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: EXTERNAL_CLASS_NAME
+    match:
+      node: CALL
+      api: { type: java.lang.Class, method: forName }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: LITERAL
+sinks:
+  - id: CLASS_INSTANTIATION
+    match:
+      node: CALL
+      api: { type: java.lang.Class, method: newInstance }
+propagations:
+  - id: CLASS_NAME_PROPAGATION
+    edge: arg->param
+    kind: taint
+flows:
+  - source: EXTERNAL_CLASS_NAME
+    sink: CLASS_INSTANTIATION
+    through: [CLASS_NAME_PROPAGATION*]
+report:
+  message: "If an attacker can supply values that the application then uses to determine which class to instantiate, the potential exists for the attacker to create unintended control flow paths"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  cwe: ["CWE-470: Use of Externally-Controlled Input to Select Classes or Code ('Unsafe Reflection')"]
+  owasp: ["A03:2021 - Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,44-45)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,11-45)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,37-43)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,44-45)
+ERROR: could not resolve module semmle.code.java.frameworks.ClassNames (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-46)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,44-45)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,34-52)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,61-79)
+Rule Content:
+/**
+ * @name Unsafe Reflection
+ * @description Use of externally-controlled input to select classes may allow bypassing authentication or access control checks
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/unsafe-reflection
+ * @tags security
+ *       external/cwe/cwe-470
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.ClassNames
+
+class UnsafeReflectionConfig extends TaintTracking::Configuration {
+  UnsafeReflectionConfig() { this = "UnsafeReflectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma, Method m |
+      ma.getMethod() = m and
+      m.hasName("forName") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Class") and
+      ma.getArgument(0) = source.asExpr() and
+      not source.asExpr().(Literal).exists()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma, Method m |
+      ma.getMethod() = m and
+      m.hasName("newInstance") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Class") and
+      ma.getQualifier() = sink.asExpr()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      ma.getArgument(0) = node1.asExpr() and
+      ma.getArgument(_) = node2.asExpr()
+    )
+  }
+}
+
+from UnsafeReflectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "If an attacker can supply values that the application then uses to determine which class to instantiate, the potential exists for the attacker to create unintended control flow paths",
+  source, sink,
+  "$@ flows to reflection instantiation here.",
+  source.getNode(), "User input",
+  sink.getNode(), "Class instantiation"
+================================================================================

@@ -1,0 +1,1103 @@
+Timestamp: 2025-10-23 16:06:48
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: "Detected user input entering a method which executes a system command."
+  scope:
+    languages: [java]
+    frameworks: ["spring"]
+    env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type.name
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+      api:
+        annotations:
+          - pattern: RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute
+
+sinks:
+  - id: PROCESS_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.lang.ProcessBuilder
+        method: command|add|addAll
+        arg_index: 0
+      alternative:
+        - api: {type: java.lang.Runtime, method: exec|loadLibrary|load}
+        - api: {type: java.lang.ProcessBuilder, method: start}
+
+propagations:
+  - id: CONCAT
+    edge: arg->param|field-store|call-return
+    kind: taint
+    via:
+      - api: {type: java.lang.String, method: concat|format|join}
+      - operator: +
+
+flows:
+  - source: INPUT
+    sink: PROCESS_EXEC
+    through: [CONCAT*]
+    constraints:
+      path:
+        must:
+          - node: CALL
+            where: api.method matches "exec|command|start"
+
+report:
+  message: "Detected user input entering a method which executes a system command."
+  locations: ["source","sink","path"]
+  metadata:
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    references:
+      - https://www.stackhawk.com/blog/command-injection-java/
+      - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,33-40)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: could not resolve type SpringRequestBody (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,38-55)
+ERROR: could not resolve type SpringPathVariable (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,38-56)
+ERROR: could not resolve type SpringRequestParam (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,38-56)
+ERROR: could not resolve type SpringRequestHeader (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,38-57)
+ERROR: could not resolve type SpringCookieValue (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,38-55)
+ERROR: could not resolve type SpringModelAttribute (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,38-58)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,3-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,8-32)
+WARNING: unused class 'SpringInputSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,7-24)
+WARNING: unused class 'ProcessExecSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,7-22)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-system-command
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a1
+ *       owasp-a3
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Spring
+
+class SpringInputSource extends DataFlow::Node {
+  SpringInputSource() {
+    exists(Method m, Parameter p |
+      m.getAnAnnotation() instanceof SpringRequestBody or
+      m.getAnAnnotation() instanceof SpringPathVariable or
+      m.getAnAnnotation() instanceof SpringRequestParam or
+      m.getAnAnnotation() instanceof SpringRequestHeader or
+      m.getAnAnnotation() instanceof SpringCookieValue or
+      m.getAnAnnotation() instanceof SpringModelAttribute |
+      p = m.getAParameter() and
+      p.getType() instanceof PrimitiveType and        
+      not p.getType().hasName(["Integer", "Long", "Float", "Double", "Char", "Boolean"]) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ProcessExecSink extends DataFlow::Node {
+  ProcessExecSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+       ma.getMethod().getName() matches "command|add|addAll" and
+       ma.getArgument(0) = this.asExpr()) or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+       ma.getMethod().getName().matches("exec|loadLibrary|load")) or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+       ma.getMethod().getName() = "start")
+    )
+  }
+}
+
+class StringConcatProp extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+       ma.getMethod().getName().matches("concat|format|join") |
+       pred.asExpr() = ma.getAnArgument() and
+       succ.asExpr() = ma
+      ) or
+      exists(AddExpr add |
+        add.getAnOperand() = pred.asExpr() and
+        add = succ.asExpr()
+      )
+    )
+  }
+}
+
+class TaintedSystemCommandConfig extends TaintTracking::Configuration {
+  TaintedSystemCommandConfig() { this = "TaintedSystemCommandConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SpringInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ProcessExecSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    any(StringConcatProp s).step(pred, succ)
+  }
+}
+
+from TaintedSystemCommandConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected user input entering a method which executes a system command (CWE-78: OS Command Injection)",
+  source.getNode(), "User input source here",
+  sink.getNode(), "Command execution sink here"
+================================================================================
+Timestamp: 2025-10-23 16:08:15
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: "Detected user input entering a method which executes a system command."
+  scope:
+    languages: [java]
+    frameworks: ["spring"]
+    env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type.name
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+      api:
+        annotations:
+          - pattern: RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute
+
+sinks:
+  - id: PROCESS_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.lang.ProcessBuilder
+        method: command|add|addAll
+        arg_index: 0
+      alternative:
+        - api: {type: java.lang.Runtime, method: exec|loadLibrary|load}
+        - api: {type: java.lang.ProcessBuilder, method: start}
+
+propagations:
+  - id: CONCAT
+    edge: arg->param|field-store|call-return
+    kind: taint
+    via:
+      - api: {type: java.lang.String, method: concat|format|join}
+      - operator: +
+
+flows:
+  - source: INPUT
+    sink: PROCESS_EXEC
+    through: [CONCAT*]
+    constraints:
+      path:
+        must:
+          - node: CALL
+            where: api.method matches "exec|command|start"
+
+report:
+  message: "Detected user input entering a method which executes a system command."
+  locations: ["source","sink","path"]
+  metadata:
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    references:
+      - https://www.stackhawk.com/blog/command-injection-java/
+      - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,9-22)
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,9-22)
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,9-22)
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,9-22)
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,9-22)
+ERROR: hasAnnotation(string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,9-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:80,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:80,65-83)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-system-command
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a1
+ *       owasp-a3
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class SpringInputSource extends DataFlow::Node {
+  SpringInputSource() {
+    exists(Method m, Parameter p |
+      m.hasAnnotation("org.springframework.web.bind.annotation.RequestBody") or
+      m.hasAnnotation("org.springframework.web.bind.annotation.PathVariable") or
+      m.hasAnnotation("org.springframework.web.bind.annotation.RequestParam") or
+      m.hasAnnotation("org.springframework.web.bind.annotation.RequestHeader") or
+      m.hasAnnotation("org.springframework.web.bind.annotation.CookieValue") or
+      m.hasAnnotation("org.springframework.web.bind.annotation.ModelAttribute") |
+      p = m.getAParameter() and
+      not p.getType() instanceof PrimitiveType and
+      not p.getType().hasName(["Integer", "Long", "Float", "Double", "Char", "Boolean", 
+                               "int", "long", "float", "double", "char", "boolean"]) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ProcessExecSink extends DataFlow::Node {
+  ProcessExecSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+       (ma.getMethod().getName() = "command" or ma.getMethod().getName() = "add" or 
+        ma.getMethod().getName() = "addAll") and
+       ma.getArgument(0) = this.asExpr()) or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+       (ma.getMethod().getName() = "exec" or ma.getMethod().getName() = "loadLibrary" or
+        ma.getMethod().getName() = "load")) or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+       ma.getMethod().getName() = "start")
+    )
+  }
+}
+
+class StringConcatProp extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+       (ma.getMethod().getName() = "concat" or ma.getMethod().getName() = "format" or
+        ma.getMethod().getName() = "join") and
+       pred.asExpr() = ma.getAnArgument() and
+       succ.asExpr() = ma)
+      or
+      exists(AddExpr add |
+        add.getAnOperand() = pred.asExpr() and
+        add = succ.asExpr()
+      )
+    )
+  }
+}
+
+class TaintedSystemCommandConfig extends TaintTracking::Configuration {
+  TaintedSystemCommandConfig() { this = "TaintedSystemCommandConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SpringInputSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof ProcessExecSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    any(StringConcatProp s).step(pred, succ)
+  }
+}
+
+from TaintedSystemCommandConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected user input entering a method which executes a system command (CWE-78: OS Command Injection)",
+  source.getNode(), "User input source here",
+  sink.getNode(), "Command execution sink here"
+================================================================================
+Timestamp: 2025-10-23 16:09:31
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: "Detected user input entering a method which executes a system command."
+  scope:
+    languages: [java]
+    frameworks: ["spring"]
+    env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type.name
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+      api:
+        annotations:
+          - pattern: RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute
+
+sinks:
+  - id: PROCESS_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.lang.ProcessBuilder
+        method: command|add|addAll
+        arg_index: 0
+      alternative:
+        - api: {type: java.lang.Runtime, method: exec|loadLibrary|load}
+        - api: {type: java.lang.ProcessBuilder, method: start}
+
+propagations:
+  - id: CONCAT
+    edge: arg->param|field-store|call-return
+    kind: taint
+    via:
+      - api: {type: java.lang.String, method: concat|format|join}
+      - operator: +
+
+flows:
+  - source: INPUT
+    sink: PROCESS_EXEC
+    through: [CONCAT*]
+    constraints:
+      path:
+        must:
+          - node: CALL
+            where: api.method matches "exec|command|start"
+
+report:
+  message: "Detected user input entering a method which executes a system command."
+  locations: ["source","sink","path"]
+  metadata:
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    references:
+      - https://www.stackhawk.com/blog/command-injection-java/
+      - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-60)
+ERROR: could not resolve type RequestBody (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,38-49)
+ERROR: could not resolve type PathVariable (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,38-50)
+ERROR: could not resolve type RequestParam (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,38-50)
+ERROR: could not resolve type RequestHeader (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,38-51)
+ERROR: could not resolve type CookieValue (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,38-49)
+ERROR: could not resolve type ModelAttribute (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,38-52)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,15-24)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,15-24)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,57-66)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,15-24)
+ERROR: getArgument(int) cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,14-25)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,14-23)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,15-24)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,54-63)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,15-24)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,14-23)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,14-23)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,12-21)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,13-22)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,54-63)
+ERROR: getMethod() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,13-22)
+ERROR: getAnArgument() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,28-41)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,24-36)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,23-35)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,33-51)
+WARNING: unused variable 'm' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,19-20)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-system-command
+ * @tags security
+ *       external/cwe/cwe-078
+ *       owasp-a1
+ *       owasp-a3
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringAnnotations
+
+class SpringInputSource extends DataFlow::Node {
+  SpringInputSource() {
+    exists(Method m, Parameter p |
+      p.getAnAnnotation() instanceof RequestBody or
+      p.getAnAnnotation() instanceof PathVariable or
+      p.getAnAnnotation() instanceof RequestParam or
+      p.getAnAnnotation() instanceof RequestHeader or
+      p.getAnAnnotation() instanceof CookieValue or
+      p.getAnAnnotation() instanceof ModelAttribute |
+      not p.getType() instanceof PrimitiveType and
+      not p.getType().hasName(["Integer", "Long", "Float", "Double", "Char", "Boolean", 
+                             "int", "long", "float", "double", "char", "boolean"]) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ProcessExecSink extends DataFlow::Node {
+  ProcessExecSink() {
+    exists(Expr call |
+      (call instanceof MethodAccess and
+       ((call.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+        (call.getMethod().getName() = "command" or call.getMethod().getName() = "add" or 
+         call.getMethod().getName() = "addAll") and
+        call.getArgument(0) = this.asExpr()) or
+       (call.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+        (call.getMethod().getName() = "exec" or call.getMethod().getName() = "loadLibrary" or
+         call.getMethod().getName() = "load")) or
+       (call.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+        call.getMethod().getName() = "start")))
+    )
+  }
+}
+
+class StringConcatProp extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Expr call |
+      call instanceof MethodAccess and
+      call.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      (call.getMethod().getName() = "concat" or call.getMethod().getName() = "format" or
+       call.getMethod().getName() = "join") and
+      pred.asExpr() = call.getAnArgument() and
+      succ.asExpr() = call
+    )
+    or
+    exists(AddExpr add |
+      add.getAnOperand() = pred.asExpr() and
+      add = succ.asExpr()
+    )
+  }
+}
+
+class TaintedSystemCommandConfig extends TaintTracking::Configuration {
+  TaintedSystemCommandConfig() { this = "TaintedSystemCommandConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SpringInputSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof ProcessExecSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    any(StringConcatProp s).step(pred, succ)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSystemCommandConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected user input entering a method which executes a system command (CWE-78: OS Command Injection)",
+  source.getNode(), "User input source here",
+  sink.getNode(), "Command execution sink here"
+================================================================================
+Timestamp: 2025-10-23 20:52:17
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: |
+    Detected user input entering a method which executes a system command.
+    This could result in a command injection vulnerability, which allows an
+    attacker to inject an arbitrary system command onto the server. The attacker
+    could download malware onto or steal data from the server. Instead, use
+    ProcessBuilder, separating the command into individual arguments, like this:
+    `new ProcessBuilder("ls", "-al", targetDirectory)`. Further, make sure you
+    hardcode or allowlist the actual command so that attackers can't run arbitrary commands.
+
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotation
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+
+  - id: CONCAT
+    match:
+      node: CALL
+      where:
+        - op: in
+          left: name
+          right: [append, concat, format, join, "+", "+="]
+
+sinks:
+  - id: COMMAND_EXEC
+    match:
+      node: CALL
+      api: { type: java.lang.Runtime, method: exec }
+  
+  - id: PROCESS_BUILDER
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: command }
+  
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: start }
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: INPUT
+    sink: COMMAND_EXEC
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_BUILDER
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_START
+    through: [STRING_CONCAT]
+
+report:
+  message: "User input reaches system command execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+  
+tests:
+  positive:
+    - "Runtime.getRuntime().exec(request.getParameter(\"cmd\"));"
+    - "new ProcessBuilder().command(request.getHeader(\"cmd\")).start();"
+  negative:
+    - "Runtime.getRuntime().exec(\"safe-command\");"
+    - "new ProcessBuilder(\"ls\", \"-la\").start();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,9-12)
+ERROR: unexpected input 'from' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,82-83)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,28-29)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,33-34)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,33-34)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,26-27)
+ERROR: unexpected input 'and' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,33-36)
+ERROR: unexpected input '.' expecting one of: '::' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,11-12)
+ERROR: extraneous input '(' expecting one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,26-27)
+ERROR: unexpected input 'from' expecting one of: Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,31-35)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,35-36)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,36-37)
+ERROR: could not resolve type SpringAnnotation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,35-51)
+ERROR: could not resolve type Add (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,29-32)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,9-12)
+ERROR: query module contains multiple select clauses (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,3-58)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,22-43)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,80-82)
+ERROR: No higher-order predicate with name  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,31-35)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,37-55)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,64-82)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,65-79)
+WARNING: unused variable 'getLeftOperand' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,12-26)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:51, select clause select from TestRule.ql:54, select clause select from TestRule.ql:61, select clause select from TestRule.ql:64 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:47, select clause select from TestRule.ql:54, select clause select from TestRule.ql:61, select clause select from TestRule.ql:64 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,29-34)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:47, select clause select from TestRule.ql:51, select clause select from TestRule.ql:61, select clause select from TestRule.ql:64 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,29-34)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:47, select clause select from TestRule.ql:51, select clause select from TestRule.ql:54, select clause select from TestRule.ql:64 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,31-36)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:47, select clause select from TestRule.ql:51, select clause select from TestRule.ql:54, select clause select from TestRule.ql:61 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,32-37)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-system-command
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class CommandInjectionConfig extends TaintTracking::Configuration {
+  CommandInjectionConfig() { this = "CommandInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p, SpringAnnotation a |
+      m.getAParameter() = p and
+      a = p.getAnAnnotation() and
+      (
+        a.getType().hasName("RequestBody") or
+        a.getType().hasName("PathVariable") or
+        a.getType().hasName("RequestParam") or
+        a.getType().hasName("RequestHeader") or
+        a.getType().hasName("CookieValue") or
+        a.getType().hasName("ModelAttribute")
+      ) and
+      not p.getType() instanceof PrimitiveType and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().hasName("exec") and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") or
+        (ma.getMethod().hasName("command") and
+         ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")) or
+        (ma.getMethod().hasName("start") and
+         ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder"))
+      ) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["append", "concat", "format", "join"]) and
+      (
+        ma.getArgument(_) = from.asExpr() and
+        ma.getQualifier() = to.asExpr()
+        or
+        ma.getQualifier() = from.asExpr() and
+        ma.getArgument(0) = to.asExpr()
+      )
+    ) or
+    exists(BinaryExpr be |
+      be.getOp() instanceof Add and
+      (
+        be.getLeftOperand() = from.asExpr() and
+        be.getRightOperand() = to.asExpr()
+        or
+        be.getRightOperand() = from.asExpr() and
+        be.getLeftOperand() = to.asExpr()
+      )
+    )
+  }
+}
+
+from CommandInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches system command execution without sanitization"
+================================================================================
+Timestamp: 2025-10-23 20:53:13
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: |
+    Detected user input entering a method which executes a system command.
+    This could result in a command injection vulnerability, which allows an
+    attacker to inject an arbitrary system command onto the server. The attacker
+    could download malware onto or steal data from the server. Instead, use
+    ProcessBuilder, separating the command into individual arguments, like this:
+    `new ProcessBuilder("ls", "-al", targetDirectory)`. Further, make sure you
+    hardcode or allowlist the actual command so that attackers can't run arbitrary commands.
+
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotation
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+
+  - id: CONCAT
+    match:
+      node: CALL
+      where:
+        - op: in
+          left: name
+          right: [append, concat, format, join, "+", "+="]
+
+sinks:
+  - id: COMMAND_EXEC
+    match:
+      node: CALL
+      api: { type: java.lang.Runtime, method: exec }
+  
+  - id: PROCESS_BUILDER
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: command }
+  
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: start }
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: INPUT
+    sink: COMMAND_EXEC
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_BUILDER
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_START
+    through: [STRING_CONCAT]
+
+report:
+  message: "User input reaches system command execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+  
+tests:
+  positive:
+    - "Runtime.getRuntime().exec(request.getParameter(\"cmd\"));"
+    - "new ProcessBuilder().command(request.getHeader(\"cmd\")).start();"
+  negative:
+    - "Runtime.getRuntime().exec(\"safe-command\");"
+    - "new ProcessBuilder(\"ls\", \"-la\").start();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,82-83)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,28-29)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,35-36)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,34-35)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,26-27)
+ERROR: unexpected input 'and' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,47-50)
+ERROR: unexpected input '(' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,9-10)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,36-37)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,37-38)
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-60)
+ERROR: could not resolve module SpringAnnotations (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,14-31)
+ERROR: could not resolve type AddOperator (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,35-46)
+ERROR: query module contains multiple select clauses (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,3-58)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,22-43)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,80-82)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,47-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,37-55)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,64-82)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,65-79)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:50, select clause select from TestRule.ql:51, select clause select from TestRule.ql:57, select clause select from TestRule.ql:58 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:46, select clause select from TestRule.ql:51, select clause select from TestRule.ql:57, select clause select from TestRule.ql:58 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,31-36)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:46, select clause select from TestRule.ql:50, select clause select from TestRule.ql:57, select clause select from TestRule.ql:58 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,30-35)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:46, select clause select from TestRule.ql:50, select clause select from TestRule.ql:51, select clause select from TestRule.ql:58 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,32-37)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:46, select clause select from TestRule.ql:50, select clause select from TestRule.ql:51, select clause select from TestRule.ql:57 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,33-38)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-system-command
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringAnnotations
+
+class CommandInjectionConfig extends TaintTracking::Configuration {
+  CommandInjectionConfig() { this = "CommandInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      exists(SpringAnnotations::RequestAnnotation a | 
+        a = p.getAnAnnotation()
+      ) and
+      not p.getType() instanceof PrimitiveType and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().hasName("exec") and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime")
+      ) or
+      (
+        ma.getMethod().hasName("command") and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")
+      ) or
+      (
+        ma.getMethod().hasName("start") and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")
+      )
+      and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["append", "concat", "format", "join"]) and
+      (
+        (ma.getAnArgument() = from.asExpr() and ma.getQualifier() = to.asExpr()) or
+        (ma.getQualifier() = from.asExpr() and ma.getAnArgument() = to.asExpr())
+      )
+    ) or
+    exists(BinaryExpr be |
+      be.getOperator() instanceof AddOperator and
+      (
+        (be.getLeftOperand() = from.asExpr() and be.getRightOperand() = to.asExpr()) or
+        (be.getRightOperand() = from.asExpr() and be.getLeftOperand() = to.asExpr())
+      )
+    )
+  }
+}
+
+from CommandInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches system command execution without sanitization"
+================================================================================
+Timestamp: 2025-10-23 20:54:16
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-system-command
+  kind: taint
+  severity: ERROR
+  message: |
+    Detected user input entering a method which executes a system command.
+    This could result in a command injection vulnerability, which allows an
+    attacker to inject an arbitrary system command onto the server. The attacker
+    could download malware onto or steal data from the server. Instead, use
+    ProcessBuilder, separating the command into individual arguments, like this:
+    `new ProcessBuilder("ls", "-al", targetDirectory)`. Further, make sure you
+    hardcode or allowlist the actual command so that attackers can't run arbitrary commands.
+
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotation
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+
+  - id: CONCAT
+    match:
+      node: CALL
+      where:
+        - op: in
+          left: name
+          right: [append, concat, format, join, "+", "+="]
+
+sinks:
+  - id: COMMAND_EXEC
+    match:
+      node: CALL
+      api: { type: java.lang.Runtime, method: exec }
+  
+  - id: PROCESS_BUILDER
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: command }
+  
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: start }
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: INPUT
+    sink: COMMAND_EXEC
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_BUILDER
+    through: [STRING_CONCAT]
+  
+  - source: INPUT
+    sink: PROCESS_START
+    through: [STRING_CONCAT]
+
+report:
+  message: "User input reaches system command execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+  
+tests:
+  positive:
+    - "Runtime.getRuntime().exec(request.getParameter(\"cmd\"));"
+    - "new ProcessBuilder().command(request.getHeader(\"cmd\")).start();"
+  negative:
+    - "Runtime.getRuntime().exec(\"safe-command\");"
+    - "new ProcessBuilder(\"ls\", \"-la\").start();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,82-83)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,28-29)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,14-15)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,14-15)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,26-27)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,14-15)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,14-15)
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-56)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,40-53)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,40-53)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,40-53)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,40-53)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,40-53)
+ERROR: could not resolve module SpringRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,40-53)
+ERROR: query module contains multiple select clauses (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-58)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,22-43)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,80-82)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,37-55)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,64-82)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,65-79)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:53, select clause select from TestRule.ql:54, select clause select from TestRule.ql:60, select clause select from TestRule.ql:61 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:49, select clause select from TestRule.ql:54, select clause select from TestRule.ql:60, select clause select from TestRule.ql:61 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,10-15)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:49, select clause select from TestRule.ql:53, select clause select from TestRule.ql:60, select clause select from TestRule.ql:61 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,10-15)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:49, select clause select from TestRule.ql:53, select clause select from TestRule.ql:54, select clause select from TestRule.ql:61 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,10-15)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:49, select clause select from TestRule.ql:53, select clause select from TestRule.ql:54, select clause select from TestRule.ql:60 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,10-15)
+Rule Content:
+/**
+ * @name Tainted system command
+ * @description Detected user input entering a method which executes a system command.
+ * @id java/tainted-system-command
+ * @kind path-problem
+ * @problem.severity error
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.SpringRequest
+
+class CommandInjectionConfig extends TaintTracking::Configuration {
+  CommandInjectionConfig() { this = "CommandInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p |
+      p = m.getAParameter() and
+      (
+        p.getAnAnnotation() instanceof SpringRequest::RequestBody or
+        p.getAnAnnotation() instanceof SpringRequest::PathVariable or
+        p.getAnAnnotation() instanceof SpringRequest::RequestParam or
+        p.getAnAnnotation() instanceof SpringRequest::RequestHeader or
+        p.getAnAnnotation() instanceof SpringRequest::CookieValue or
+        p.getAnAnnotation() instanceof SpringRequest::ModelAttribute
+      ) and
+      not p.getType() instanceof PrimitiveType and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "exec" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime")
+        or
+        ma.getMethod().getName() = "command" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")
+        or
+        ma.getMethod().getName() = "start" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")
+      ) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() in ["append", "concat", "format", "join"] and
+      (
+        (from.asExpr() = ma.getAnArgument() and to.asExpr() = ma.getQualifier()) or
+        (from.asExpr() = ma.getQualifier() and to.asExpr() = ma.getAnArgument())
+      )
+    ) or
+    exists(BinaryExpr be |
+      be.getOperator().toString() = "+" and
+      (
+        (from.asExpr() = be.getLeftOperand() and to.asExpr() = be.getRightOperand()) or
+        (from.asExpr() = be.getRightOperand() and to.asExpr() = be.getLeftOperand())
+      )
+    )
+  }
+}
+
+from CommandInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches system command execution without sanitization"
+================================================================================

@@ -1,0 +1,663 @@
+Timestamp: 2025-10-23 15:13:04
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the JSTL taglib to escape this expression."
+scope:
+  languages: [regex]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: JSP_UNESCAPED_EXPR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: JSP_UNESCAPED_EXPR
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(<[A-Za-z0-9]+:out.*>)" } ]
+report:
+  message: "Detected an Expression Language segment in a tag that does not escape output"
+  locations: ["source"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "<c:set value=\"$\{userInput}\" />"
+  negative:
+    - "<c:out value=\"$\{userInput}\" />"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,5-22,6)
+ERROR: unexpected input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,64-65)
+ERROR: unexpected input ')' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+', '|' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,3-4)
+ERROR: could not resolve module semmle.code.java.StringLiterals (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-39)
+ERROR: could not resolve module semmle.code.jsp.JspXss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-30)
+ERROR: could not resolve type JspUnescapedExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,6-22)
+ERROR: could not resolve type RemoteFlowSource (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,54-70)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,10-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,37-49)
+WARNING: unused variable 'jspUnescaped' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,23-35)
+Rule Content:
+/**
+ * @name Use JSTL escaping
+ * @kind problem
+ * @id java/use-jstl-escaping
+ * @problem.severity warning
+ * @security-severity 7.4
+ * @tags security
+ * @precision high
+ */
+
+import java
+import semmle.code.java.StringLiterals
+import semmle.code.jsp.JspXss
+
+from JspUnescapedExpr jspUnescaped, MethodAccess ma, RemoteFlowSource remoteSource
+where
+  exists(DataFlow::localFlow(remoteSource, ma.getAnArgument()) |
+    ma.getMethod().getName() = "setValue" and
+    jspUnescaped.getAChild() = ma.getAnArgument() and
+    not exists(JspOutTagSanitizer jspsanitizer |
+      jspsanitizer.getAChild() = jspUnescaped
+    )
+  )
+select jspUnescaped, "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled externally, " +
+  "it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the " +
+  "JSTL taglib to escape this expression."
+
+/**
+ * Defines unescaped JSP Expression Language segments
+ */
+class JspUnescapedExpr extends TagLiteral {
+  JspUnescapedExpr() {
+    this.getTagRegex().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+  }
+}
+
+/**
+ * Defines JSTL out tag sanitizers
+ */
+class JspOutTagSanitizer extends TagLiteral {
+  JspOutTagSanitizer() {
+    this.getTagRegex().regexpMatch("<[A-Za-z0-9]+:out.*>")
+  }
+}
+
+class TagLiteral extends HtmlLiteral {
+  Regexp getTagRegex() { result = this.getValue() }
+}
+================================================================================
+Timestamp: 2025-10-23 15:14:10
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the JSTL taglib to escape this expression."
+scope:
+  languages: [regex]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: JSP_UNESCAPED_EXPR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: JSP_UNESCAPED_EXPR
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(<[A-Za-z0-9]+:out.*>)" } ]
+report:
+  message: "Detected an Expression Language segment in a tag that does not escape output"
+  locations: ["source"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "<c:set value=\"$\{userInput}\" />"
+  negative:
+    - "<c:out value=\"$\{userInput}\" />"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.jsp.dataflow.JspFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-40)
+ERROR: could not resolve module semmle.code.jsp.HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-35)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,30-41)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,23-34)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,6-17)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,14-25)
+Rule Content:
+/**
+ * @name Use JSTL escaping
+ * @kind problem
+ * @id java/use-jstl-escaping
+ * @description Detects Expression Language segments in JSP tags without output escaping
+ * @problem.severity warning
+ * @security-severity 7.4
+ * @tags security
+ * @precision high
+ */
+
+import java
+import semmle.code.jsp.dataflow.JspFlow
+import semmle.code.jsp.HtmlLiteral
+
+predicate isJspUnescapedExpr(HtmlLiteral literal) {
+  literal.getValue().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+}
+
+predicate isJspOutTag(HtmlLiteral literal) {
+  literal.getValue().regexpMatch("<[A-Za-z0-9]+:out.*>")
+}
+
+from HtmlLiteral jspExpr
+where
+  isJspUnescapedExpr(jspExpr) and
+  not exists(HtmlLiteral sanitizer | 
+    isJspOutTag(sanitizer) and
+    sanitizer.getParent() = jspExpr.getParent()
+  )
+select jspExpr, "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled externally, " +
+  "it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the " +
+  "JSTL taglib to escape this expression."
+================================================================================
+Timestamp: 2025-10-23 15:14:54
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the JSTL taglib to escape this expression."
+scope:
+  languages: [regex]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: JSP_UNESCAPED_EXPR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: JSP_UNESCAPED_EXPR
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(<[A-Za-z0-9]+:out.*>)" } ]
+report:
+  message: "Detected an Expression Language segment in a tag that does not escape output"
+  locations: ["source"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "<c:set value=\"$\{userInput}\" />"
+  negative:
+    - "<c:out value=\"$\{userInput}\" />"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.html.HtmlEntities (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-37)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,32-43)
+ERROR: getValue() cannot be resolved for type JspUnescapedExpr.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-18)
+ERROR: could not resolve type HtmlLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,34-45)
+ERROR: getValue() cannot be resolved for type JspOutTagSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,10-18)
+Rule Content:
+/**
+ * @name Use JSTL escaping
+ * @kind problem
+ * @id java/use-jstl-escaping
+ * @description Detects Expression Language segments in JSP tags without output escaping
+ * @problem.severity warning
+ * @security-severity 7.4
+ * @tags security
+ * @precision high
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.html.HtmlEntities
+
+class JspUnescapedExpr extends HtmlLiteral {
+  JspUnescapedExpr() {
+    this.getValue().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+  }
+}
+
+class JspOutTagSanitizer extends HtmlLiteral {
+  JspOutTagSanitizer() {
+    this.getValue().regexpMatch("<[A-Za-z0-9]+:out.*>")
+  }
+}
+
+from JspUnescapedExpr unescaped
+where not exists(JspOutTagSanitizer sanitizer |
+  sanitizer.getParent() = unescaped.getParent()
+)
+select unescaped, "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled externally, " +
+  "it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the " +
+  "JSTL taglib to escape this expression."
+================================================================================
+Timestamp: 2025-10-23 20:12:18
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: ["regex"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "JSTL_OUT_TAG" } ]
+report:
+  message: "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression."
+  locations: ["source", "sink"]
+  references:
+    - "https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm"
+tests:
+  positive:
+    - "<c:set var=\"test\">${param.userInput}</c:set>"
+  negative:
+    - "<c:out value=\"${param.userInput}\"/>"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module Html (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-12)
+ERROR: could not resolve module Jsp (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-11)
+ERROR: could not resolve type JspJspExpression (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-26)
+ERROR: could not resolve type JspCoreOutTag (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,16-29)
+ERROR: could not resolve type JspJspExpression (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,51-67)
+ERROR: could not resolve predicate path/2 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,10-24)
+Rule Content:
+/**
+ * @name Use JSTL escaping for Expression Language
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-jstl-escaping
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.XSS
+import Html
+import Jsp
+
+predicate isUnsafeElExpr(Expr e) {
+  exists(JspJspExpression expr |
+    expr = e and
+    not exists(JspCoreOutTag tag | tag.getExpr().(JspJspExpression).getValue() = expr.getValue())
+  )
+}
+
+from Expr src, Expr sink
+where
+  isUnsafeElExpr(src) and
+  exists(DataFlow::path(src, sink))
+select sink, "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression.",
+  src, "This expression may contain user-controlled input.",
+  sink, "Potentially unsafe output here"
+================================================================================
+Timestamp: 2025-10-23 20:13:03
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: ["regex"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "JSTL_OUT_TAG" } ]
+report:
+  message: "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression."
+  locations: ["source", "sink"]
+  references:
+    - "https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm"
+tests:
+  positive:
+    - "<c:set var=\"test\">${param.userInput}</c:set>"
+  negative:
+    - "<c:out value=\"${param.userInput}\"/>"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getText() cannot be resolved for type JspExpression.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,10-17)
+ERROR: getText() cannot be resolved for type UnsafeJspTag.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,10-17)
+ERROR: getText() cannot be resolved for type JstlOutTag.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,10-17)
+ERROR: could not resolve predicate flowPath/2 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,5-23)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,14-32)
+Rule Content:
+/**
+ * @name Use JSTL escaping for Expression Language
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/use-jstl-escaping
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringFormat
+import DataFlow::PathGraph
+
+class JspExpression extends Expr {
+  JspExpression() {
+    this instanceof StringLiteral and
+    this.getText().matches("\\$\\{.*?\\}")
+  }
+}
+
+class UnsafeJspTag extends Expr {
+  UnsafeJspTag() {
+    this instanceof StringLiteral and
+    this.getText().matches("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+  }
+}
+
+class JstlOutTag extends Expr {
+  JstlOutTag() {
+    this instanceof StringLiteral and
+    this.getText().matches("<[A-Za-z0-9]+:out.*>")
+  }
+}
+
+predicate isSource(DataFlow::Node source) {
+  exists(UnsafeJspTag tag | source.asExpr() = tag)
+}
+
+predicate isSink(DataFlow::Node sink) {
+  exists(JspExpression expr | sink.asExpr() = expr)
+}
+
+predicate isSanitizer(DataFlow::Node sanitizer) {
+  exists(JstlOutTag outTag | sanitizer.asExpr() = outTag)
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  isSource(source.getNode()) and
+  isSink(sink.getNode()) and
+  not exists(DataFlow::PathNode sanitizer |
+    isSanitizer(sanitizer.getNode()) and
+    DataFlow::flowPath(source, sink).getAEdge*(source, sanitizer)
+  )
+select sink.getNode(), "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression.",
+  source.getNode(), "This expression may contain user-controlled input."
+================================================================================
+Timestamp: 2025-10-23 20:13:55
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment in a tag that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: ["regex"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+sanitizers:
+  - id: JSTL_OUT_TAG
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<[A-Za-z0-9]+:out.*>"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "JSTL_OUT_TAG" } ]
+report:
+  message: "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression."
+  locations: ["source", "sink"]
+  references:
+    - "https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm"
+tests:
+  positive:
+    - "<c:set var=\"test\">${param.userInput}</c:set>"
+  negative:
+    - "<c:out value=\"${param.userInput}\"/>"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,19-26)
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,19-26)
+ERROR: getText() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,19-26)
+ERROR: could not resolve predicate flowPath/2 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,5-23)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,14-32)
+Rule Content:
+/**
+ * @name Use JSTL escaping for Expression Language
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/use-jstl-escaping
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringFormat
+import DataFlow
+
+class JspExpression extends DataFlow::ExprNode {
+  JspExpression() {
+    this.asExpr() instanceof StringLiteral and
+    this.asExpr().getText().matches("\\$\\{.*?\\}")
+  }
+}
+
+class UnsafeJspTag extends DataFlow::ExprNode {
+  UnsafeJspTag() {
+    this.asExpr() instanceof StringLiteral and
+    this.asExpr().getText().matches("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+  }
+}
+
+class JstlOutTag extends DataFlow::ExprNode {
+  JstlOutTag() {
+    this.asExpr() instanceof StringLiteral and
+    this.asExpr().getText().matches("<[A-Za-z0-9]+:out.*>")
+  }
+}
+
+predicate isSource(DataFlow::Node source) {
+  exists(UnsafeJspTag tag | source = tag)
+}
+
+predicate isSink(DataFlow::Node sink) {
+  exists(JspExpression expr | sink = expr)
+}
+
+predicate isSanitizer(DataFlow::Node sanitizer) {
+  exists(JstlOutTag outTag | sanitizer = outTag)
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  isSource(source.getNode()) and
+  isSink(sink.getNode()) and
+  not exists(DataFlow::PathNode sanitizer |
+    isSanitizer(sanitizer.getNode()) and
+    DataFlow::flowPath(source, sanitizer)
+  )
+select sink, "Expression Language segment detected without escaping. Use the 'out' tag from JSTL taglib to escape this expression.",
+  source, "This expression may contain user-controlled input."
+================================================================================

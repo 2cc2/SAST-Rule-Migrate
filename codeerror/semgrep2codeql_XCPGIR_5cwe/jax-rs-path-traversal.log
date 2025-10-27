@@ -1,0 +1,679 @@
+Timestamp: 2025-10-24 15:37:21
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs", "javax.ws.rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: annotations
+          right: "@PathParam|@javax.ws.rs.PathParam"
+
+sinks:
+  - id: FILE_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.io.File, method: "<init>" }
+      arg_index: 1  # Assuming user controlled param is 2nd argument
+
+propagations:
+  - id: PARAM_TO_FILE_ARG
+    edge: param->arg
+    kind: taint
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api: { type: org.apache.commons.io.FilenameUtils, method: getName }
+    effect: neutralize
+    scope: { sinks: [FILE_CONSTRUCTION] }
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTION
+    through: [PARAM_TO_FILE_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  message: "Potential path traversal vulnerability via @PathParam used in File constructor"
+  locations: ["source", "sink"]
+  evidence: 
+    capture: 
+      - argument: 1
+        at: sink
+
+tests:
+  positive:
+    - |
+      @Path("/test")
+      public Response getFile(@PathParam("name") String name) {
+        File file = new File("/tmp", name);
+        return Response.ok(file).build();
+      }
+  negative:
+    - |
+      @Path("/test")
+      public Response getFile(@PathParam("name") String name) {
+        File file = new File("/tmp", FilenameUtils.getName(name));
+        return Response.ok(file).build();
+      }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jaxrs.JaxRs (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-47)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,35-63)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       external/jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jaxrs.JaxRs
+
+class PathParamSource extends DataFlow::Node {
+  PathParamSource() {
+    exists(MethodParameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+      p.getAnAnnotation().getType().getName() = "PathParam" |
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileSink extends DataFlow::Node {
+  FileSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      cc.getArgument(1) = this.asExpr()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParamSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal vulnerability via @PathParam used in File constructor", 
+  source, "User-provided path parameter", sink, "File constructor with potentially unsafe path"
+================================================================================
+Timestamp: 2025-10-24 15:43:10
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jax-rs-path-traversal
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api: { type: java.io.File, method: <init> }
+      arg_index: "any"
+      where:
+        - op: eq
+          left: argIndex
+          right: "$PATH_PARAM"
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match: { node: CALL, api: { type: org.apache.commons.io.FilenameUtils, method: getName } }
+    effect: neutralize
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CREATION
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  message: "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: "source" }, { argument: "sink" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JAXRS (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-41)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-27)
+ERROR: JaxRsPathParamSource must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,7-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,47-75)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,46-64)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,73-91)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal Vulnerability
+ * @description Detected a potential path traversal. A malicious actor could control the location
+ *              of this file, to include going backwards in the directory with '../'. To address this,
+ *              ensure that user-controlled variables in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       external/cwe/cwe-22
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.JAXRS
+import semmle.code.java.dataflow.TaintTracking
+
+class JaxRsPathParamSource extends RemoteFlowSource {
+  JaxRsPathParamSource() {
+    exists(MethodParameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileCreationSink extends DataFlow::Node {
+  FileCreationSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class JaxRsPathTraversalConfiguration extends TaintTracking::Configuration {
+  JaxRsPathTraversalConfiguration() {
+    this = "JAX-RS Path Traversal Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof JaxRsPathParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileCreationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from JaxRsPathTraversalConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+================================================================================
+Timestamp: 2025-10-24 15:44:17
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jax-rs-path-traversal
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api: { type: java.io.File, method: <init> }
+      arg_index: "any"
+      where:
+        - op: eq
+          left: argIndex
+          right: "$PATH_PARAM"
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match: { node: CALL, api: { type: org.apache.commons.io.FilenameUtils, method: getName } }
+    effect: neutralize
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CREATION
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  message: "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: "source" }, { argument: "sink" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,25-33)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,40-68)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,33-51)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal Vulnerability
+ * @description Detected a potential path traversal. A malicious actor could control the location
+ *              of this file, to include going backwards in the directory with '../'. To address this,
+ *              ensure that user-controlled variables in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       external/cwe/cwe-22
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class JaxRsPathParamSource extends DataFlow::Node {
+  JaxRsPathParamSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileCreationSink extends DataFlow::Node {
+  FileCreationSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(Method m |
+      m.hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class JaxRsPathTraversalConfig extends TaintTracking::Configuration {
+  JaxRsPathTraversalConfig() {
+    this = "JAX-RS Path Traversal Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof JaxRsPathParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileCreationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JaxRsPathTraversalConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+================================================================================
+Timestamp: 2025-10-24 15:45:11
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jax-rs-path-traversal
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api: { type: java.io.File, method: <init> }
+      arg_index: "any"
+      where:
+        - op: eq
+          left: argIndex
+          right: "$PATH_PARAM"
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match: { node: CALL, api: { type: org.apache.commons.io.FilenameUtils, method: getName } }
+    effect: neutralize
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CREATION
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  message: "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: "source" }, { argument: "sink" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::FlowConfig (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,6-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,40-68)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal Vulnerability
+ * @description Detected a potential path traversal. A malicious actor could control the location
+ *              of this file, to include going backwards in the directory with '../'. To address this,
+ *              ensure that user-controlled variables in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       external/cwe/cwe-22
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class JaxRsPathParamSource extends DataFlow::Node {
+  JaxRsPathParamSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileCreationSink extends DataFlow::Node {
+  FileCreationSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class JaxRsPathTraversalConfig extends TaintTracking::Configuration {
+  JaxRsPathTraversalConfig() {
+    this = "JAX-RS Path Traversal Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof JaxRsPathParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileCreationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::FlowConfig config, DataFlow::Node source, DataFlow::Node sink
+where config instanceof JaxRsPathTraversalConfig and
+  config.hasFlow(source, sink)
+select sink, source, sink,
+  "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+================================================================================
+Timestamp: 2025-10-24 15:46:02
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jax-rs-path-traversal
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      where:
+        - op: regex
+          left: name
+          right: ".*"
+
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api: { type: java.io.File, method: <init> }
+      arg_index: "any"
+      where:
+        - op: eq
+          left: argIndex
+          right: "$PATH_PARAM"
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match: { node: CALL, api: { type: org.apache.commons.io.FilenameUtils, method: getName } }
+    effect: neutralize
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CREATION
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+
+report:
+  message: "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: "source" }, { argument: "sink" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java.lang.Iterable (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-26)
+ERROR: could not resolve module semmle.code.java.frameworks.JAXRSRequestParams (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-54)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,40-68)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,33-51)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal Vulnerability
+ * @description Detected a potential path traversal. A malicious actor could control the location
+ *              of this file, to include going backwards in the directory with '../'. To address this,
+ *              ensure that user-controlled variables in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       external/cwe/cwe-22
+ */
+
+import java
+import java.lang.Iterable
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JAXRSRequestParams
+import DataFlow::PathGraph
+
+class JaxRsPathParamSource extends DataFlow::Node {
+  JaxRsPathParamSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileCreationSink extends DataFlow::Node {
+  FileCreationSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.apache.commons.io", "FilenameUtils", "getName") and
+      this.asExpr() = ma.getAnArgument()
+    )
+  }
+}
+
+class JaxRsPathTraversalConfig extends TaintTracking::Configuration {
+  JaxRsPathTraversalConfig() {
+    this = "JAX-RS Path Traversal Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof JaxRsPathParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileCreationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JaxRsPathTraversalConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Path traversal vulnerability detected via user-controlled path parameter in File constructor"
+================================================================================

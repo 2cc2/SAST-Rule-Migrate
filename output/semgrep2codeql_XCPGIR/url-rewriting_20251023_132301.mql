@@ -1,0 +1,41 @@
+/**
+ * @name URL Rewriting Vulnerability
+ * @description Detects insecure URL rewriting using HttpServletResponse.encodeURL or encodeRedirectURL methods
+ * @kind path-problem
+ * @problem.severity WARNING
+ * @id java/url-rewriting
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class URLRewriteSink extends MethodAccess {
+  URLRewriteSink() {
+    exists(Method m |
+      this.getMethod() = m and
+      (m.getName() = "encodeURL" or m.getName() = "encodeRedirectURL") and
+      m.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletResponse")
+    )
+  }
+}
+
+class URLRewritingConfig extends DataFlow::Configuration {
+  URLRewritingConfig() { this = "URLRewritingConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof RemoteFlowSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(URLRewriteSink urlSink | sink.asExpr() = urlSink)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, URLRewritingConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "URL rewriting detected using HttpServletResponse.encodeURL or encodeRedirectURL methods. " +
+  "This has significant security risks since session ID appears in the URL and may be easily seen by third parties."

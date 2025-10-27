@@ -1,0 +1,56 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "servletresponse-writer-xss"
+  kind: taint
+  severity: ERROR
+  message: "Cross-site scripting detected in HttpServletResponse writer with variable '$VAR'. User input was detected going directly from the HttpServletRequest into output. Ensure your data is properly encoded using org.owasp.encoder.Encode.forHtml: 'Encode.forHtml($VAR)'."
+
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletRequest", method: "getParameter" }
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletResponse", method: "getWriter" }
+    match_chained:
+      - node: CALL
+        api: { method: "write" }
+        arg_index: 1
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: XSS_SINK
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(org.owasp.encoder.Encode.forHtml)"
+
+report:
+  message: "Cross-site scripting detected in HttpServletResponse writer"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 1
+
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter('input'));"
+  negative:
+    - "response.getWriter().write(Encode.forHtml(request.getParameter('input')));"
+```

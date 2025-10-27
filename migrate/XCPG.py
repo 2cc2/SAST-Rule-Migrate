@@ -54,11 +54,11 @@ def get_all_java_files(directory):
     java_files = []
     for root, _, files in os.walk(directory):  # 使用 os.walk 遍历目录及子目录
         for file in files:
-            if file.endswith(".yaml"):  # 检查文件后缀是否为 .java
+            if file.endswith(".yaml"):  
                 java_files.append(os.path.join(root, file))  # 保存文件的完整路径
     return java_files
 
-def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 3):
+def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 5):
     """
     迁移单个规则文件。
     :param input_file: 输入的 .go 文件路径
@@ -152,26 +152,32 @@ def process_multiple_files(directory: str,IR:str, output_dir: str, log_dir: str)
     print(f"[📂] 输出文件夹中共有 {output_file_count} 个文件")
     java_files = get_all_java_files(directory)
     print(f"[📂] 找到 {len(java_files)} 个")
+    sum=0
+    existing_files = []  # 初始化一个空列表
+    for f in os.listdir(output_dir):  # 遍历 output_dir 中的所有文件
+        file_name, _ = os.path.splitext(f)  # 分离文件名和扩展名
+        truncated_file_name = file_name.split('_')[0]  # 截断文件名，取 `_` 前面的部分
+            # print(f"[📂] 检查文件：{truncated_file_name} 是否与 {base_name} 匹配")
+        existing_files.append(truncated_file_name)  # 如果匹配，将文件添加到 existing_files 列表
+    print(f"[📂] 已存在 {len(existing_files)} 个规则文件")
     for java_file in java_files:
         file_path = os.path.join(directory, java_file)
         print(f"\n[🔄] 正在处理文件：{file_path}")
         base_name= os.path.splitext(os.path.basename(java_file))[0]
-
         print(f"[📂] 处理文件：{base_name}")
         # 检查输出目录中是否已经存在包含该文件名的文件
-        existing_files = [f for f in os.listdir(output_dir) if base_name in f]
-        
-        if existing_files:
+        if base_name in existing_files:
             print(f"[⏩] 文件 {base_name} 的规则已存在，跳过处理 {file_path}")
+            sum+=1
             continue
         migrate_rule(file_path, IR,output_dir, log_dir)
   
 if __name__ == "__main__":
-    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java"  
-    IR_directory = "/Users/djoker/Desktop/CTGA/demo/XCPGIR/" 
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_XCPGIR"
+    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java_classified_rules"  
+    IR_directory = "/Users/djoker/Desktop/CTGA/demo/XCPGIR5/" 
+    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_XCPGIR_5cwe"
 
-    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_XCPGIR"
+    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_XCPGIR_5cwe"
     for directory in [input_directory, output_directory, log_directory]:
         if not os.path.exists(directory):
             os.makedirs(directory)

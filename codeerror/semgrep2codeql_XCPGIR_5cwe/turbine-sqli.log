@@ -1,0 +1,2454 @@
+Timestamp: 2025-10-24 17:04:43
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+      arg_index: 0
+  - id: SQL_VARIABLE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '^".*" \\+ ".*"$'
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+  - id: ASSIGNMENT_PROPAGATION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_PROPAGATION]
+  - source: SQL_VARIABLE
+    sink: SQL_EXEC
+    through: [ASSIGNMENT_PROPAGATION, STRING_PROPAGATION]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+    - "BasePeer.executeQuery(\"SELECT * FROM \" + \"users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getRValue() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,16-25)
+ERROR: getLValue() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,30-39)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,40-68)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,63-81)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the 
+ *              SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SqlStringConcatSource extends DataFlow::Node {
+  SqlStringConcatSource() {
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("format") and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      (ma.getMethod().hasName("+") and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String"))
+      |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlVariableSource extends DataFlow::Node {
+  SqlVariableSource() {
+    exists(AssignExpr assign |
+      exists(MethodAccess ma |
+        (ma.getMethod().hasName("format") and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")) or
+        (ma.getMethod().hasName("+") and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String"))
+        |
+        assign.getRValue() = ma
+      )
+      |
+      this.asExpr() = assign.getLValue()
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::Node {
+  SqlExecuteSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("executeQuery") and 
+       (ma.getMethod().getDeclaringType().getName().matches("BasePeer") or 
+        ma.getMethod().getDeclaringType().getName().matches("GroupPeer")))
+      and
+      not ma.getArgument(0).(StringLiteral).getValue().regexpMatch("^\"\\..*\" \\+ \".*\"$")
+      |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqliConfiguration extends TaintTracking::Configuration {
+  TurbineSqliConfiguration() { this = "TurbineSqliConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatSource or source instanceof SqlVariableSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecuteSink
+  }
+}
+
+from TurbineSqliConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection due to unsanitized string concatenation in SQL query"
+================================================================================
+Timestamp: 2025-10-24 17:05:44
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+      arg_index: 0
+  - id: SQL_VARIABLE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '^".*" \\+ ".*"$'
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+  - id: ASSIGNMENT_PROPAGATION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_PROPAGATION]
+  - source: SQL_VARIABLE
+    sink: SQL_EXEC
+    through: [ASSIGNMENT_PROPAGATION, STRING_PROPAGATION]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+    - "BasePeer.executeQuery(\"SELECT * FROM \" + \"users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getRValue() cannot be resolved for type Expr::Assignment (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,14-23)
+ERROR: getLValue() cannot be resolved for type Expr::Assignment (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,30-39)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,31-43)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,41-69)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,37-55)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,64-82)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the 
+ *              SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SqlStringConcatenation extends DataFlow::ExprNode {
+  SqlStringConcatenation() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "format" and 
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      (ma.getMethod().getName() = "+" and 
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String"))
+    |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlVariableAssignment extends DataFlow::Node {
+  SqlVariableAssignment() {
+    exists(Assignment assign, MethodAccess ma |
+      (ma.getMethod().getName() = "format" and 
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      (ma.getMethod().getName() = "+" and 
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String"))
+    |
+      assign.getRValue() = ma and
+      this.asExpr() = assign.getLValue()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "executeQuery" and 
+       (ma.getMethod().getDeclaringType().getName() = "BasePeer" or 
+        ma.getMethod().getDeclaringType().getName() = "GroupPeer"))
+    |
+      not ma.getArgument(0).toString().regexpMatch("^\"\\..*\" \\+ \".*\"$") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqlInjectionConfig extends TaintTracking::Configuration {
+  TurbineSqlInjectionConfig() { this = "TurbineSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatenation or source instanceof SqlVariableAssignment
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+}
+
+from TurbineSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection due to unsanitized string concatenation in SQL query"
+================================================================================
+Timestamp: 2025-10-24 17:06:56
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+      arg_index: 0
+  - id: SQL_VARIABLE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '^".*" \\+ ".*"$'
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+  - id: ASSIGNMENT_PROPAGATION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_PROPAGATION]
+  - source: SQL_VARIABLE
+    sink: SQL_EXEC
+    through: [ASSIGNMENT_PROPAGATION, STRING_PROPAGATION]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+    - "BasePeer.executeQuery(\"SELECT * FROM \" + \"users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getRightOperand() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,14-29)
+ERROR: getLeftOperand() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,30-44)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,41-53)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,22-34)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,41-69)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,33-51)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the
+ *              SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SqlStringConcatenation extends DataFlow::ExprNode {
+  SqlStringConcatenation() {
+    exists(Method m, MethodAccess ma |
+      (m.hasName("format") and 
+       m.getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      (m.hasName("+") and 
+       m.getDeclaringType().hasQualifiedName("java.lang", "String"))
+      and
+      ma.getMethod() = m
+    |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlVariableAssignment extends DataFlow::ExprNode {
+  SqlVariableAssignment() {
+    exists(AssignExpr assign, Method m, MethodAccess ma |
+      (m.hasName("format") and 
+       m.getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      (m.hasName("+") and 
+       m.getDeclaringType().hasQualifiedName("java.lang", "String"))
+      and
+      ma.getMethod() = m and
+      assign.getRightOperand() = ma and
+      this.asExpr() = assign.getLeftOperand()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::ExprNode {
+  SqlExecutionSink() {
+    exists(Method m, MethodAccess ma |
+      m.hasName("executeQuery") and 
+      (m.getDeclaringType().getName() = "BasePeer" or 
+       m.getDeclaringType().getName() = "GroupPeer")
+      and
+      ma.getMethod() = m and
+      not ma.getArgument(0).toString().regexpMatch("^\"\\..*\" \\+ \".*\"$")
+    |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqlInjectionConfig extends TaintTracking::Configuration {
+  TurbineSqlInjectionConfig() { this = "TurbineSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatenation or source instanceof SqlVariableAssignment
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqlInjectionConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection due to unsanitized string concatenation in SQL query"
+================================================================================
+Timestamp: 2025-10-24 17:08:09
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+      arg_index: 0
+  - id: SQL_VARIABLE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '^".*" \\+ ".*"$'
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+  - id: ASSIGNMENT_PROPAGATION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_PROPAGATION]
+  - source: SQL_VARIABLE
+    sink: SQL_EXEC
+    through: [ASSIGNMENT_PROPAGATION, STRING_PROPAGATION]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+    - "BasePeer.executeQuery(\"SELECT * FROM \" + \"users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getOperandType() cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,11-25)
+ERROR: could not resolve type AssignStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-22)
+ERROR: getOperandType() cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,11-25)
+ERROR: could not resolve type AssignStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-22)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:80,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:80,33-51)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodCall mc |
+      mc.getMethod().getName() = "format" and
+      mc.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(AddExpr add |
+      add.getOperandType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = add.getLeftOperand()
+    )
+  }
+}
+
+class VariableAssignmentSource extends DataFlow::Node {
+  VariableAssignmentSource() {
+    exists(AssignStmt assign, AddExpr add |
+      add.getOperandType().hasQualifiedName("java.lang", "String") and
+      assign.getRValue() = add and
+      this.asExpr() = assign.getLValue()
+    )
+    or
+    exists(AssignStmt assign, MethodCall mc |
+      mc.getMethod().getName() = "format" and
+      mc.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      assign.getRValue() = mc and
+      this.asExpr() = assign.getLValue()
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::Node {
+  SqlExecuteSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "executeQuery" and
+       (mc.getMethod().getDeclaringType().getName() = "BasePeer" or
+        mc.getMethod().getDeclaringType().getName() = "GroupPeer")) and
+      not mc.getArgument(0).toString().regexpMatch("^\"\\..*\" \\+ \".*\"$") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "TurbineSqliConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or
+    source instanceof StringConcatSource or
+    source instanceof VariableAssignmentSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecuteSink
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqliConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection due to unsanitized string concatenation in SQL query"
+================================================================================
+Timestamp: 2025-10-24 17:09:07
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+      arg_index: 0
+  - id: SQL_VARIABLE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.methodFullName
+          right: "java.lang.String.format|java.lang.String.\\+"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '^".*" \\+ ".*"$'
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+  - id: ASSIGNMENT_PROPAGATION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_PROPAGATION]
+  - source: SQL_VARIABLE
+    sink: SQL_EXEC
+    through: [ASSIGNMENT_PROPAGATION, STRING_PROPAGATION]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+    - "BasePeer.executeQuery(\"SELECT * FROM \" + \"users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,10-21)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,37-53)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,10-21)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,37-53)
+ERROR: getLhs() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,30-36)
+ERROR: getLhs() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,30-36)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,33-51)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodCall mc |
+      mc.getCallee().getName() = "format" and
+      mc.getCallee().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(BinaryExpr be |
+      be.getOperator() = "+" and
+      be.getLeftOperand().getType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = be.getLeftOperand()
+    )
+  }
+}
+
+class VariableAssignmentSource extends DataFlow::Node {
+  VariableAssignmentSource() {
+    exists(AssignExpr assign, BinaryExpr be |
+      be.getOperator() = "+" and
+      be.getLeftOperand().getType().hasQualifiedName("java.lang", "String") and
+      assign.getRhs() = be and
+      this.asExpr() = assign.getLhs()
+    )
+    or
+    exists(AssignExpr assign, MethodCall mc |
+      mc.getCallee().getName() = "format" and
+      mc.getCallee().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      assign.getRhs() = mc and
+      this.asExpr() = assign.getLhs()
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::Node {
+  SqlExecuteSink() {
+    exists(MethodCall mc |
+      (mc.getCallee().getName() = "executeQuery" and
+       (mc.getCallee().getDeclaringType().getName() = "BasePeer" or
+        mc.getCallee().getDeclaringType().getName() = "GroupPeer")) and
+      not mc.getArgument(0).toString().regexpMatch("^\"\\..*\" \\+ \".*\"$") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "TurbineSqliConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or
+    source instanceof StringConcatSource or
+    source instanceof VariableAssignmentSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecuteSink
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqliConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection due to unsanitized string concatenation in SQL query"
+================================================================================
+Timestamp: 2025-10-24 19:33:21
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: STR_FORMAT_SOURCE
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STR_CONTAT_SOURCE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: astParent.code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: BasePeer|GroupPeer, method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: CONSTANT_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: code
+          right: "^\"[^\"]+\"+[^\"]+\"$"
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_TO_REF
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: STR_FORMAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+  - source: STR_CONTAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,7-48)
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,7-50)
+ERROR: token recognition error at: '\' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,51-52)
+ERROR: token recognition error at: '^' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,33-34)
+ERROR: token recognition error at: '"$/\n' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,47-50)
+ERROR: extraneous input '/' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,39-40)
+ERROR: missing one of: 'super' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,47-48)
+ERROR: unexpected input '=' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,48-49)
+ERROR: unexpected input '.' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,49-50)
+ERROR: unexpected input '.' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,53-54)
+ERROR: unexpected input '/' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,55-56)
+ERROR: extraneous input 'and' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,57-60)
+ERROR: extraneous input '/' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,32-33)
+ERROR: unexpected input ']' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', '}', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,38-39)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', '}', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,1-2)
+ERROR: could not resolve module semmle.code.java.StringFormatting (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-41)
+ERROR: could not resolve module semmle.code.java.frameworks.internal.TurbineModels (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-58)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,34-55)
+ERROR: asExpr() cannot be resolved for type FormatStringSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,34-55)
+ERROR: asExpr() cannot be resolved for type StringConcatSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-18)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,23-42)
+ERROR: asExpr() cannot be resolved for type SqlSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: could not resolve type TaintTracking::Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,39-63)
+ERROR: asExpr() cannot be resolved for type ConstantStringSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,10-16)
+ERROR: asExpr() cannot be resolved for type ConstantStringSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,10-16)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: unused class 'FormatStringSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+WARNING: unused class 'StringConcatSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,7-25)
+WARNING: unused class 'SqlSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,7-14)
+WARNING: unused class 'ConstantStringSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,7-30)
+Rule Content:
+/**
+ * @name turbine-sqli
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables 
+ *              in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormatting
+import semmle.code.java.frameworks.internal.TurbineModels
+
+class FormatStringSource extends TaintTracking::Source {
+  FormatStringSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasName("String") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class StringConcatSource extends TaintTracking::Source {
+  StringConcatSource() {
+    exists(Assignment assign |
+      assign.getDest().getType() instanceof TypeString and
+      assign.getSource().toString() = /String.*=.*\+.*/ and
+      this.asExpr() = assign.getSource()
+    )
+  }
+}
+
+class SqlSink extends TaintTracking::Sink {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName().matches("BasePeer") or
+       ma.getMethod().getDeclaringType().getName().matches("GroupPeer")) and
+      ma.getMethod().hasName("executeQuery") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class ConstantStringSanitizer extends TaintTracking::Sanitizer {
+  ConstantStringSanitizer() {
+    this.asExpr() instanceof StringLiteral or
+    this.asExpr().toString() = /^"[^"]+"+[^"]+"$/
+  }
+}
+
+class TurbineSQLIRules extends TaintTracking::Configuration {
+  TurbineSQLIRules() { this = "Turbine SQL Injection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FormatStringSource or
+    source instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof ConstantStringSanitizer
+  }
+}
+
+from TurbineSQLIRules cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization", 
+  source, sink,
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-24 19:34:11
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: STR_FORMAT_SOURCE
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STR_CONTAT_SOURCE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: astParent.code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: BasePeer|GroupPeer, method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: CONSTANT_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: code
+          right: "^\"[^\"]+\"+[^\"]+\"$"
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_TO_REF
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: STR_FORMAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+  - source: STR_CONTAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'match' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,25-30)
+ERROR: token recognition error at: '\' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,43-44)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,1-2)
+ERROR: could not resolve module semmle.code.java.StringFormatting (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-41)
+ERROR: could not resolve module semmle.code.java.frameworks.Turbine (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-43)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,34-48)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,34-48)
+ERROR: could not resolve type AssignmentExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-26)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,3-21)
+WARNING: unused class 'FormatStringSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+WARNING: unused class 'StringConcatSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,7-25)
+Rule Content:
+/**
+ * @name turbine-sqli
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables
+ *              in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormatting
+import semmle.code.java.frameworks.Turbine
+
+class FormatStringSource extends DataFlow::Expr {
+  FormatStringSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Expr {
+  StringConcatSource() {
+    exists(AssignmentExpr assign |
+      assign.getDest().getType() instanceof TypeString and
+      RegexPatternMatch.match(/String.*=.*\+.*/, assign.getSource().toString()) and
+      this = assign.getSource()
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Expr {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName().matches("BasePeer") or
+       ma.getMethod().getDeclaringType().getName().matches("GroupPeer")) and
+      ma.getMethod().hasName("executeQuery") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSQLIConfig extends TaintTracking::Configuration {
+  TurbineSQLIConfig() { this = "Turbine SQL Injection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof FormatStringSource or
+    source.asExpr() instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from TurbineSQLIConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(),
+  "User input reaches SQL execution without sanitization",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-24 19:35:20
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: STR_FORMAT_SOURCE
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STR_CONTAT_SOURCE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: astParent.code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: BasePeer|GroupPeer, method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: CONSTANT_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: code
+          right: "^\"[^\"]+\"+[^\"]+\"$"
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_TO_REF
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: STR_FORMAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+  - source: STR_CONTAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringUtil (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-35)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,40-68)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,39-57)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,66-84)
+Rule Content:
+/**
+ * @name turbine-sqli
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables
+ *              in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringUtil
+
+class TurbineSQLIConfiguration extends TaintTracking::Configuration {
+  TurbineSQLIConfiguration() { this = "Turbine SQL Injection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(Assignment assign |
+      assign.getDest().getType() instanceof TypeString and
+      exists(MethodAccess ma | ma = assign.getSource() |
+        ma.getMethod().getName() = "concat" and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName() = "BasePeer" or
+       ma.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      ma.getMethod().hasName("executeQuery") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from TurbineSQLIConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization",
+  source, sink,
+  "Potential SQL injection vulnerability from $" + source.getNode().toString()
+================================================================================
+Timestamp: 2025-10-24 19:36:14
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: STR_FORMAT_SOURCE
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STR_CONTAT_SOURCE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: astParent.code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: BasePeer|GroupPeer, method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: CONSTANT_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: code
+          right: "^\"[^\"]+\"+[^\"]+\"$"
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_TO_REF
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: STR_FORMAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+  - source: STR_CONTAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,5-30,42)
+ERROR: no viable parse for input 'MethodAccess concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,14-26)
+ERROR: unexpected input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,64-65)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,1-2)
+ERROR: could not resolve module semmle.code.java.StringUtil (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-35)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,33-61)
+ERROR: could not resolve variable assign (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,45-51)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,3-11)
+WARNING: unused variable 'source' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,46-52)
+WARNING: unused predicate 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,22-28)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,22-33)
+Rule Content:
+/**
+ * @name turbine-sqli
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringUtil
+
+class TurbineSQLIConfig extends TaintTracking::Configuration {
+  TurbineSQLIConfig() { 
+    this = "Turbine SQL Injection Configuration" 
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() source
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    // String concatenation source
+    exists(Assignment assign |
+      assign.getDest().getType() instanceof TypeString and
+      exists(MethodAccess concat | concat = assign.getSource() |
+        concat.getMethod().getName() = "concat" and 
+        concat.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName() = "BasePeer" or
+       ma.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      ma.getMethod().hasName("executeQuery") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from TurbineSQLIConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(),
+  "User input reaches SQL execution without sanitization",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability from $" + source.getNode().toString()
+================================================================================
+Timestamp: 2025-10-24 19:37:05
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: STR_FORMAT_SOURCE
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STR_CONTAT_SOURCE
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: astParent.code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: BasePeer|GroupPeer, method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: CONSTANT_STR
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: code
+          right: "^\"[^\"]+\"+[^\"]+\"$"
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_TO_REF
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: STR_FORMAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+  - source: STR_CONTAT_SOURCE
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*, ASSIGN_TO_REF*]
+
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringFormatting (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-41)
+ERROR: could not resolve module semmle.code.java.frameworks.Turbine (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-43)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,34-48)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,34-48)
+ERROR: could not resolve type BinaryOperation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,20-35)
+ERROR: getOp() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,9-14)
+ERROR: getLeft() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,9-16)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,23-37)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,33-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,29-47)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,56-74)
+Rule Content:
+/**
+ * @name turbine-sqli
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormatting
+import semmle.code.java.frameworks.Turbine
+
+class FormatStringSource extends DataFlow::Expr {
+  FormatStringSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Expr {
+  StringConcatSource() {
+    exists(Expr e |
+      e instanceof BinaryOperation and
+      e.getOp() = "+" and
+      e.getLeft().getType() instanceof TypeString and
+      this = e
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Expr {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName().matches("BasePeer") or
+       ma.getMethod().getDeclaringType().getName().matches("GroupPeer")) and
+      ma.getMethod().hasName("executeQuery") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSQLIConfig extends TaintTracking::Configuration {
+  TurbineSQLIConfig() { this = "Turbine SQL Injection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof FormatStringSource or
+    source.asExpr() instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from TurbineSQLIConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(),
+  "User input reaches SQL execution without sanitization",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-27 07:32:29
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+
+sources:
+  - id: DYNAMIC_SQL
+    match:
+      node: CALL
+      api: { type: java.lang,String, method: format }
+      arg_index: 0
+  - id: CONCAT_SQL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: [BasePeer, GroupPeer], method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT|INSERT|UPDATE|DELETE"
+
+barriers:
+  - id: SAFE_SQL
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+  - source: CONCAT_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE name='%s'\", input))"
+    - "String sql = \"SELECT * FROM \" + table; GroupPeer.executeQuery(sql)"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\")"
+    - "String sql = \"SELECT * FROM admins\"; GroupPeer.executeQuery(sql)"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.Concat (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-31)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,32-60)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,28-46)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,55-73)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. 
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/turbine-sqli
+ */
+        
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+import semmle.code.java.Concat
+        
+class TurbineSqlConfig extends TaintTracking::Configuration {
+  TurbineSqlConfig() { this = "TurbineSqlConfig" }
+    
+  override predicate isSource(DataFlow::Node source) {
+    // Source 1: String.format() with SQL pattern
+    exists(MethodAccess ma | 
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasName("String") and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    // Source 2: SQL string concatenation
+    exists(LocalVariableDecl lvd, BinaryExpr bin |
+      lvd.getType() instanceof TypeString and
+      bin.getLeftOperand().toString().matches("%SQL%") and
+      source.asExpr() = lvd.getAnAssignedValue()
+    )
+  }
+    
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      (
+        ma.getMethod().getDeclaringType().hasName("BasePeer") or
+        ma.getMethod().getDeclaringType().hasName("GroupPeer")
+      ) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+    
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Static SQL queries are safe
+    exists(StringLiteral sl |
+      sl.getValue().matches("SELECT%") or
+      sl.getValue().matches("INSERT%") or
+      sl.getValue().matches("UPDATE%") or
+      sl.getValue().matches("DELETE%") and
+      sanitizer.asExpr() = sl
+    )
+    or
+    // PreparedStatement.executeQuery() is safe
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasName("PreparedStatement") and
+      sanitizer.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+        
+from TurbineSqlConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Potential SQL injection from dynamic SQL construction to query execution."
+================================================================================
+Timestamp: 2025-10-27 07:33:26
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+
+sources:
+  - id: DYNAMIC_SQL
+    match:
+      node: CALL
+      api: { type: java.lang,String, method: format }
+      arg_index: 0
+  - id: CONCAT_SQL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: [BasePeer, GroupPeer], method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT|INSERT|UPDATE|DELETE"
+
+barriers:
+  - id: SAFE_SQL
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+  - source: CONCAT_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE name='%s'\", input))"
+    - "String sql = \"SELECT * FROM \" + table; GroupPeer.executeQuery(sql)"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\")"
+    - "String sql = \"SELECT * FROM admins\"; GroupPeer.executeQuery(sql)"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringFormatExtensions (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,32-45)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,11-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,22-34)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,28-46)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,55-73)
+ERROR: 'query' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,19-24)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,22-33)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormatExtensions
+
+class TurbineSqlConfig extends TaintTracking::Configuration {
+  TurbineSqlConfig() { this = "TurbineSqlConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // Source 1: String.format() with SQL pattern
+    exists(Method m, MethodAccess ma |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getMethod() = m and
+      source.asExpr() = ma.getArgument(0)
+    )
+    or
+    // Source 2: SQL string concatenation
+    exists(LocalVariableDecl lvd, BinaryExpr bin, Expr rhs |
+      lvd.getType().hasName("String") and
+      exists(lvd.getAnAssignedValue()) and
+      bin.getOperator() = "+" and
+      bin.getAnOperand().toString().matches("%SQL%") and
+      rhs = lvd.getAnAssignedValue() and
+      source.asExpr() = rhs
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("executeQuery") and
+      (
+        m.getDeclaringType().hasName("BasePeer") or
+        m.getDeclaringType().hasName("GroupPeer")
+      ) and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Static SQL queries are safe
+    exists(string query |
+      query.toLowerCase().matches("select%") or
+      query.toLowerCase().matches("insert%") or
+      query.toLowerCase().matches("update%") or
+      query.toLowerCase().matches("delete%") and
+      sanitizer.asExpr().(StringLiteral).getValue() = query
+    )
+    or
+    // PreparedStatement.executeQuery() is safe
+    exists(Method m, MethodAccess ma |
+      m.hasName("executeQuery") and
+      m.getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getMethod() = m and
+      sanitizer.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from TurbineSqlConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection from dynamic SQL construction to query execution.", source, sink,
+  "This SQL query contains user-provided input that may not be properly sanitized."
+================================================================================
+Timestamp: 2025-10-27 07:34:24
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+
+sources:
+  - id: DYNAMIC_SQL
+    match:
+      node: CALL
+      api: { type: java.lang,String, method: format }
+      arg_index: 0
+  - id: CONCAT_SQL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: [BasePeer, GroupPeer], method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT|INSERT|UPDATE|DELETE"
+
+barriers:
+  - id: SAFE_SQL
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+  - source: CONCAT_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE name='%s'\", input))"
+    - "String sql = \"SELECT * FROM \" + table; GroupPeer.executeQuery(sql)"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\")"
+    - "String sql = \"SELECT * FROM admins\"; GroupPeer.executeQuery(sql)"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-16)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,27-35)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:75,34-42)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,22-30)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:77,20-28)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,25-33)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,31-39)
+ERROR: asExpr() cannot be resolved for type SqlFormatSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,31-39)
+ERROR: asExpr() cannot be resolved for type SqlConcatSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-18)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,30-38)
+ERROR: asExpr() cannot be resolved for type SqlExecuteSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-18)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,28-36)
+ERROR: asExpr() cannot be resolved for type SanitizedSql.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-18)
+ERROR: asExpr() cannot be resolved for type SanitizedSql.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-18)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,23-31)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,21-29)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,26-34)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:83,6-14)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:83,33-41)
+ERROR: could not resolve module TurbineSqlConfig (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,7-23)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,12-24)
+WARNING: unused predicate 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,13-21)
+WARNING: unused predicate 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:77,13-19)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,13-24)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized.
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @tags security
+ * @id java/turbine-sqli
+ */
+
+import java
+import DataFlow::PathGraph
+
+class SqlFormatSource extends DataFlow::Node {
+  SqlFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "format" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlConcatSource extends DataFlow::Node {
+  SqlConcatSource() {
+    exists(LocalVariableDecl lvd, BinaryExpr be |
+      lvd.getType().hasName("String") and
+      lvd.getName().matches("%SQL%") and
+      exists(lvd.getAnAssignedValue()) and
+      be instanceof AddExpr and
+      this.asExpr() = lvd.getAnAssignedValue()
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::Node {
+  SqlExecuteSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasName("BasePeer") or
+       ma.getMethod().getDeclaringType().hasName("GroupPeer")) and
+      ma.getMethod().getName() = "executeQuery" and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SanitizedSql extends DataFlow::Node {
+  SanitizedSql() {
+    exists(StringLiteral sl |
+      sl.getValue().matches("^SELECT|INSERT|UPDATE|DELETE") and
+      this.asExpr() = sl
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getMethod().getName() = "executeQuery" and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+predicate isSqlSource(DataFlow::Node source) {
+  source instanceof SqlFormatSource or source instanceof SqlConcatSource
+}
+
+predicate isSqlSink(DataFlow::Node sink) {
+  sink instanceof SqlExecuteSink
+}
+
+predicate isSqlSanitizer(DataFlow::Node sanitizer) {
+  sanitizer instanceof SanitizedSql
+}
+
+module TurbineSqlFlow implements DataFlow::ConfigSig {
+  predicate isSource(DataFlow::Node source) { isSqlSource(source) }
+  predicate isSink(DataFlow::Node sink) { isSqlSink(sink) }
+  predicate isSanitizer(DataFlow::Node sanitizer) { isSqlSanitizer(sanitizer) }
+}
+
+module TurbineSqlConfig = DataFlow::Global<TurbineSqlFlow>;
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where TurbineSqlConfig::flowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential SQL injection from dynamic SQL construction to query execution."
+================================================================================
+Timestamp: 2025-10-27 07:35:32
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+
+sources:
+  - id: DYNAMIC_SQL
+    match:
+      node: CALL
+      api: { type: java.lang,String, method: format }
+      arg_index: 0
+  - id: CONCAT_SQL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: [BasePeer, GroupPeer], method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT|INSERT|UPDATE|DELETE"
+
+barriers:
+  - id: SAFE_SQL
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+  - source: CONCAT_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE name='%s'\", input))"
+    - "String sql = \"SELECT * FROM \" + table; GroupPeer.executeQuery(sql)"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\")"
+    - "String sql = \"SELECT * FROM admins\"; GroupPeer.executeQuery(sql)"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Turbine (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-43)
+ERROR: getVariable() cannot be resolved for type Variable::LocalVariableDecl (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,18-29)
+ERROR: getVariable() cannot be resolved for type Variable::LocalVariableDecl (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,27-38)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:77,43-66)
+ERROR: predicate 'isSanitizer' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,3-77)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:87,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:87,33-51)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @tags security
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.Turbine
+import DataFlow::PathGraph
+
+class SqlFormatSource extends DataFlow::ExprNode {
+  SqlFormatSource() {
+    exists(MethodAccess ma |
+      ma.getCallee().hasName("format") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlConcatSource extends DataFlow::ExprNode {
+  SqlConcatSource() {
+    exists(LocalVariableDecl lvd, BinaryExpr be |
+      lvd.getType().hasName("String") and
+      lvd.getName().matches("%SQL%") and
+      exists(lvd.getVariable().getAnAssignedValue()) and
+      be instanceof AddExpr and
+      this.asExpr() = lvd.getVariable().getAnAssignedValue()
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::ExprNode {
+  SqlExecuteSink() {
+    exists(MethodAccess ma |
+      (ma.getCallee().getDeclaringType().hasName("BasePeer") or
+       ma.getCallee().getDeclaringType().hasName("GroupPeer")) and
+      ma.getCallee().hasName("executeQuery") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SanitizedSql extends DataFlow::ExprNode {
+  SanitizedSql() {
+    exists(StringLiteral sl |
+      sl.getValue().regexpMatch("^(SELECT|INSERT|UPDATE|DELETE).*") and
+      this.asExpr() = sl
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getCallee().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getCallee().hasName("executeQuery") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+predicate isSqlSource(DataFlow::Node source) {
+  source instanceof SqlFormatSource or source instanceof SqlConcatSource
+}
+
+predicate isSqlSink(DataFlow::Node sink) {
+  sink instanceof SqlExecuteSink
+}
+
+predicate isSqlSanitizer(DataFlow::Node sanitizer) {
+  sanitizer instanceof SanitizedSql
+}
+
+class TurbineSqlFlowConfiguration extends DataFlow::Configuration {
+  TurbineSqlFlowConfiguration() { this = "TurbineSqlFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) { isSqlSource(source) }
+
+  override predicate isSink(DataFlow::Node sink) { isSqlSink(sink) }
+
+  override predicate isSanitizer(DataFlow::Node san) { isSqlSanitizer(san) }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where any(TurbineSqlFlowConfiguration cfg).hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential SQL injection from dynamic SQL construction to query execution"
+================================================================================
+Timestamp: 2025-10-27 07:36:24
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+
+sources:
+  - id: DYNAMIC_SQL
+    match:
+      node: CALL
+      api: { type: java.lang,String, method: format }
+      arg_index: 0
+  - id: CONCAT_SQL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: [BasePeer, GroupPeer], method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT|INSERT|UPDATE|DELETE"
+
+barriers:
+  - id: SAFE_SQL
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DYNAMIC_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+  - source: CONCAT_SQL
+    sink: SQL_EXEC
+    through: [SQL_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"[A-Za-z0-9 ]+\")" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE name='%s'\", input))"
+    - "String sql = \"SELECT * FROM \" + table; GroupPeer.executeQuery(sql)"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\")"
+    - "String sql = \"SELECT * FROM admins\"; GroupPeer.executeQuery(sql)"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringTemplate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: getDeclaration() cannot be resolved for type Variable::LocalScopeVariable (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,43-57)
+ERROR: could not resolve type DataFlow::Callable (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,32-50)
+ERROR: getDeclaringType() cannot be resolved for type ExecutePeerQuery.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,10-26)
+ERROR: getDeclaringType() cannot be resolved for type ExecutePeerQuery.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,10-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,32-60)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:89,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:89,33-51)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @tags security
+ * @id java/turbine-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringTemplate
+
+class SqlFormatSource extends DataFlow::ExprNode {
+  SqlFormatSource() { 
+    exists(Method m, Call ma |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getCallee() = m and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlConcatSource extends DataFlow::ExprNode {
+  SqlConcatSource() { 
+    exists(LocalVariableDecl lvd, BinaryExpr be |
+      lvd.getType().hasName("String") and
+      lvd.getName().matches("%SQL%") and
+      exists(LocalScopeVariable lsv | lsv.getDeclaration() = lvd |
+        this.asExpr() = lsv.getAnAssignedValue()
+      ) and
+      be instanceof AddExpr
+    )
+  }
+}
+
+class ExecutePeerQuery extends DataFlow::Callable {
+  ExecutePeerQuery() {
+    this.getDeclaringType().hasName("BasePeer") or
+    this.getDeclaringType().hasName("GroupPeer")
+  }
+}
+
+class SqlExecuteSink extends DataFlow::ExprNode {
+  SqlExecuteSink() {
+    exists(Call call |
+      call.getCallee() instanceof ExecutePeerQuery and
+      call.getCallee().hasName("executeQuery") and
+      this.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+class SanitizedSql extends DataFlow::ExprNode {
+  SanitizedSql() {
+    exists(StringLiteral sl |
+      sl.getValue().regexpMatch("^(SELECT|INSERT|UPDATE|DELETE).*") and
+      this.asExpr() = sl
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getCallee().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getCallee().hasName("executeQuery") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqlConfig extends TaintTracking::Configuration {
+  TurbineSqlConfig() { this = "TurbineSqlConfig" }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof SqlFormatSource or 
+    source instanceof SqlConcatSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecuteSink 
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SanitizedSql
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqlConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential SQL injection from dynamic SQL construction to query execution"
+================================================================================

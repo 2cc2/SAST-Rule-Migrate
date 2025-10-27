@@ -1,0 +1,1049 @@
+Timestamp: 2025-10-23 12:54:10
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+  - id: INPUT_PARAM
+    match:
+      node: PARAM
+      type: { name: String }
+      where:
+        - op: in
+          left: methodFullName
+          right: "*Servlet*"
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+  - id: SQL_PREPARE
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+      arg_index: 0
+sanitizers:
+  - id: CRITERIA_BUILDER
+    match: { node: CALL, api: { type: javax.persistence.criteria.CriteriaBuilder, method: "*" } }
+    effect: neutralize
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: BUILDER_APPEND
+    edge: arg->receiver
+    kind: taint
+    match:
+      node: CALL
+      api: { type: java.lang.StringBuilder, method: append }
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.persistence.criteria.CriteriaBuilder.*)" } ]
+  - source: INPUT_PARAM
+    sink: SQL_PREPARE
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE name = '\" + request.getParameter(\"name\") + \"'\");"
+  negative:
+    - "PreparedStatement ps = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\"); ps.setString(1, request.getParameter(\"name\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringFormatting (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-41)
+ERROR: could not resolve type StringConcat (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,16-28)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,16-28)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,16-28)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,16-28)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,16-28)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,67-85)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/formatted-sql-string
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringFormatting
+
+class FormattedSqlConfiguration extends TaintTracking::Configuration {
+
+    FormattedSqlConfiguration() { this = "FormattedSqlConfiguration" }
+
+    override predicate isSource(DataFlow::Node source) {
+        // User input sources
+        exists(MethodAccess ma | 
+            ma.getMethod().getName() = "getParameter" and
+            ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet", "ServletRequest") |
+            source.asExpr() = ma
+        )
+        or
+        // Servlet parameter sources
+        exists(Parameter p |
+            p.getType().hasName("String") and
+            p.getCallable().getDeclaringType().getName().matches("*Servlet*") |
+            source.asParameter() = p
+        )
+    }
+
+    override predicate isSink(DataFlow::Node sink) {
+        // SQL execution sinks
+        exists(MethodAccess ma |
+            (ma.getMethod().getName() = "executeQuery" and
+             ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement"))
+            or
+            (ma.getMethod().getName() = "prepareStatement" and
+             ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection")) |
+            sink.asExpr() = ma.getArgument(0)
+        )
+    }
+
+    override predicate isSanitizer(DataFlow::Node sanitizer) {
+        exists(MethodAccess ma |
+            ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") |
+            sanitizer.asExpr() = ma
+        )
+    }
+
+    override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+        // String concatenation propagation
+        exists(StringConcat sc | node1.asExpr() = sc.getAnOperand() and node2.asExpr() = sc)
+        or
+        // StringBuilder append propagation
+        exists(MethodAccess ma |
+            ma.getMethod().getName() = "append" and
+            ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "StringBuilder") |
+            (node1.asExpr() = ma.getArgument(0) and node2.asExpr() = ma) or
+            (node1.asExpr() = ma.getQualifier() and node2.asExpr() = ma)
+        )
+    }
+}
+
+from FormattedSqlConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches SQL execution without sanitization"
+================================================================================
+Timestamp: 2025-10-23 12:54:57
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+  - id: INPUT_PARAM
+    match:
+      node: PARAM
+      type: { name: String }
+      where:
+        - op: in
+          left: methodFullName
+          right: "*Servlet*"
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+  - id: SQL_PREPARE
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+      arg_index: 0
+sanitizers:
+  - id: CRITERIA_BUILDER
+    match: { node: CALL, api: { type: javax.persistence.criteria.CriteriaBuilder, method: "*" } }
+    effect: neutralize
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: BUILDER_APPEND
+    edge: arg->receiver
+    kind: taint
+    match:
+      node: CALL
+      api: { type: java.lang.StringBuilder, method: append }
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.persistence.criteria.CriteriaBuilder.*)" } ]
+  - source: INPUT_PARAM
+    sink: SQL_PREPARE
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE name = '\" + request.getParameter(\"name\") + \"'\");"
+  negative:
+    - "PreparedStatement ps = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\"); ps.setString(1, request.getParameter(\"name\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type ConcatenateOp (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,29-42)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,34-62)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,57-75)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/formatted-sql-string
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class FormattedSqlConfig extends TaintTracking::Configuration {
+  FormattedSqlConfig() { this = "FormattedSqlConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // Servlet request parameters as source
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") |
+      source.asExpr() = ma
+    )
+    or
+    // String parameters in Servlet methods as source
+    exists(Parameter p |
+      p.getType().hasName("String") and
+      p.getCallable().getDeclaringType().getName().matches("%Servlet%") |
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    // SQL execution sinks
+    exists(MethodAccess ma |
+      (ma.getMethod().hasQualifiedName("java.sql", "Statement", "executeQuery") or
+       ma.getMethod().hasQualifiedName("java.sql", "Connection", "prepareStatement")) |
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // CriteriaBuilder methods as sanitizers
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") |
+      sanitizer.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dst) {
+    // String concatenation propagation
+    exists(BinaryExpr be | 
+      be.getOp() instanceof ConcatenateOp and
+      (src.asExpr() = be.getLeftOperand() and dst.asExpr() = be) or
+      (src.asExpr() = be.getRightOperand() and dst.asExpr() = be)
+    )
+    or
+    // StringBuilder append propagation
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("java.lang", "StringBuilder", "append") |
+      (src.asExpr() = ma.getArgument(0) and dst.asExpr() = ma) or
+      (src.asExpr() = ma.getQualifier() and dst.asExpr() = ma)
+    )
+  }
+}
+
+from FormattedSqlConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. Source: $" + 
+  source.getNode().toString() + "$, Sink: $" + sink.getNode().toString() + "$"
+================================================================================
+Timestamp: 2025-10-23 12:56:00
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+  - id: INPUT_PARAM
+    match:
+      node: PARAM
+      type: { name: String }
+      where:
+        - op: in
+          left: methodFullName
+          right: "*Servlet*"
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+  - id: SQL_PREPARE
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+      arg_index: 0
+sanitizers:
+  - id: CRITERIA_BUILDER
+    match: { node: CALL, api: { type: javax.persistence.criteria.CriteriaBuilder, method: "*" } }
+    effect: neutralize
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: BUILDER_APPEND
+    edge: arg->receiver
+    kind: taint
+    match:
+      node: CALL
+      api: { type: java.lang.StringBuilder, method: append }
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.persistence.criteria.CriteriaBuilder.*)" } ]
+  - source: INPUT_PARAM
+    sink: SQL_PREPARE
+    through: [STRING_CONCAT*, BUILDER_APPEND*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE name = '\" + request.getParameter(\"name\") + \"'\");"
+  negative:
+    - "PreparedStatement ps = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\"); ps.setString(1, request.getParameter(\"name\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,10-20)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,21-27)
+ERROR: getCallable() cannot be resolved for type ServletParameterSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,10-21)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,27-39)
+ERROR: ServletParameterSource must implement abstract predicate DataFlowNodes::Public::ParameterNode.isParameterOf(DataFlowCallable c, int pos) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,7-29)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,34-57)
+ERROR: predicate 'isSanitizer' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,3-80,4)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,21-52,12)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,10-22)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:88,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:88,57-75)
+WARNING: unused variable 'src' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,41-44)
+WARNING: unused variable 'sink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,61-65)
+Rule Content:
+/**
+ * @name Formatted SQL String
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/formatted-sql-string
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class ServletRequestSource extends DataFlow::ExprNode {
+  ServletRequestSource() {
+    exists(Method m | 
+      m.hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") |
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class ServletParameterSource extends DataFlow::ParameterNode {
+  ServletParameterSource() {
+    this.getType().hasName("String") and
+    this.getCallable().getDeclaringType().getName().matches("*Servlet*")
+  }
+}
+
+class SqlSink extends DataFlow::ExprNode {
+  SqlSink() {
+    exists(Method m |
+      (m.hasQualifiedName("java.sql", "Statement", "executeQuery") or
+       m.hasQualifiedName("java.sql", "Connection", "prepareStatement")) |
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class CriteriaBuilderSanitizer extends DataFlow::ExprNode {
+  CriteriaBuilderSanitizer() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.persistence.criteria", "CriteriaBuilder") |
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+predicate isStringConcat(DataFlow::Node src, DataFlow::Node sink) {
+  exists(BinaryExpr concat |
+    concat.getOp().toString() = "+" and
+    ((src.asExpr() = concat.getLeftOperand() and sink.asExpr() = concat) or
+     (src.asExpr() = concat.getRightOperand() and sink.asExpr() = concat))
+  )
+}
+
+predicate isStringBuilderAppend(DataFlow::Node src, DataFlow::Node sink) {
+  exists(MethodAccess append |
+    append.getMethod().hasQualifiedName("java.lang", "StringBuilder", "append") and
+    ((src.asExpr() = append.getArgument(0) and sink.asExpr() = append) or
+     (src.asExpr() = append.getQualifier() and sink.asExpr() = append))
+  )
+}
+
+class FormattedSqlConfig extends DataFlow::Configuration {
+  FormattedSqlConfig() { this = "Formatted SQL String Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestSource or
+    source instanceof ServletParameterSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof CriteriaBuilderSanitizer
+  }
+
+  override predicate isAdditionalFlowStep(DataFlow::Node src, DataFlow::Node sink) {
+    isStringConcat(src, sink) or
+    isStringBuilderAppend(src, sink)
+  }
+}
+
+from FormattedSqlConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User input reaches SQL execution without sanitization. Source: $@", 
+  source.getNode(), "$, Sink: $@", sink.getNode(), "$"
+================================================================================
+Timestamp: 2025-10-23 18:48:42
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: or
+          conditions:
+            - op: regex
+              left: methodFullName
+              right: ".*HttpServletRequest.getParameter"
+            - op: regex
+              left: typeFullName
+              right: "javax.servlet.http.HttpServletRequest"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        methods: [execute, executeQuery, executeUpdate, addBatch]
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      api:
+        methods: [String.format, String.join, String.concat]
+      where:
+        - op: or
+          conditions:
+            - pattern: "$X + $INPUT"
+            - pattern: "$X += $INPUT"
+            - pattern: "$STRB.append($INPUT)"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.PreparedStatement
+    effect: neutralize
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.Statement.execute)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not:
+          - { pattern: "CALL(java.sql.PreparedStatement.setString)" }
+
+report:
+  message: "User input reaches SQL execution without parameterization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE id = \" + request.getParameter(\"id\"));"
+  negative:
+    - "PreparedStatement pstmt = conn.prepareStatement(\"SELECT * FROM users WHERE id = ?\"); pstmt.setString(1, request.getParameter(\"id\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.ServletRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:9,8-50)
+ERROR: getCallable() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,14-25)
+ERROR: getNumberOfArguments() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,44-64)
+ERROR: could not resolve type InfixOperation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,14-28)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,34-62)
+ERROR: test is always false, as Parameter is incompatible with the expression type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,23-32)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,60-78)
+Rule Content:
+/**
+ * @id formatted-sql-string
+ * @severity ERROR
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables 
+ *              in the SQL statement are not properly sanitized. Use prepared statements (java.sql.PreparedStatement) instead.
+ */
+
+import java
+import semmle.code.java.frameworks.ServletRequest
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class FormattedSqlString extends TaintTracking::Configuration {
+  FormattedSqlString() { this = "formatted-sql-string" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof Parameter and
+    (
+      source.getCallable().getName().matches(".*HttpServletRequest.getParameter") or
+      source.getType().hasName("javax.servlet.http.HttpServletRequest")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["execute", "executeQuery", "executeUpdate", "addBatch"]) and
+      ma.getMethod().getDeclaringType().hasName("java.sql.Statement") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().hasName(["format", "join", "concat"]) and
+        ma.getMethod().getDeclaringType().hasName("java.lang.String") and
+        node1.asExpr() = ma.getArgument(ma.getNumberOfArguments() - 1) and
+        node2.asExpr() = ma
+      )
+      or
+      exists(InfixOperation io |
+        (
+          io.getOperator() = "+" or
+          io.getOperator() = "+="
+        ) and
+        node1.asExpr() = io.getRightOperand() and
+        node2.asExpr() = io
+      )
+      or
+      exists(MethodAccess append |
+        append.getMethod().hasName("append") and
+        append.getMethod().getDeclaringType().getASupertype*().hasName("java.lang.StringBuilder") and
+        node1.asExpr() = append.getArgument(0) and
+        node2.asExpr() = append
+      )
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasName("java.sql.PreparedStatement") and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from FormattedSqlString config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches SQL execution without parameterization"
+================================================================================
+Timestamp: 2025-10-23 18:49:55
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: or
+          conditions:
+            - op: regex
+              left: methodFullName
+              right: ".*HttpServletRequest.getParameter"
+            - op: regex
+              left: typeFullName
+              right: "javax.servlet.http.HttpServletRequest"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        methods: [execute, executeQuery, executeUpdate, addBatch]
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      api:
+        methods: [String.format, String.join, String.concat]
+      where:
+        - op: or
+          conditions:
+            - pattern: "$X + $INPUT"
+            - pattern: "$X += $INPUT"
+            - pattern: "$STRB.append($INPUT)"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.PreparedStatement
+    effect: neutralize
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.Statement.execute)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not:
+          - { pattern: "CALL(java.sql.PreparedStatement.setString)" }
+
+report:
+  message: "User input reaches SQL execution without parameterization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE id = \" + request.getParameter(\"id\"));"
+  negative:
+    - "PreparedStatement pstmt = conn.prepareStatement(\"SELECT * FROM users WHERE id = ?\"); pstmt.setString(1, request.getParameter(\"id\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringConcat (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-37)
+ERROR: could not resolve type StringConcatOperation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,12-33)
+ERROR: could not resolve type TaintTracking::Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,42-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:78,35-63)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:98,34-52)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:98,61-79)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,22-33)
+Rule Content:
+/**
+ * @id formatted-sql-string
+ * @severity ERROR
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. 
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringConcat
+
+class HttpServletRequestSource extends DataFlow::ExprNode {
+  HttpServletRequestSource() {
+    exists(Method m | 
+      m.hasName("getParameter") and
+      m.getDeclaringType().getName().matches("javax.servlet.http.HttpServletRequest") and
+      this.asExpr() = any(MethodAccess ma | 
+        ma.getMethod() = m
+      ).getAnArgument()
+    )
+    or
+    exists(Parameter p |
+      p.getType().hasName("javax.servlet.http.HttpServletRequest") and
+      this.asExpr() = p.getAnAccess()
+    )
+  }
+}
+
+class SqlSink extends DataFlow::ExprNode {
+  SqlSink() {
+    exists(Method m | 
+      m.hasName(["execute", "executeQuery", "executeUpdate", "addBatch"]) and
+      m.getDeclaringType().hasName("java.sql.Statement") and
+      this.asExpr() = any(MethodAccess ma | 
+        ma.getMethod() = m
+      ).getArgument(0)
+    )
+  }
+}
+
+class StringConcatTaint extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node node1, DataFlow::Node node2) {
+    // String concat operations
+    exists(StringConcatOperation sco | 
+      sco.getAnOperand() = node1.asExpr() and
+      sco = node2.asExpr()
+    )
+    or
+    // String builder append
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "append" and
+      ma.getMethod().getDeclaringType().getASupertype*().hasName("java.lang.AbstractStringBuilder") and
+      ma.getArgument(0) = node1.asExpr() and
+      ma = node2.asExpr()
+    )
+    or
+    // String format/concat
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["format", "concat", "join"]) and
+      ma.getMethod().getDeclaringType().hasName("java.lang.String") and
+      ma.getAnArgument() = node1.asExpr() and
+      ma = node2.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends TaintTracking::Sanitizer {
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasName("java.sql.PreparedStatement") and
+      node.asExpr() = ma
+    )
+  }
+}
+
+class SqlQueryTaintConfig extends TaintTracking::Configuration {
+  SqlQueryTaintConfig() { this = "SqlQueryTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpServletRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    any(StringConcatTaint s).step(node1, node2)
+  }
+}
+
+from SqlQueryTaintConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches SQL execution without parameterization"
+================================================================================
+Timestamp: 2025-10-23 18:51:00
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: or
+          conditions:
+            - op: regex
+              left: methodFullName
+              right: ".*HttpServletRequest.getParameter"
+            - op: regex
+              left: typeFullName
+              right: "javax.servlet.http.HttpServletRequest"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        methods: [execute, executeQuery, executeUpdate, addBatch]
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      api:
+        methods: [String.format, String.join, String.concat]
+      where:
+        - op: or
+          conditions:
+            - pattern: "$X + $INPUT"
+            - pattern: "$X += $INPUT"
+            - pattern: "$STRB.append($INPUT)"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.PreparedStatement
+    effect: neutralize
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.Statement.execute)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not:
+          - { pattern: "CALL(java.sql.PreparedStatement.setString)" }
+
+report:
+  message: "User input reaches SQL execution without parameterization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE id = \" + request.getParameter(\"id\"));"
+  negative:
+    - "PreparedStatement pstmt = conn.prepareStatement(\"SELECT * FROM users WHERE id = ?\"); pstmt.setString(1, request.getParameter(\"id\"));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,19-35)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,32-44)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,15-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,15-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,41-69)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:92,40-58)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:92,67-85)
+ERROR: Variable::Parameter is incompatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,26-27)
+Rule Content:
+/**
+ * @id formatted-sql-string
+ * @severity ERROR
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. 
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.FlowSources
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(Method m |
+      m.hasName("getParameter") and
+      m.getDeclaringType().getQualifiedName().matches("javax.servlet.http.HttpServletRequest") and
+      this.asParameter() = any(MethodAccess ma | ma.getMethod() = m).getAnArgument()
+    )
+    or
+    exists(Parameter p |
+      p.getType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Method m |
+      m.hasName(["execute", "executeQuery", "executeUpdate", "addBatch"]) and
+      m.getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class StringConcatTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node node1, DataFlow::Node node2) {
+    // String concatenation using '+'
+    exists(AddExpr add |
+      (add.getRightOperand() = node1.asExpr() or add.getLeftOperand() = node1.asExpr()) and
+      add = node2.asExpr()
+    )
+    // StringBuilder.append()
+    or exists(MethodAccess append |
+      append.getMethod().hasName("append") and
+      append.getMethod().getDeclaringType().getASupertype*().hasQualifiedName("java.lang", "AbstractStringBuilder") and
+      append.getArgument(0) = node1.asExpr() and
+      append = node2.asExpr()
+    )
+    // String methods
+    or exists(MethodAccess ma |
+      ma.getMethod().hasName(["format", "join", "concat"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getAnArgument() = node1.asExpr() and
+      ma = node2.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class SqlInjectionConfiguration extends TaintTracking::Configuration {
+  SqlInjectionConfiguration() { this = "Sql injection from request parameter to SQL execution" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof HttpRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    any(StringConcatTaintStep s).step(pred, succ)
+  }
+}
+
+from SqlInjectionConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "User input reaches SQL execution without parameterization"
+================================================================================

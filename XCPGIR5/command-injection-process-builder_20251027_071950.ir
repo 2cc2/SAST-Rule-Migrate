@@ -1,0 +1,69 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: command-injection-process-builder
+  kind: taint
+  severity: ERROR
+  message: "A formatted or concatenated string was detected as input to a ProcessBuilder call. This is dangerous if a variable is controlled by user input and could result in a command injection. Ensure your variables are not controlled by users or sufficiently sanitized."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, cmd, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: neq
+          left: value
+          right: null
+sinks:
+  - id: PROCESS_BUILDER_EXEC
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: "<init>"}
+      arg_index: 0
+  - id: PROCESS_BUILDER_COMMAND
+    match:
+      node: CALL
+      api: { type: java.lang.ProcessBuilder, method: command }
+      arg_index: 0
+sanitizers:
+  - id: SAFE_STRING_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"[^\"]+\"$"
+    effect: neutralize
+barriers: []
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: PROCESS_BUILDER_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"...\")" } ]
+  - source: USER_INPUT
+    sink: PROCESS_BUILDER_COMMAND
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"...\")" } ]
+report:
+  message: "Command injection vulnerability detected in ProcessBuilder call"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "new ProcessBuilder(request.getParameter(\"cmd\"));"
+  negative:
+    - "new ProcessBuilder(\"safe_command\");"
+```

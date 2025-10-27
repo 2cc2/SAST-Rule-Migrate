@@ -1,0 +1,337 @@
+Timestamp: 2025-10-23 15:07:55
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "no-direct-response-writer"
+  kind: taint
+  severity: WARNING
+  message: "Detected a request with potential user-input going into a OutputStream or Writer object. This bypasses any view or template environments, including HTML escaping, which may expose this application to cross-site scripting (XSS) vulnerabilities."
+scope:
+  languages: [java]
+  frameworks: ["servlets"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter|getInputStream|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString
+sinks:
+  - id: RESPONSE_WRITER
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.http.HttpServletResponse
+        method: getWriter|getOutputStream
+    arg_index: 0
+  - id: OUTPUT_WRITER
+    match:
+      node: CALL
+      api:
+        type: java.io.PrintWriter|javax.servlet.ServletOutputStream|java.io.OutputStream
+        method: write
+sanitizers:
+  - id: HTML_ESCAPE
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.lang.StringEscapeUtils|org.springframework.web.util.HtmlUtils|org.owasp.esapi.ESAPI
+        method: escapeHtml|htmlEscape|encodeForHTML
+    effect: neutralize
+    scope: { sinks: [RESPONSE_WRITER, OUTPUT_WRITER] }
+barriers: []
+propagations:
+  - id: ARG_TO_RETURN
+    edge: arg->param
+    kind: taint
+flows:
+  - source: REQUEST_INPUT
+    sink: RESPONSE_WRITER
+    through: [ARG_TO_RETURN*]
+    constraints:
+      path:
+        must_not: [{ pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" }]
+
+report:
+  message: "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter(\"input\"));"
+  negative:
+    - "response.getWriter().write(StringEscapeUtils.escapeHtml(request.getParameter(\"input\")));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringTemplate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:86,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:86,65-83)
+Rule Content:
+/**
+ * @name No Direct Response Writer
+ * @description Detected a request with potential user-input going into a OutputStream or Writer object.
+ *              This bypasses any view or template environments, including HTML escaping, which may 
+ *              expose this application to cross-site scripting (XSS) vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/no-direct-response-writer
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.StringTemplate
+
+class ServletRequestInput extends DataFlow::Node {
+  ServletRequestInput() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(
+        ["getParameter", "getInputStream", "getParameterMap", "getParameterValues", 
+         "getReader", "getCookies", "getHeader", "getHeaderNames", "getHeaders",
+         "getPart", "getParts", "getQueryString"]
+      ) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet", "ServletRequest") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class ResponseWriterSink extends DataFlow::Node {
+  ResponseWriterSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["getWriter", "getOutputStream"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      this.asExpr().(MethodAccess).getQualifier*() = ma
+    )
+  }
+}
+
+class OutputStreamWriterSink extends DataFlow::Node {
+  OutputStreamWriterSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("write") and
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "PrintWriter") or
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet", "ServletOutputStream") or
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "OutputStream")
+      ) and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class HtmlSanitizer extends DataFlow::Node {
+  HtmlSanitizer() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().hasQualifiedName("org.apache.commons.lang", "StringEscapeUtils", "escapeHtml") or
+        ma.getMethod().hasQualifiedName("org.springframework.web.util", "HtmlUtils", "htmlEscape") or
+        ma.getMethod().hasQualifiedName("org.owasp.esapi", "ESAPI", "encodeForHTML")
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class DirectResponseWriterConfig extends TaintTracking::Configuration {
+  DirectResponseWriterConfig() { this = "DirectResponseWriterConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestInput
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ResponseWriterSink or
+    sink instanceof OutputStreamWriterSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from DirectResponseWriterConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping",
+  source.getNode(), sink.getNode()
+================================================================================
+Timestamp: 2025-10-23 15:09:07
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "no-direct-response-writer"
+  kind: taint
+  severity: WARNING
+  message: "Detected a request with potential user-input going into a OutputStream or Writer object. This bypasses any view or template environments, including HTML escaping, which may expose this application to cross-site scripting (XSS) vulnerabilities."
+scope:
+  languages: [java]
+  frameworks: ["servlets"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter|getInputStream|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString
+sinks:
+  - id: RESPONSE_WRITER
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.http.HttpServletResponse
+        method: getWriter|getOutputStream
+    arg_index: 0
+  - id: OUTPUT_WRITER
+    match:
+      node: CALL
+      api:
+        type: java.io.PrintWriter|javax.servlet.ServletOutputStream|java.io.OutputStream
+        method: write
+sanitizers:
+  - id: HTML_ESCAPE
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.lang.StringEscapeUtils|org.springframework.web.util.HtmlUtils|org.owasp.esapi.ESAPI
+        method: escapeHtml|htmlEscape|encodeForHTML
+    effect: neutralize
+    scope: { sinks: [RESPONSE_WRITER, OUTPUT_WRITER] }
+barriers: []
+propagations:
+  - id: ARG_TO_RETURN
+    edge: arg->param
+    kind: taint
+flows:
+  - source: REQUEST_INPUT
+    sink: RESPONSE_WRITER
+    through: [ARG_TO_RETURN*]
+    constraints:
+      path:
+        must_not: [{ pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" }]
+
+report:
+  message: "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter(\"input\"));"
+  negative:
+    - "response.getWriter().write(StringEscapeUtils.escapeHtml(request.getParameter(\"input\")));"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,29-53)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,42-70)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:85,38-56)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:85,65-83)
+WARNING: unused method 'sanitizes' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,22-31)
+Rule Content:
+/**
+ * @name No Direct Response Writer
+ * @description Detected a request with potential user-input going into a OutputStream or Writer object.
+ *              This bypasses any view or template environments, including HTML escaping, which may 
+ *              expose this application to cross-site scripting (XSS) vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/no-direct-response-writer
+ * @tags security
+ *       xss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class ServletRequestInput extends DataFlow::Node {
+  ServletRequestInput() {
+    exists(Method m |
+      m.hasName(
+        ["getParameter", "getInputStream", "getParameterMap", "getParameterValues", 
+         "getReader", "getCookies", "getHeader", "getHeaderNames", "getHeaders",
+         "getPart", "getParts", "getQueryString"]
+      ) and
+      m.getDeclaringType().hasQualifiedName("javax.servlet", "ServletRequest") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class ResponseWriterSink extends DataFlow::Node {
+  ResponseWriterSink() {
+    exists(Method m |
+      m.hasName(["getWriter", "getOutputStream"]) and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class OutputStreamWriterSink extends DataFlow::Node {
+  OutputStreamWriterSink() {
+    exists(Method m |
+      m.hasName("write") and
+      (
+        m.getDeclaringType().hasQualifiedName("java.io", "PrintWriter") or
+        m.getDeclaringType().hasQualifiedName("javax.servlet", "ServletOutputStream") or
+        m.getDeclaringType().hasQualifiedName("java.io", "OutputStream")
+      ) and
+      exists(MethodAccess ma | ma.getMethod() = m | this.asExpr() = ma.getArgument(0))
+    )
+  }
+}
+
+class HtmlSanitizer extends TaintTracking::Sanitizer {
+  override predicate sanitizes(DataFlow::Node node) {
+    exists(Method m |
+      (
+        m.hasQualifiedName("org.apache.commons.lang", "StringEscapeUtils", "escapeHtml") or
+        m.hasQualifiedName("org.springframework.web.util", "HtmlUtils", "htmlEscape") or
+        m.hasQualifiedName("org.owasp.esapi", "ESAPI", "encodeForHTML")
+      ) and
+      node.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class DirectResponseWriterConfig extends TaintTracking::Configuration {
+  DirectResponseWriterConfig() { this = "DirectResponseWriterConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestInput
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ResponseWriterSink or
+    sink instanceof OutputStreamWriterSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HtmlSanitizer
+  }
+}
+
+from DirectResponseWriterConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping",
+  source.getNode(), sink.getNode()
+================================================================================

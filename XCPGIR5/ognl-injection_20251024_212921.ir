@@ -1,0 +1,72 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "ognl-injection"
+  kind: "taint"
+  severity: "WARNING"
+  message: "A expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: ["java"]
+  frameworks: ["ognl"]
+sources:
+  - id: "DYNAMIC_INPUT"
+    match:
+      node: "PARAM"
+      where:
+        - op: "neq"
+          left: "value"
+          right: '""'
+sinks:
+  - id: "OGNL_EVAL"
+    match:
+      node: "CALL"
+      api:
+        type: "org.apache.commons.ognl.OgnlReflectionProvider"
+        method: ["getGetMethod", "getSetMethod", "getField", "setProperties", "setProperty", "getValue", "setValue"]
+      arg_index: 1
+  - id: "OGNL_EVAL2"
+    match:
+      node: "CALL"
+      api:
+        type: "org.apache.commons.ognl.ReflectionProvider"
+        method: ["getGetMethod", "getSetMethod", "getField", "setProperties", "setProperty", "getValue", "setValue"]
+      arg_index: 1
+  - id: "TEXT_EVAL"
+    match:
+      node: "CALL"
+      api:
+        type: "org.apache.commons.ognl.TextParseUtil"
+        method: ["translateVariables", "translateVariablesCollection", "shallBeIncluded", "commaDelimitedStringToSet"]
+      arg_index: 0
+sanitizers:
+  - id: "STRING_LITERAL"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: '^".*"$'
+    effect: "neutralize"
+    scope:
+      sinks: ["OGNL_EVAL", "OGNL_EVAL2", "TEXT_EVAL"]
+propagations:
+  - id: "ARG_TO_PARAM"
+    edge: "arg->param"
+    kind: "taint"
+flows:
+  - source: "DYNAMIC_INPUT"
+    sink: "OGNL_EVAL"
+    through: ["ARG_TO_PARAM*"]
+  - source: "DYNAMIC_INPUT"
+    sink: "OGNL_EVAL2"
+    through: ["ARG_TO_PARAM*"]
+  - source: "DYNAMIC_INPUT"
+    sink: "TEXT_EVAL"
+    through: ["ARG_TO_PARAM*"]
+report:
+  message: "Potential OGNL injection detected: ${sink.api.method} called with dynamic input"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 1
+```

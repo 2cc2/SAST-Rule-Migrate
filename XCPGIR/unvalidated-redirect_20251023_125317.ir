@@ -1,0 +1,55 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "unvalidated-redirect"
+  kind: taint
+  severity: WARNING
+  message: "Application redirects to a destination URL specified by a user-supplied parameter that is not validated. This could direct users to malicious locations. Consider using an allowlist to validate URLs."
+scope:
+  languages: [java]
+  frameworks: ["javax.servlet"]
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletRequest", method: "getParameter" }
+
+sinks:
+  - id: REDIRECT_SINK
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletResponse", method: "sendRedirect" }
+      arg_index: 0
+  - id: HEADER_SINK
+    match:
+      node: CALL
+      api: { type: "javax.servlet.http.HttpServletResponse", method: "addHeader" }
+      where:
+        - op: eq
+          left: "arg[1].value"
+          right: "\"Location\""
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: ASSIGN_PROPAGATE
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: REDIRECT_SINK
+    through: [ARG_TO_PARAM*, ASSIGN_PROPAGATE*]
+  - source: USER_INPUT
+    sink: HEADER_SINK
+    through: [ARG_TO_PARAM*, ASSIGN_PROPAGATE*]
+
+report:
+  message: "Potential open redirect vulnerability found: ${source.node.location} flows to ${sink.node.location}"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - { argument: 0 }
+```

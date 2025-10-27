@@ -1,0 +1,86 @@
+Timestamp: 2025-10-23 14:00:45
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: unencrypted-socket
+  kind: pattern
+  severity: WARNING
+  message: "Detected use of a Java socket that is not encrypted. As a result, the traffic could be read by an attacker intercepting the network traffic. Use an SSLSocket created by 'SSLSocketFactory' or 'SSLServerSocketFactory' instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources: []
+sinks:
+  - id: INSECURE_SOCKET
+    match:
+      node: CALL
+      api:
+        type: java.net
+        method: Socket
+  - id: INSECURE_SERVER_SOCKET
+    match:
+      node: CALL
+      api:
+        type: java.net
+        method: ServerSocket
+sanitizers: []
+barriers: []
+propagations: []
+flows:
+  - sink: INSECURE_SOCKET
+    constraints:
+      path:
+        must: [ { pattern: "new Socket(...)" } ]
+  - sink: INSECURE_SERVER_SOCKET
+    constraints:
+      path:
+        must: [ { pattern: "new ServerSocket(...)" } ]
+report:
+  message: "Use of unencrypted socket detected"
+  locations: ["sink"]
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.Sockets (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-41)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,10-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,10-22)
+WARNING: unused variable 'e' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,33-34)
+WARNING: unused variable 'e' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,39-40)
+Rule Content:
+/**
+ * @name Unencrypted Socket Detection
+ * @description Detected use of a Java socket that is not encrypted. Use SSLSocket instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/unencrypted-socket
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.security.Sockets
+
+predicate isInsecureSocket(Expr e) {
+  exists(MethodAccess ma |
+    ma.getMethod().getName() = "Socket" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket")
+  )
+}
+
+predicate isInsecureServerSocket(Expr e) {
+  exists(MethodAccess ma |
+    ma.getMethod().getName() = "ServerSocket" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "ServerSocket")
+  )
+}
+
+from Expr socketCreation, DataFlow::Node source
+where
+  (isInsecureSocket(socketCreation) or isInsecureServerSocket(socketCreation)) and
+  source.asExpr() = socketCreation
+select socketCreation, "Use of unencrypted socket detected. Use SSLSocket created by SSLSocketFactory or SSLServerSocketFactory instead.",
+source, "Socket created here"
+================================================================================

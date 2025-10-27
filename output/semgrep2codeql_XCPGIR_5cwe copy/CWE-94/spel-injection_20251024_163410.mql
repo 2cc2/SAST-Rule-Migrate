@@ -1,0 +1,42 @@
+/**
+ * @name SpEL Injection
+ * @description Detects unsafe Spring Expression Language (SpEL) evaluation where expressions
+ *              are constructed using dynamic input sources without proper validation.
+ * @kind path-problem
+ * @id java/spel-injection
+ * @security-severity 8.8
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.Spring
+
+class SpELInjectionConfig extends TaintTracking::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.springframework.expression", "ExpressionParser", "parseExpression") and
+      not ma.getArgument(0).isCompileTimeConstant() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.springframework.expression", "ExpressionParser", "parseExpression") and
+      sink.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Literal l |
+      l.isCompileTimeConstant() and
+      sanitizer.asExpr() = l
+    )
+  }
+}
+
+from SpELInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Unsafe Spring Expression evaluation detected"

@@ -1,0 +1,65 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-ldapi-from-http-request
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected input from a HTTPServletRequest going into an LDAP query.
+    This could lead to LDAP injection if the input is not properly sanitized,
+    which could result in attackers modifying objects in the LDAP tree structure.
+    Ensure data passed to an LDAP query is not controllable or properly sanitize
+    the data.
+scope:
+  languages: [java]
+  frameworks: ["*"]
+
+sources:
+  - id: HTTP_REQUEST
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.HttpServletRequest, method: getParameter }
+      where:
+        - op: neq
+          left: value
+          right: ""
+
+sinks:
+  - id: LDAP_QUERY
+    match:
+      node: CALL
+      api: { package: javax.naming.directory, type: InitialDirContext | DirContext, method: search }
+      arg_index: 1
+    where:
+      - op: neq
+        left: arg[1].value
+        right: '"..."'
+
+sanitizers: []
+
+barriers: []
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: HTTP_REQUEST
+    sink: LDAP_QUERY
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL('\"...\"')" } ]
+
+report:
+  message: "User input from HTTP request reaches LDAP query without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 1 }] }
+
+tests:
+  positive:
+    - "dirContext.search(request.getParameter(\"query\"), \"\", null);"
+  negative:
+    - "dirContext.search(\"safe_query\", \"\", null);"
+```

@@ -1,0 +1,101 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "documentbuilderfactory-disallow-doctype-decl-missing"
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature 'http://apache.org/xml/features/disallow-doctype-decl' to true."
+  scope:
+    languages: [java]
+    frameworks: ["*"]
+    env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: DOCUMENT_BUILDER_FACTORY_INSTANCE
+    match:
+      node: CALL
+      api: { type: "javax.xml.parsers.DocumentBuilderFactory", method: "newInstance" }
+      where:
+        - op: not
+          condition:
+            op: or
+            conditions:
+              - op: regex
+                left: "context"
+                right: "setFeature.*disallow-doctype-decl.*true"
+              - op: regex
+                left: "context"
+                right: "setFeature.*external-general-entities.*false.*external-parameter-entities.*false"
+              - op: regex
+                left: "context"
+                right: "setFeature.*external-parameter-entities.*false.*external-general-entities.*false"
+
+sinks:
+  - id: NEW_DOCUMENT_BUILDER
+    match:
+      node: CALL
+      api: { type: "javax.xml.parsers.DocumentBuilderFactory", method: "newDocumentBuilder" }
+
+sanitizers:
+  - id: SET_FEATURE_DISALLOW_DOCTYPE
+    match:
+      node: CALL
+      api: { type: "javax.xml.parsers.DocumentBuilderFactory", method: "setFeature" }
+      where:
+        - op: eq
+          left: "arg0.value"
+          right: "http://apache.org/xml/features/disallow-doctype-decl"
+        - op: eq
+          left: "arg1.value"
+          right: "true"
+    effect: neutralize
+
+  - id: SET_FEATURE_DISABLE_ENTITIES
+    match:
+      node: CALL
+      api: { type: "javax.xml.parsers.DocumentBuilderFactory", method: "setFeature" }
+      where:
+        - op: and
+          conditions:
+            - op: or
+              conditions:
+                - op: eq
+                  left: "arg0.value"
+                  right: "http://xml.org/sax/features/external-general-entities"
+                - op: eq
+                  left: "arg0.value"
+                  right: "http://xml.org/sax/features/external-parameter-entities"
+            - op: eq
+              left: "arg1.value"
+              right: "false"
+    effect: neutralize
+
+propagations:
+  - id: FACTORY_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: DOCUMENT_BUILDER_FACTORY_INSTANCE
+    sink: NEW_DOCUMENT_BUILDER
+    through: [FACTORY_PROPAGATION*]
+    constraints:
+      path:
+        must_not: 
+          - { sanitizer: SET_FEATURE_DISALLOW_DOCTYPE }
+          - { sanitizer: SET_FEATURE_DISABLE_ENTITIES }
+
+report:
+  message: "DOCTYPE declarations are enabled for this DocumentBuilderFactory. This is vulnerable to XML external entity attacks."
+  locations: ["source", "sink"]
+  evidence: { capture: [{ object: "factory" }] }
+
+tests:
+  positive:
+    - "DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance(); factory.newDocumentBuilder();"
+  negative:
+    - |
+      DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+      factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+      factory.newDocumentBuilder();
+```

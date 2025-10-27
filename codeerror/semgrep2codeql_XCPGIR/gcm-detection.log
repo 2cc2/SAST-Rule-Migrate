@@ -1,0 +1,392 @@
+Timestamp: 2025-10-23 14:19:21
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "gcm-detection"
+  kind: "pattern"
+  severity: "INFO"
+  message: "GCM detected, please check that IV/nonce is not reused, an Initialization Vector (IV) is a nonce used to randomize the encryption, so that even if multiple messages with identical plaintext are encrypted, the generated corresponding ciphertexts are different. Unlike the Key, the IV usually does not need to be secret, rather it is important that it is random and unique. Certain encryption schemes the IV is exchanged in public as part of the ciphertext. Reusing same Initialization Vector with the same Key to encrypt multiple plaintext blocks allows an attacker to compare the ciphertexts and then, with some assumptions on the content of the messages, to gain important information about the data being encrypted."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: "GCM_INSTANCE"
+    match:
+      node: "CALL"
+      api:
+        method: "getInstance"
+        signature: ["(java.lang.String)"]
+      where:
+        - op: "eq"
+          left: "arg0.value"
+          right: "\"AES/GCM/NoPadding\""
+
+  - id: "GCM_PARAM_SPEC"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.crypto.spec.GCMParameterSpec"
+        method: "<init>"
+      arg_index: 0
+
+sinks:
+  - id: "GCM_USAGE"
+    match:
+      node: "CALL"
+      api:
+        package: "javax.crypto"
+        type: "Cipher"
+
+flows:
+  - source: ["GCM_INSTANCE", "GCM_PARAM_SPEC"]
+    sink: "GCM_USAGE"
+    constraints:
+      path:
+        must: [ { pattern: "CALL(javax.crypto.Cipher)" } ]
+
+report:
+  message: "GCM usage detected - check for IV/nonce reuse"
+  locations: ["source", "sink"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type ConstructorAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,32-49)
+ERROR: getConstructor() cannot be resolved for type GCMParameterSpec.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,10-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,25-53)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,24-42)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,51-69)
+Rule Content:
+/**
+ * @name GCM usage detection
+ * @description Detects GCM usage and checks for potential IV/nonce reuse issues. 
+ *              Initialization Vector (IV) should be random and unique to prevent
+ *              security vulnerabilities when encrypting multiple plaintext blocks.
+ * @kind path-problem
+ * @problem.severity information
+ * @security-severity 8.8
+ * @precision high
+ * @id java/gcm-detection
+ * @tags security
+ *       external/cwe/cwe-329
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class GCMInstance extends MethodAccess {
+  GCMInstance() {
+    this.getMethod().hasName("getInstance") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+    this.getArgument(0).(StringLiteral).getValue() = "AES/GCM/NoPadding"
+  }
+}
+
+class GCMParameterSpec extends ConstructorAccess {
+  GCMParameterSpec() {
+    this.getConstructor().getDeclaringType().hasQualifiedName("javax.crypto.spec", "GCMParameterSpec")
+  }
+}
+
+class CipherUsage extends MethodAccess {
+  CipherUsage() {
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+    (
+      this.getMethod().hasName("init") or
+      this.getMethod().hasName("doFinal") or
+      this.getMethod().hasName("update")
+    )
+  }
+}
+
+class GCMConfig extends TaintTracking::Configuration {
+  GCMConfig() { this = "GCMConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(GCMInstance gcm | source.asExpr() = gcm.getQualifier()) or
+    exists(GCMParameterSpec gcmParam | source.asExpr() = gcmParam)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(CipherUsage usage | sink.asExpr() = usage.getQualifier())
+  }
+}
+
+from GCMConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), 
+  "GCM usage detected - check for IV/nonce reuse. $@ flows to $@.",
+  source.getNode(), "Source", sink.getNode(), "Sink"
+================================================================================
+Timestamp: 2025-10-23 14:20:22
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "gcm-detection"
+  kind: "pattern"
+  severity: "INFO"
+  message: "GCM detected, please check that IV/nonce is not reused, an Initialization Vector (IV) is a nonce used to randomize the encryption, so that even if multiple messages with identical plaintext are encrypted, the generated corresponding ciphertexts are different. Unlike the Key, the IV usually does not need to be secret, rather it is important that it is random and unique. Certain encryption schemes the IV is exchanged in public as part of the ciphertext. Reusing same Initialization Vector with the same Key to encrypt multiple plaintext blocks allows an attacker to compare the ciphertexts and then, with some assumptions on the content of the messages, to gain important information about the data being encrypted."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: "GCM_INSTANCE"
+    match:
+      node: "CALL"
+      api:
+        method: "getInstance"
+        signature: ["(java.lang.String)"]
+      where:
+        - op: "eq"
+          left: "arg0.value"
+          right: "\"AES/GCM/NoPadding\""
+
+  - id: "GCM_PARAM_SPEC"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.crypto.spec.GCMParameterSpec"
+        method: "<init>"
+      arg_index: 0
+
+sinks:
+  - id: "GCM_USAGE"
+    match:
+      node: "CALL"
+      api:
+        package: "javax.crypto"
+        type: "Cipher"
+
+flows:
+  - source: ["GCM_INSTANCE", "GCM_PARAM_SPEC"]
+    sink: "GCM_USAGE"
+    constraints:
+      path:
+        must: [ { pattern: "CALL(javax.crypto.Cipher)" } ]
+
+report:
+  message: "GCM usage detected - check for IV/nonce reuse"
+  locations: ["source", "sink"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.security.Cryptography (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,8-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,25-53)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,33-51)
+Rule Content:
+/**
+ * @name GCM usage detection
+ * @description Detects GCM usage and checks for potential IV/nonce reuse issues.
+ *              Initialization Vector (IV) should be random and unique to prevent
+ *              security vulnerabilities when encrypting multiple plaintext blocks.
+ * @kind path-problem
+ * @problem.severity information
+ * @security-severity 8.8
+ * @precision high
+ * @id java/gcm-detection
+ * @tags security
+ *       external/cwe/cwe-329
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.security.Cryptography
+
+class GCMInstance extends Expr {
+  GCMInstance() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getInstance") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+      ma.getArgument(0).(StringLiteral).getValue() = "AES/GCM/NoPadding" and
+      this = ma
+    )
+  }
+}
+
+class GCMParameterSpecCreation extends Expr {
+  GCMParameterSpecCreation() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("javax.crypto.spec", "GCMParameterSpec") and
+      this = cc.getArgument(0)
+    )
+  }
+}
+
+class CipherUsage extends MethodAccess {
+  CipherUsage() {
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+    (
+      this.getMethod().hasName("init") or
+      this.getMethod().hasName("doFinal") or
+      this.getMethod().hasName("update")
+    )
+  }
+}
+
+class GCMConfig extends TaintTracking::Configuration {
+  GCMConfig() { this = "GCMConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(GCMInstance gcm | source.asExpr() = gcm) or
+    exists(GCMParameterSpecCreation gcmParam | source.asExpr() = gcmParam)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(CipherUsage usage | sink.asExpr() = usage.getQualifier())
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, GCMConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), 
+  "GCM usage detected - check for IV/nonce reuse. $@ flows to $@.",
+  source.getNode(), "Source", sink.getNode(), "Sink"
+================================================================================
+Timestamp: 2025-10-23 14:21:17
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "gcm-detection"
+  kind: "pattern"
+  severity: "INFO"
+  message: "GCM detected, please check that IV/nonce is not reused, an Initialization Vector (IV) is a nonce used to randomize the encryption, so that even if multiple messages with identical plaintext are encrypted, the generated corresponding ciphertexts are different. Unlike the Key, the IV usually does not need to be secret, rather it is important that it is random and unique. Certain encryption schemes the IV is exchanged in public as part of the ciphertext. Reusing same Initialization Vector with the same Key to encrypt multiple plaintext blocks allows an attacker to compare the ciphertexts and then, with some assumptions on the content of the messages, to gain important information about the data being encrypted."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: "GCM_INSTANCE"
+    match:
+      node: "CALL"
+      api:
+        method: "getInstance"
+        signature: ["(java.lang.String)"]
+      where:
+        - op: "eq"
+          left: "arg0.value"
+          right: "\"AES/GCM/NoPadding\""
+
+  - id: "GCM_PARAM_SPEC"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.crypto.spec.GCMParameterSpec"
+        method: "<init>"
+      arg_index: 0
+
+sinks:
+  - id: "GCM_USAGE"
+    match:
+      node: "CALL"
+      api:
+        package: "javax.crypto"
+        type: "Cipher"
+
+flows:
+  - source: ["GCM_INSTANCE", "GCM_PARAM_SPEC"]
+    sink: "GCM_USAGE"
+    constraints:
+      path:
+        must: [ { pattern: "CALL(javax.crypto.Cipher)" } ]
+
+report:
+  message: "GCM usage detected - check for IV/nonce reuse"
+  locations: ["source", "sink"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,16-24)
+ERROR: getACall() cannot be resolved for type Member::Constructor (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,16-24)
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,25-38)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,31-39)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,6-14)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,33-41)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+Rule Content:
+/**
+ * @name GCM usage detection
+ * @description Detects GCM usage and checks for potential IV/nonce reuse issues.
+ *              Initialization Vector (IV) should be random and unique to prevent
+ *              security vulnerabilities when encrypting multiple plaintext blocks.
+ * @kind path-problem
+ * @problem.severity information
+ * @security-severity 8.8
+ * @precision high
+ * @id java/gcm-detection
+ * @tags security
+ *       external/cwe/cwe-329
+ */
+
+import java
+import DataFlow::PathGraph
+
+class GCMInstance extends Expr {
+  GCMInstance() {
+    exists(Method m | 
+      m.hasName("getInstance") and
+      m.getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+      this = m.getACall().getArgument(0) and
+      this.(StringLiteral).getValue() = "AES/GCM/NoPadding"
+    )
+  }
+}
+
+class GCMParameterSpecCreation extends Expr {
+  GCMParameterSpecCreation() {
+    exists(Constructor c |
+      c.getDeclaringType().hasQualifiedName("javax.crypto.spec", "GCMParameterSpec") and
+      this = c.getACall().getArgument(0)
+    )
+  }
+}
+
+class CipherUsage extends Expr {
+  CipherUsage() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+      (
+        ma.getMethod().hasName("init") or
+        ma.getMethod().hasName("doFinal") or
+        ma.getMethod().hasName("update")
+      ) and
+      this = ma.getQualifier()
+    )
+  }
+}
+
+class GCMConfig extends TaintTracking::Configuration {
+  GCMConfig() { this = "GCMConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof GCMInstance or
+    source.asExpr() instanceof GCMParameterSpecCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof CipherUsage
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, GCMConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), 
+  "GCM usage detected - check for IV/nonce reuse. $@ flows to $@.",
+  source.getNode(), "Source", sink.getNode(), "Sink"
+================================================================================

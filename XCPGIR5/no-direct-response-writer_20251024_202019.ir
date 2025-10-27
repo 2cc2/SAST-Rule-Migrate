@@ -1,0 +1,73 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "no-direct-response-writer"
+  kind: taint
+  severity: WARNING
+  message: "Detected a request with potential user-input going into a OutputStream or Writer object. This bypasses any view or template environments, including HTML escaping, which may expose this application to cross-site scripting (XSS) vulnerabilities."
+scope:
+  languages: [java]
+  frameworks: ["servlets"]
+  env: { os: ["*"], shell: ["*"] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.ServletRequest
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+      where: []
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api:
+        type: |
+          javax.servlet.http.HttpServletResponse | java.io.PrintWriter | 
+          javax.servlet.ServletOutputStream | java.io.OutputStream
+        method: ".*write.*"
+      where: []
+
+sanitizers:
+  - id: HTML_ESCAPE
+    match:
+      node: CALL
+      api:
+        type: |
+          Encode | PolicyFactory | AntiSamy | JSoup | 
+          org.apache.commons.lang.StringEscapeUtils | 
+          org.springframework.web.util.HtmlUtils |
+          org.owasp.esapi.ESAPI.encoder
+        method: "(forHtml|sanitize|scan|clean|escapeHtml|htmlEscape|encodeForHTML)"
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: METHOD_RETURN
+    edge: return
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: XSS_SINK
+    through: [ARG_TO_PARAM*, METHOD_RETURN*]
+    constraints:
+      path:
+        must_not: { sanitizers: [HTML_ESCAPE] }
+
+report:
+  message: "User input reaches response writer without HTML escaping"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter(\"input\"));"
+  negative:
+    - "response.getWriter().write(ESAPI.encoder().encodeForHTML(request.getParameter(\"input\")));"
+```

@@ -1,0 +1,950 @@
+Timestamp: 2025-10-23 14:38:54
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "saxparserfactory-disallow-doctype-decl-missing"
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SAX_PARSER_FACTORY
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+sinks:
+  - id: SAX_PARSER_NEW
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+sanitizers:
+  - id: SAFE_FEATURE_SETTING
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "http://apache.org/xml/features/disallow-doctype-decl"
+        - op: eq
+          left: arg[1].value
+          right: "true"
+    effect: neutralize
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+flows:
+  - source: SAX_PARSER_FACTORY
+    sink: SAX_PARSER_NEW
+    through: [FACTORY_TO_PARSER*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)" } ]
+report:
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks."
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.XML (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,40-52)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,33-45)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,34-46)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,22-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,18-36)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,45-63)
+Rule Content:
+/**
+ * @name SAXParserFactory vulnerable to XML external entity attacks
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory.
+ *              This is vulnerable to XML external entity attacks. Disable this
+ *              by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/saxparserfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.XML
+
+class SAXParserFactoryCreation extends MethodAccess {
+  SAXParserFactoryCreation() {
+    this.getMethod().hasName("newInstance") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory")
+  }
+}
+
+class SAXParserCreation extends MethodAccess {
+  SAXParserCreation() {
+    this.getMethod().hasName("newSAXParser") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory")
+  }
+}
+
+class SafeFeatureSetting extends MethodAccess {
+  SafeFeatureSetting() {
+    this.getMethod().hasName("setFeature") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+    this.getArgument(0).(Literal).getValue() = "http://apache.org/xml/features/disallow-doctype-decl" and
+    this.getArgument(1).(Literal).getValue() = "true"
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "SAXParserFactoryXXEVulnerability" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(SAXParserFactoryCreation create|
+      source.asExpr() = create
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SAXParserCreation create|
+      sink.asExpr() = create
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeFeatureSetting safe|
+      sanitizer.asExpr() = safe
+    )
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "DOCTYPE declarations are enabled for this SAXParserFactory. " +
+       "This is vulnerable to XML external entity attacks.", source, sink,
+       "Vulnerable SAXParserFactory usage"
+================================================================================
+Timestamp: 2025-10-23 14:39:48
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "saxparserfactory-disallow-doctype-decl-missing"
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SAX_PARSER_FACTORY
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+sinks:
+  - id: SAX_PARSER_NEW
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+sanitizers:
+  - id: SAFE_FEATURE_SETTING
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "http://apache.org/xml/features/disallow-doctype-decl"
+        - op: eq
+          left: arg[1].value
+          right: "true"
+    effect: neutralize
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+flows:
+  - source: SAX_PARSER_FACTORY
+    sink: SAX_PARSER_NEW
+    through: [FACTORY_TO_PARSER*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)" } ]
+report:
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks."
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input '=' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,44-45)
+ERROR: unexpected input '=' expecting one of: '(', '*', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,44-45)
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,40-58)
+ERROR: getCall() cannot be resolved for type SAXParserFactoryCreation.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-19)
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,33-51)
+ERROR: getCall() cannot be resolved for type SAXParserCreation.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-19)
+ERROR: could not resolve type DataFlow::CallNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,34-52)
+ERROR: getCall() cannot be resolved for type SafeFeatureSetting.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-19)
+ERROR: getArgument(int) cannot be resolved for type SafeFeatureSetting.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-23)
+ERROR: getArgument(int) cannot be resolved for type SafeFeatureSetting.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-23)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,22-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,18-36)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,45-63)
+Rule Content:
+/**
+ * @name SAXParserFactory vulnerable to XML external entity attacks
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory.
+ *              This is vulnerable to XML external entity attacks. Disable this
+ *              by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/saxparserfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class SAXParserFactoryCreation extends DataFlow::CallNode {
+  SAXParserFactoryCreation() {
+    exists(Method m |
+      m.hasName("newInstance") and
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      this.getCall().getMethod() = m
+    )
+  }
+}
+
+class SAXParserCreation extends DataFlow::CallNode {
+  SAXParserCreation() {
+    exists(Method m |
+      m.hasName("newSAXParser") and
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      this.getCall().getMethod() = m
+    )
+  }
+}
+
+class SafeFeatureSetting extends DataFlow::CallNode {
+  SafeFeatureSetting() {
+    exists(Method m |
+      m.hasName("setFeature") and
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      this.getCall().getMethod() = m and
+      this.getArgument(0).toString().value = "http://apache.org/xml/features/disallow-doctype-decl" and
+      this.getArgument(1).toString().value = "true"
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "SAXParserFactoryXXEVulnerability" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(SAXParserFactoryCreation create |
+      source.asExpr() = create.getCall()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SAXParserCreation create |
+      sink.asExpr() = create.getCall()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeFeatureSetting safe |
+      sanitizer.asExpr() = safe.getCall()
+    )
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "DOCTYPE declarations are enabled for this SAXParserFactory. " +
+       "This is vulnerable to XML external entity attacks.", source, sink,
+       "Vulnerable SAXParserFactory usage"
+================================================================================
+Timestamp: 2025-10-23 14:41:15
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "saxparserfactory-disallow-doctype-decl-missing"
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SAX_PARSER_FACTORY
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+sinks:
+  - id: SAX_PARSER_NEW
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+sanitizers:
+  - id: SAFE_FEATURE_SETTING
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "http://apache.org/xml/features/disallow-doctype-decl"
+        - op: eq
+          left: arg[1].value
+          right: "true"
+    effect: neutralize
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+flows:
+  - source: SAX_PARSER_FACTORY
+    sink: SAX_PARSER_NEW
+    through: [FACTORY_TO_PARSER*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)" } ]
+report:
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks."
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,25-33)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,22-50)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:65,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,18-36)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,45-63)
+ERROR: Expr::Expr is incompatible with Statement::ReturnStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,45-46)
+Rule Content:
+/**
+ * @name SAXParserFactory vulnerable to XML external entity attacks
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory.
+ *              This is vulnerable to XML external entity attacks. Disable this
+ *              by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/saxparserfactory-disallow-doctype-decl-missing
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class SAXParserFactoryCreation extends DataFlow::Node {
+  SAXParserFactoryCreation() {
+    exists(Method m |
+      m.hasName("newInstance") and
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class SAXParserCreation extends DataFlow::Node {
+  SAXParserCreation() {
+    exists(Method m |
+      m.hasName("newSAXParser") and
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class SafeFeatureSetting extends DataFlow::Node {
+  SafeFeatureSetting() {
+    exists(MethodCall mc, Literal uri, Literal value |
+      mc.getMethod().hasName("setFeature") and
+      mc.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      uri = mc.getArgument(0) and
+      uri.getValue().toString() = "http://apache.org/xml/features/disallow-doctype-decl" and
+      value = mc.getArgument(1) and
+      value.getValue().toString() = "true" and
+      this.asExpr() = mc
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "SAXParserFactoryXXEVulnerability" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SAXParserFactoryCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SAXParserCreation
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SafeFeatureSetting
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    exists(ReturnStmt rs | barrier.asExpr() = rs)
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "DOCTYPE declarations are enabled for this SAXParserFactory. " +
+       "This is vulnerable to XML external entity attacks.", source, sink,
+       "Vulnerable SAXParserFactory usage"
+================================================================================
+Timestamp: 2025-10-23 19:43:38
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: saxparserfactory-disallow-doctype-decl-missing
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+  scope:
+    languages: [java]
+    frameworks: ["*"]
+
+sources:
+  - id: SAX_PARSER_FACTORY_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+    where:
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://xml.org/sax/features/external-general-entities"
+
+sinks:
+  - id: SAX_PARSER_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+
+sanitizers:
+  - id: DISALLOW_DOCTYPE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: eq
+        left: arg[1].value
+        right: true
+    effect: neutralize
+
+  - id: DISABLE_ENTITIES
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://xml.org/sax/features/external-general-entities"
+      - op: eq
+        left: arg[1].value
+        right: false
+    effect: neutralize
+
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+
+flows:
+  - source: SAX_PARSER_FACTORY_INSTANCE
+    sink: SAX_PARSER_INSTANCE
+    constraints:
+      path:
+        must_not: 
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+
+report:
+  message: "Vulnerable SAXParserFactory instance without XXE protection detected"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,45-73)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,41-59)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,68-86)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,56-57)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,56-57)
+Rule Content:
+/**
+ * @name SAXParserFactory XXE Vulnerability
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML 
+ * external entity attacks. Disable this by setting the feature 
+ * `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @id saxparserfactory-disallow-doctype-decl-missing
+ * @kind path-problem
+ * @problem.severity error
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SAXParserFactoryInstance extends DataFlow::Node {
+  SAXParserFactoryInstance() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().getName() = "newInstance" and
+      this.asExpr() = ma      
+    )
+  }
+}
+
+class SAXParserInstance extends DataFlow::Node {
+  SAXParserInstance() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().getName() = "newSAXParser" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SafeFeatureSetting extends DataFlow::Node {
+  SafeFeatureSetting() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().getName() = "setFeature" and
+      (
+        (ma.getArgument(0).(StringLiteral).getValue() = "http://apache.org/xml/features/disallow-doctype-decl" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = true)
+        or
+        (ma.getArgument(0).(StringLiteral).getValue() = "http://xml.org/sax/features/external-general-entities" and
+         ma.getArgument(1).(BooleanLiteral).getValue() = false)
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SAXParserFactoryTaintTracking extends TaintTracking::Configuration {
+  SAXParserFactoryTaintTracking() { this = "SAXParserFactoryTaintTracking" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SAXParserFactoryInstance }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SAXParserInstance }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SafeFeatureSetting
+  }
+}
+
+from SAXParserFactoryTaintTracking cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Vulnerable SAXParserFactory instance without XXE protection detected. Source: $@",
+  source.getNode(),
+  source.toString()
+================================================================================
+Timestamp: 2025-10-23 19:44:34
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: saxparserfactory-disallow-doctype-decl-missing
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+  scope:
+    languages: [java]
+    frameworks: ["*"]
+
+sources:
+  - id: SAX_PARSER_FACTORY_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+    where:
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://xml.org/sax/features/external-general-entities"
+
+sinks:
+  - id: SAX_PARSER_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+
+sanitizers:
+  - id: DISALLOW_DOCTYPE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: eq
+        left: arg[1].value
+        right: true
+    effect: neutralize
+
+  - id: DISABLE_ENTITIES
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://xml.org/sax/features/external-general-entities"
+      - op: eq
+        left: arg[1].value
+        right: false
+    effect: neutralize
+
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+
+flows:
+  - source: SAX_PARSER_FACTORY_INSTANCE
+    sink: SAX_PARSER_INSTANCE
+    constraints:
+      path:
+        must_not: 
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+
+report:
+  message: "Vulnerable SAXParserFactory instance without XXE protection detected"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: booleanValue() cannot be resolved for type Expr::BooleanLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,47-59)
+ERROR: booleanValue() cannot be resolved for type Expr::BooleanLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,47-59)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,14-26)
+ERROR: could not resolve variable ma (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,23-25)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,36-64)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,59-77)
+Rule Content:
+/**
+ * @name SAXParserFactory XXE Vulnerability
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML 
+ * external entity attacks. Disable this by setting the feature 
+ * `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @id saxparserfactory-disallow-doctype-decl-missing
+ * @kind path-problem
+ * @problem.severity error
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SAXParserFactorySource extends DataFlow::Node {
+  SAXParserFactorySource() {
+    exists(Method m | 
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      m.hasName("newInstance") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+    and
+    not exists(Method mSetFeature |
+      mSetFeature.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      mSetFeature.hasName("setFeature") and
+      exists(MethodAccess ma |
+        ma.getMethod() = mSetFeature and
+        (
+          (ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://apache.org/xml/features/disallow-doctype-decl")
+          or
+          (ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://xml.org/sax/features/external-general-entities")
+        )
+      )
+    )
+  }
+}
+
+class SAXParserSink extends DataFlow::Node {
+  SAXParserSink() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      m.hasName("newSAXParser") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class SecureSAXFeatureSetting extends DataFlow::Node {
+  SecureSAXFeatureSetting() {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      m.hasName("setFeature") and
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        (
+          (ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://apache.org/xml/features/disallow-doctype-decl" and
+           ma.getArgument(1).(BooleanLiteral).booleanValue() = true)
+          or
+          (ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://xml.org/sax/features/external-general-entities" and
+           ma.getArgument(1).(BooleanLiteral).booleanValue() = false)
+        )
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SAXParserTaintConfig extends TaintTracking::Configuration {
+  SAXParserTaintConfig() { this = "SAXParserTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SAXParserFactorySource }
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SAXParserSink }
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SecureSAXFeatureSetting
+  }
+}
+
+from SAXParserTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Vulnerable SAXParserFactory instance without XXE protection detected. Source: $@",
+  source.getNode(),
+  source.toString()
+================================================================================
+Timestamp: 2025-10-23 19:45:41
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: saxparserfactory-disallow-doctype-decl-missing
+  kind: taint
+  severity: ERROR
+  message: "DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML external entity attacks. Disable this by setting the feature `http://apache.org/xml/features/disallow-doctype-decl` to true."
+  scope:
+    languages: [java]
+    frameworks: ["*"]
+
+sources:
+  - id: SAX_PARSER_FACTORY_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newInstance }
+    where:
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: not
+        left: "$FACTORY.setFeature"
+        right: "http://xml.org/sax/features/external-general-entities"
+
+sinks:
+  - id: SAX_PARSER_INSTANCE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: newSAXParser }
+
+sanitizers:
+  - id: DISALLOW_DOCTYPE
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://apache.org/xml/features/disallow-doctype-decl"
+      - op: eq
+        left: arg[1].value
+        right: true
+    effect: neutralize
+
+  - id: DISABLE_ENTITIES
+    match:
+      node: CALL
+      api: { type: javax.xml.parsers.SAXParserFactory, method: setFeature }
+    where:
+      - op: eq
+        left: arg[0].value
+        right: "http://xml.org/sax/features/external-general-entities"
+      - op: eq
+        left: arg[1].value
+        right: false
+    effect: neutralize
+
+propagations:
+  - id: FACTORY_TO_PARSER
+    edge: receiver
+    kind: taint
+
+flows:
+  - source: SAX_PARSER_FACTORY_INSTANCE
+    sink: SAX_PARSER_INSTANCE
+    constraints:
+      path:
+        must_not: 
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+          - pattern: "CALL(javax.xml.parsers.SAXParserFactory.setFeature)"
+
+report:
+  message: "Vulnerable SAXParserFactory instance without XXE protection detected"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.xml.XML (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-43)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,18-30)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,36-64)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:79,32-50)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:79,59-77)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,57-58)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,57-58)
+Rule Content:
+/**
+ * @name SAXParserFactory XXE Vulnerability
+ * @description DOCTYPE declarations are enabled for this SAXParserFactory. This is vulnerable to XML 
+ * external entity attacks. Disable this by setting the feature 
+ * `http://apache.org/xml/features/disallow-doctype-decl` to true.
+ * @id saxparserfactory-disallow-doctype-decl-missing
+ * @kind path-problem
+ * @problem.severity error
+ * @tags security
+ *       external/cwe/cwe-611
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.xml.XML
+
+class SAXParserFactorySource extends DataFlow::Node {
+  SAXParserFactorySource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().hasName("newInstance") and
+      this.asExpr() = ma and
+      not exists(MethodAccess setFeature |
+        setFeature.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+        setFeature.getMethod().hasName("setFeature") and
+        (
+          setFeature.getArgument(0).(StringLiteral).getValue() = 
+            "http://apache.org/xml/features/disallow-doctype-decl" or
+          setFeature.getArgument(0).(StringLiteral).getValue() = 
+            "http://xml.org/sax/features/external-general-entities"
+        )
+      )
+    )
+  }
+}
+
+class SAXParserSink extends DataFlow::Node {
+  SAXParserSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().hasName("newSAXParser") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SecureSAXFeatureSetting extends DataFlow::Node {
+  SecureSAXFeatureSetting() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.parsers", "SAXParserFactory") and
+      ma.getMethod().hasName("setFeature") and
+      (
+        (
+          ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://apache.org/xml/features/disallow-doctype-decl" and
+          ma.getArgument(1).(BooleanLiteral).getValue() = true
+        ) or
+        (
+          ma.getArgument(0).(StringLiteral).getValue() = 
+            "http://xml.org/sax/features/external-general-entities" and
+          ma.getArgument(1).(BooleanLiteral).getValue() = false
+        )
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SAXParserTaintConfig extends TaintTracking::Configuration {
+  SAXParserTaintConfig() { this = "SAXParser XXE Taint Tracking" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SAXParserFactorySource }
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SAXParserSink }
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SecureSAXFeatureSetting
+  }
+}
+
+from SAXParserTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Vulnerable SAXParserFactory instance without XXE protection detected. DOCTYPE declarations are enabled " +
+  "making this vulnerable to XML external entity attacks. Disable this by setting the feature " +
+  "`http://apache.org/xml/features/disallow-doctype-decl` to true. Source: $@",
+  source.getNode(),
+  source.toString()
+================================================================================

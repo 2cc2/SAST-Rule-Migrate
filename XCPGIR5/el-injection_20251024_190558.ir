@@ -1,0 +1,68 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "el-injection"
+  kind: taint
+  severity: WARNING
+  message: "An expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: DYNAMIC_INPUT
+    match:
+      node: PARAM | LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+sinks:
+  - id: EL_EXPRESSION
+    match:
+      node: CALL
+      api:
+        type: javax.el.ExpressionFactory
+        method: createValueExpression
+      arg_index: 1
+  - id: METHOD_EXPRESSION
+    match:
+      node: CALL
+      api:
+        type: javax.el.ExpressionFactory
+        method: createMethodExpression
+      arg_index: 1
+  - id: CONSTRAINT_TEMPLATE
+    match:
+      node: CALL
+      method: buildConstraintViolationWithTemplate
+      arg_index: 0
+sanitizers:
+  - id: STRING_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+    effect: neutralize
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: DYNAMIC_INPUT
+    sink: EL_EXPRESSION
+    through: [ARG_TO_PARAM*]
+  - source: DYNAMIC_INPUT
+    sink: METHOD_EXPRESSION
+    through: [ARG_TO_PARAM*]
+  - source: DYNAMIC_INPUT
+    sink: CONSTRAINT_TEMPLATE
+    through: [ARG_TO_PARAM*]
+report:
+  message: "Expression injection risk detected with dynamic input: ${sink.arg1.preview}"
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - {argument: 1}
+```

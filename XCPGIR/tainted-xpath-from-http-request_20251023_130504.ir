@@ -1,0 +1,57 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-xpath-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a XPath evaluate or compile command. This could lead to xpath injection if variables passed into the evaluate or compile commands are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.http.HttpServletRequest
+        method: "*"
+  
+sinks:
+  - id: XPATH_EVALUATE
+    match:
+      node: CALL
+      api:
+        type: javax.xml.xpath.XPath
+        method: evaluate
+      arg_index: 0
+      
+  - id: XPATH_COMPILE_EVALUATE
+    match:
+      node: CALL
+      api:
+        type: javax.xml.xpath.XPath
+        method: compile
+      chain:
+        - method: evaluate
+          arg_index: 0
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: XPATH_EVALUATE
+    through: [ARG_TO_PARAM*]
+    
+  - source: HTTP_REQUEST_INPUT
+    sink: XPATH_COMPILE_EVALUATE
+    through: [ARG_TO_PARAM*]
+
+report:
+  message: "Xpath injection could lead to unauthorized access to sensitive information in XML documents. Instead, thoroughly sanitize user input or use parameterized xpath queries."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+```

@@ -1,0 +1,671 @@
+Timestamp: 2025-10-23 15:15:55
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib."
+scope:
+  languages: ["java"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "UNESCAPED_EL"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+sinks:
+  - id: "XSS_SINK"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.JspWriter", method: "println" }
+      arg_index: 0
+sanitizers:
+  - id: "ESCAPE_XML"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.jstl.core.Config", method: "escapeXml" }
+    effect: "neutralize"
+    scope: { sinks: ["XSS_SINK"] }
+barriers: []
+propagations:
+  - id: "ARG_TO_PARAM"
+    edge: "arg->param"
+    kind: "taint"
+flows:
+  - source: "UNESCAPED_EL"
+    sink: "XSS_SINK"
+    through: ["ARG_TO_PARAM*"]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.core.Config.escapeXml)" } ]
+report:
+  message: "Unescaped Expression Language segment detected"
+  locations: ["source", "sink"]
+  evidence: {}
+tests:
+  positive:
+    - "${param.name}"
+  negative:
+    - "${fn:escapeXml(param.name)}"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,41-55)
+ERROR: getStringValue() cannot be resolved for type UnescapedExpressionSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-26)
+ERROR: could not resolve type DataFlow::BarrierGuard (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,34-56)
+ERROR: asExpr() cannot be resolved for type EscapeXmlSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,12-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,48-76)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,44-62)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,71-89)
+ERROR: 'literal' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,19-26)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detected an Expression Language segment that does not escape output.
+ *              This is dangerous because if any data in this expression can be controlled
+ *              externally, it is a cross-site scripting vulnerability.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 5.0
+ * @precision medium
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class UnescapedExpressionSource extends DataFlow::Expr {
+  UnescapedExpressionSource() {
+    exists(string literal |
+      this instanceof StringLiteral and
+      this.getStringValue().regexpMatch("\\$\\{(?!.*escapeXml).*\\}")
+    )
+  }
+}
+
+class JspPrintSink extends DataFlow::Node {
+  JspPrintSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "println" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp", "JspWriter") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class EscapeXmlSanitizer extends DataFlow::BarrierGuard {
+  EscapeXmlSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "escapeXml" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Config") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class UnescapedExpressionToPrintConfig extends TaintTracking::Configuration {
+  UnescapedExpressionToPrintConfig() {
+    this = "UnescapedExpressionToPrintConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof UnescapedExpressionSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JspPrintSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(EscapeXmlSanitizer exs | exs = sanitizer.asExpr())
+  }
+}
+
+from UnescapedExpressionToPrintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Unescaped Expression Language segment detected", source, sink,
+  "Potential XSS vulnerability from unescaped EL expression to JspWriter.println"
+================================================================================
+Timestamp: 2025-10-23 15:16:57
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib."
+scope:
+  languages: ["java"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "UNESCAPED_EL"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+sinks:
+  - id: "XSS_SINK"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.JspWriter", method: "println" }
+      arg_index: 0
+sanitizers:
+  - id: "ESCAPE_XML"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.jstl.core.Config", method: "escapeXml" }
+    effect: "neutralize"
+    scope: { sinks: ["XSS_SINK"] }
+barriers: []
+propagations:
+  - id: "ARG_TO_PARAM"
+    edge: "arg->param"
+    kind: "taint"
+flows:
+  - source: "UNESCAPED_EL"
+    sink: "XSS_SINK"
+    through: ["ARG_TO_PARAM*"]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.core.Config.escapeXml)" } ]
+report:
+  message: "Unescaped Expression Language segment detected"
+  locations: ["source", "sink"]
+  evidence: {}
+tests:
+  positive:
+    - "${param.name}"
+  negative:
+    - "${fn:escapeXml(param.name)}"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getStringValue() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,21-35)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,25-33)
+ERROR: could not resolve type TaintTracking::Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,34-58)
+ERROR: asExpr() cannot be resolved for type EscapeXmlSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,25-33)
+ERROR: could not resolve type DataFlow::FlowNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,35-53)
+ERROR: could not resolve type DataFlow::FlowNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,62-80)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,39-67)
+ERROR: 'literal' is not bound to a value. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,19-26)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detected an Expression Language segment that does not escape output.
+ *              This is dangerous because if any data in this expression can be controlled
+ *              externally, it is a cross-site scripting vulnerability.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 5.0
+ * @precision medium
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class UnescapedExpressionSource extends DataFlow::Node {
+  UnescapedExpressionSource() {
+    exists(string literal |
+      this.asExpr() instanceof StringLiteral and
+      this.asExpr().getStringValue().regexpMatch("\\$\\{(?!.*escapeXml).*\\}")
+    )
+  }
+}
+
+class JspPrintSink extends DataFlow::Node {
+  JspPrintSink() {
+    exists(Method m |
+      m.hasName("println") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.jsp", "JspWriter") and
+      this.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+}
+
+class EscapeXmlSanitizer extends TaintTracking::Sanitizer {
+  EscapeXmlSanitizer() {
+    exists(Method m |
+      m.hasName("escapeXml") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Config") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class UnescapedExpressionFlow extends TaintTracking::Configuration {
+  UnescapedExpressionFlow() {
+    this = "UnescapedExpressionFlow"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnescapedExpressionSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JspPrintSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof EscapeXmlSanitizer
+  }
+}
+
+from UnescapedExpressionFlow cfg, DataFlow::FlowNode source, DataFlow::FlowNode sink
+where cfg.hasFlow(source, sink)
+select sink, "Unescaped Expression Language segment detected", 
+  source, sink, "Potential XSS vulnerability from unescaped EL expression to JspWriter.println"
+================================================================================
+Timestamp: 2025-10-23 15:17:46
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib."
+scope:
+  languages: ["java"]
+  frameworks: ["jsp"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "UNESCAPED_EL"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+sinks:
+  - id: "XSS_SINK"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.JspWriter", method: "println" }
+      arg_index: 0
+sanitizers:
+  - id: "ESCAPE_XML"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.jsp.jstl.core.Config", method: "escapeXml" }
+    effect: "neutralize"
+    scope: { sinks: ["XSS_SINK"] }
+barriers: []
+propagations:
+  - id: "ARG_TO_PARAM"
+    edge: "arg->param"
+    kind: "taint"
+flows:
+  - source: "UNESCAPED_EL"
+    sink: "XSS_SINK"
+    through: ["ARG_TO_PARAM*"]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.core.Config.escapeXml)" } ]
+report:
+  message: "Unescaped Expression Language segment detected"
+  locations: ["source", "sink"]
+  evidence: {}
+tests:
+  positive:
+    - "${param.name}"
+  negative:
+    - "${fn:escapeXml(param.name)}"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,33-47)
+ERROR: getStringValue() cannot be resolved for type UnescapedElSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,10-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,43-71)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,39-57)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,66-84)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output  
+ * @description Detected an Expression Language segment that does not escape output.
+ *              This is dangerous because if any data in this expression can be controlled
+ *              externally, it is a cross-site scripting vulnerability.
+ * @kind path-problem
+ * @problem.severity warning  
+ * @security-severity 5.0
+ * @precision medium
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class UnescapedElSource extends DataFlow::Expr {
+  UnescapedElSource() {
+    this instanceof StringLiteral and
+    this.getStringValue().regexpMatch("\\$\\{(?!.*escapeXml).*\\}")
+  }
+}
+
+class JspWriterPrintlnSink extends DataFlow::Node {
+  JspWriterPrintlnSink() {
+    exists(Method method, MethodAccess call |
+      method.hasName("println") and
+      method.getDeclaringType().hasQualifiedName("javax.servlet.jsp", "JspWriter") and
+      call.getMethod() = method and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class EscapeXmlSanitizer extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("escapeXml") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Config") and
+      pred.asExpr() = ma.getArgument(0) and
+      succ.asExpr() = ma
+    )
+  }
+}
+
+class UnescapedElToJspPrintConfig extends TaintTracking::Configuration {
+  UnescapedElToJspPrintConfig() {
+    this = "UnescapedElToJspPrintConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof UnescapedElSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JspWriterPrintlnSink
+  }
+}
+
+from UnescapedElToJspPrintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Unescaped Expression Language segment detected", source, sink,
+  "Potential XSS vulnerability from unescaped EL expression to JspWriter.println"
+================================================================================
+Timestamp: 2025-10-23 20:15:08
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: ["jsp"]
+  frameworks: ["*"]
+sources:
+  - id: EXPR_LANGUAGE_INPUT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: EXPR_LANGUAGE_OUTPUT
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      where:
+        - op: contains
+          left: methodFullName
+          right: "escapeXml"
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+propagations:
+  - id: EXPR_TO_OUTPUT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: EXPR_LANGUAGE_INPUT
+    sink: XSS_SINK
+    through: [EXPR_TO_OUTPUT*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(escapeXml)" } ]
+report:
+  message: "Expression Language segment without output escaping detected. Use 'escapeXml' function to prevent XSS."
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - { argument: 0 }
+tests:
+  positive:
+    - "${userInput}"
+  negative:
+    - "${fn:escapeXml(userInput)}"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module shellcoding (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,7-18)
+ERROR: could not resolve module shellcoding (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,5-16)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,31-59)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,57-75)
+WARNING: unused predicate 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,11-19)
+WARNING: unused predicate 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,11-17)
+Rule Content:
+/**
+ * @name Expression Language XSS
+ * @description Detects Expression Language segments that don't escape output, which could lead to XSS vulnerabilities
+ * @id use-escapexml
+ * @kind path-problem
+ * @problem.severity WARNING
+ * @tags security
+ *       external/jsp
+ *       external/cwe-xss
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+/** The source is an Expression Language input without escapeXml */
+predicate isSource(Expr expr) {
+  exists(CompileTimeConstantExpr ccExpr |
+    ccExpr = expr and
+    ccExpr.getStringValue().matches("\\$\\{(?!.*escapeXml).*\\}")
+  )
+}
+
+/** The sink is Expression Language output */
+predicate isSink(DataFlow::Node node) {
+  exists(Expr expr | 
+    node.asExpr() = expr and
+    expr.toString().matches("\\$\\{.*\\}")
+  )
+}
+
+/** Data flow configuration */
+class EscapeXmlConfig extends TaintTracking::Configuration {
+  EscapeXmlConfig() { this = "EscapeXmlConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr expr |
+      shellcoding::isSource(expr) and
+      source.asExpr() = expr
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    shellcoding::isSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "escapeXml" and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from EscapeXmlConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Expression Language segment without output escaping detected. Use 'escapeXml' function to prevent XSS.", 
+  source.getNode(),
+  "Potential XSS source here"
+================================================================================
+Timestamp: 2025-10-23 20:16:08
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: ["jsp"]
+  frameworks: ["*"]
+sources:
+  - id: EXPR_LANGUAGE_INPUT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+sinks:
+  - id: XSS_SINK
+    match:
+      node: EXPR_LANGUAGE_OUTPUT
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      where:
+        - op: contains
+          left: methodFullName
+          right: "escapeXml"
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+propagations:
+  - id: EXPR_TO_OUTPUT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: EXPR_LANGUAGE_INPUT
+    sink: XSS_SINK
+    through: [EXPR_TO_OUTPUT*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(escapeXml)" } ]
+report:
+  message: "Expression Language segment without output escaping detected. Use 'escapeXml' function to prevent XSS."
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - { argument: 0 }
+tests:
+  positive:
+    - "${userInput}"
+  negative:
+    - "${fn:escapeXml(userInput)}"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: Ambiguous predicate reference: could refer to a classless predicate or a predicate in XSSConfig. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,5-13)
+ERROR: Ambiguous predicate reference: could refer to a classless predicate or a predicate in XSSConfig. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,5-11)
+ERROR: Ambiguous predicate reference: could refer to a classless predicate or a predicate in XSSConfig. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,5-16)
+ERROR: could not resolve type LiteralExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,10-21)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,25-53)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,10-22)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,24-42)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,51-69)
+Rule Content:
+/**
+ * @name Expression Language XSS
+ * @description Detects Expression Language segments that don't escape output, which could lead to XSS vulnerabilities
+ * @id use-escapexml
+ * @kind path-problem
+ * @problem.severity WARNING
+ * @tags security
+ *       external/jsp
+ *       external/cwe-xss
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+/** The source is an Expression Language input without escapeXml */
+predicate isSource(DataFlow::Node node) {
+  exists(LiteralExpr expr |
+    expr.getStringValue().matches("\\$\\{(?!.*escapeXml).*\\}") and
+    node.asExpr() = expr
+  )
+}
+
+/** The sink is Expression Language output */
+predicate isSink(DataFlow::Node node) {
+  exists(Expr expr |
+    expr.toString().matches("\\$\\{.*\\}") and
+    node.asExpr() = expr
+  )
+}
+
+/** A sanitizer using escapeXml */
+predicate isSanitizer(DataFlow::Node node) {
+  exists(MethodAccess ma |
+    ma.getMethod().getName() = "escapeXml" and
+    node.asExpr() = ma
+  )
+}
+
+class XSSConfig extends TaintTracking::Configuration {
+  XSSConfig() { this = "XSSConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isSource(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isSanitizer(sanitizer)
+  }
+}
+
+from XSSConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Expression Language segment without output escaping detected. Use 'escapeXml' function to prevent XSS.", 
+  source.getNode(),
+  "Potential XSS source here"
+================================================================================

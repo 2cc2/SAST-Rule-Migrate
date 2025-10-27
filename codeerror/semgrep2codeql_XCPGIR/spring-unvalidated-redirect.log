@@ -1,0 +1,890 @@
+Timestamp: 2025-10-23 15:52:40
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spring-unvalidated-redirect
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  
+sources:
+  - id: USER_PROVIDED_URL
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "URL|url"
+
+sinks:
+  - id: REDIRECT_RETURN
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: value
+          right: "redirect:.*"
+  - id: MODEL_VIEW_REDIRECT
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView }
+      where:
+        - op: regex
+          left: arg0.value
+          right: "redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+  - id: PARAM_TO_MODELVIEW
+    edge: param->arg
+    kind: taint
+
+flows:
+  - source: USER_PROVIDED_URL
+    sink: REDIRECT_RETURN
+    through: [PARAM_TO_REDIRECT]
+  - source: USER_PROVIDED_URL
+    sink: MODEL_VIEW_REDIRECT
+    through: [PARAM_TO_MODELVIEW]
+
+report:
+  message: "Unvalidated redirect to user-provided URL detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringControllers (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-60)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,37-58)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-27)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,34-53)
+ERROR: could not resolve type MethodReturnStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-28)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,37-56)
+ERROR: getTarget() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,10-19)
+ERROR: getReturn() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,26-35)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,3-24)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,7-13)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,3-21)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,7-13)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,3-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,7-13)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,48-76)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,12-24)
+Rule Content:
+/**
+ * @name Spring Unvalidated Redirect
+ * @description Application redirects a user to a destination URL specified by a user supplied parameter that is not validated.
+ * @kind problem
+ * @id java/spring-unvalidated-redirect
+ * @tags security
+ *       external/cwe/cwe-601
+ *       external/cwe/cwe-79
+ * @severity Warning
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringControllers
+
+class UserProvidedUrlSource extends TaintTracking::Source {
+  UserProvidedUrlSource() {
+    exists(MethodParameter p |
+      p.getType().hasName("String") and
+      (p.getName().matches("URL") or p.getName().matches("url"))
+      and
+      result = p.getAnAccess()
+    )
+  }
+}
+
+class RedirectReturnSink extends TaintTracking::Sink {
+  RedirectReturnSink() {
+    exists(MethodReturnStmt ret |
+      ret.getExpr().toString().matches("redirect:.*") and
+      result = ret.getExpr()
+    )
+  }
+}
+
+class ModelViewRedirectSink extends TaintTracking::Sink {
+  ModelViewRedirectSink() {
+    exists(MethodAccess ma |
+      ma.getType().getName() = "ModelAndView" and
+      ma.getTarget().toString().matches("redirect:.*") and
+      result = ma.getArgument(0)
+    )
+  }
+}
+
+class UnvalidatedRedirectConfiguration extends TaintTracking::Configuration {
+  UnvalidatedRedirectConfiguration() {
+    this = "Spring Unvalidated Redirect"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserProvidedUrlSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof RedirectReturnSink or
+    sink instanceof ModelViewRedirectSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Parameter to return value propagation
+    exists(Method m |
+      node1.asParameter() = m.getAParameter() and
+      node2.asExpr() = m.getReturn() and
+      not m.isStatic()
+    ) or
+    // Parameter to method argument propagation
+    exists(MethodAccess ma, int pos |
+      node1.asParameter() = ma.getMethod().getAParameter() and
+      node2.asExpr() = ma.getArgument(pos)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(UnvalidatedRedirectConfiguration c).hasFlow(source, sink)
+select sink, source,
+  "Unvalidated redirect to user-provided URL detected (" + source + " -> " + sink + ")"
+================================================================================
+Timestamp: 2025-10-23 15:53:52
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spring-unvalidated-redirect
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  
+sources:
+  - id: USER_PROVIDED_URL
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "URL|url"
+
+sinks:
+  - id: REDIRECT_RETURN
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: value
+          right: "redirect:.*"
+  - id: MODEL_VIEW_REDIRECT
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView }
+      where:
+        - op: regex
+          left: arg0.value
+          right: "redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+  - id: PARAM_TO_MODELVIEW
+    edge: param->arg
+    kind: taint
+
+flows:
+  - source: USER_PROVIDED_URL
+    sink: REDIRECT_RETURN
+    through: [PARAM_TO_REDIRECT]
+  - source: USER_PROVIDED_URL
+    sink: MODEL_VIEW_REDIRECT
+    through: [PARAM_TO_MODELVIEW]
+
+report:
+  message: "Unvalidated redirect to user-provided URL detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,32-33)
+ERROR: extraneous input ')' expecting one of: '}' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,5-6)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,9-25)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,9-25)
+ERROR: getQualifiedName() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,10-26)
+ERROR: getReturn() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,26-35)
+ERROR: Variable::Parameter is not compatible with int (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,14-31)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,41-69)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,12-24)
+Rule Content:
+/**
+ * @name Spring Unvalidated Redirect
+ * @description Application redirects a user to a destination URL specified by a user supplied parameter that is not validated.
+ * @kind problem
+ * @id java/spring-unvalidated-redirect
+ * @tags security
+ *       external/cwe/cwe-601
+ *       external/cwe/cwe-79
+ * @severity Warning
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserProvidedUrlSource extends DataFlow::Node {
+  UserProvidedUrlSource() {
+    exists(Method m, Parameter p |
+      m.hasQualifiedName("org.springframework.web", "Controller") and
+      exists(m.getParameter(p) |
+        p.getType().hasName("String") and
+        (p.getName().matches("URL") or p.getName().matches("url")) and
+        this.asParameter() = p
+      )
+    )
+  }
+}
+
+class RedirectReturnSink extends DataFlow::Node {
+  RedirectReturnSink() {
+    exists(Method m, ReturnStmt ret |
+      m.hasQualifiedName("org.springframework.web", "Controller") and
+      ret.getEnclosingCallable() = m and
+      ret.getResult().toString().matches("redirect:.*") and
+      this.asExpr() = ret.getResult()
+    )
+  }
+}
+
+class ModelViewRedirectSink extends DataFlow::Node {
+  ModelViewRedirectSink() {
+    exists(MethodAccess ma |
+      ma.getQualifiedName().matches("org.springframework.web.servlet.ModelAndView.%") and
+      ma.getArgument(0).toString().matches("redirect:.*") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class UnvalidatedRedirectConfig extends TaintTracking::Configuration {
+  UnvalidatedRedirectConfig() {
+    this = "Spring Unvalidated Redirect Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserProvidedUrlSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof RedirectReturnSink or
+    sink instanceof ModelViewRedirectSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m |
+      node1.asParameter() = m.getAParameter() and
+      node2.asExpr() = m.getReturn().getAValue()
+    )
+    or
+    exists(MethodAccess ma, Parameter p, int pos |
+      node1.asParameter() = p and
+      pos >= 0 and
+      pos < ma.getNumArgument() and
+      node2.asExpr() = ma.getArgument(pos)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, UnvalidatedRedirectConfig config
+where config.hasFlow(source, sink)
+select sink, "Unvalidated redirect to user-provided URL detected from $@.", source,
+  source.toString()
+================================================================================
+Timestamp: 2025-10-23 15:54:59
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spring-unvalidated-redirect
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  
+sources:
+  - id: USER_PROVIDED_URL
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "URL|url"
+
+sinks:
+  - id: REDIRECT_RETURN
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: value
+          right: "redirect:.*"
+  - id: MODEL_VIEW_REDIRECT
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView }
+      where:
+        - op: regex
+          left: arg0.value
+          right: "redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+  - id: PARAM_TO_MODELVIEW
+    edge: param->arg
+    kind: taint
+
+flows:
+  - source: USER_PROVIDED_URL
+    sink: REDIRECT_RETURN
+    through: [PARAM_TO_REDIRECT]
+  - source: USER_PROVIDED_URL
+    sink: MODEL_VIEW_REDIRECT
+    through: [PARAM_TO_MODELVIEW]
+
+report:
+  message: "Unvalidated redirect to user-provided URL detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,30-31)
+ERROR: extraneous input ')' expecting one of: '}' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,5-6)
+ERROR: missing one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,32-33)
+ERROR: extraneous input ')' expecting one of: '}' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,5-6)
+ERROR: getAResult() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,26-36)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,25-31)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,9-15)
+ERROR: could not resolve variable argument (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,25-33)
+ERROR: could not resolve variable argument (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,9-17)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,41-69)
+Rule Content:
+/**
+ * @name Spring Unvalidated Redirect
+ * @description Application redirects a user to a destination URL specified by a user supplied parameter that is not validated.
+ * @kind problem
+ * @id java/spring-unvalidated-redirect
+ * @tags security
+ *       external/cwe/cwe-601
+ *       external/cwe/cwe-79
+ * @severity Warning
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserProvidedUrlSource extends DataFlow::Node {
+  UserProvidedUrlSource() {
+    exists(Method m, Parameter p |
+      m instanceof SpringControllerMethod and
+      p = m.getAParameter() and
+      p.getType() instanceof TypeString and
+      (p.getName().matches("URL") or p.getName().matches("url")) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class RedirectReturnSink extends DataFlow::Node {
+  RedirectReturnSink() {
+    exists(Method m, ReturnStmt ret |
+      m instanceof SpringControllerMethod and
+      ret.getEnclosingCallable() = m and
+      exists(ret.getResult() |
+        this.asExpr() = result and
+        result.toString().matches("redirect:.*")
+      )
+    )
+  }
+}
+
+class ModelViewRedirectSink extends DataFlow::Node {
+  ModelViewRedirectSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.web.servlet", "ModelAndView") and
+      exists(cc.getArgument(0) |
+        this.asExpr() = argument and
+        argument.toString().matches("redirect:.*")
+      )
+    )
+  }
+}
+
+class UnvalidatedRedirectConfig extends TaintTracking::Configuration {
+  UnvalidatedRedirectConfig() {
+    this = "Spring Unvalidated Redirect Configuration"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserProvidedUrlSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof RedirectReturnSink or
+    sink instanceof ModelViewRedirectSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Method m |
+      node1.asParameter() = m.getAParameter() and
+      node2.asExpr() = m.getAResult()
+    )
+    or
+    exists(Method m, Parameter p, int pos |
+      node1.asParameter() = p and
+      p = m.getAParameter() and
+      pos >= 0 and
+      pos < m.getNumberOfParameters() and
+      node2.asExpr() = m.getParameter(pos).getAnAccess()
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, UnvalidatedRedirectConfig config
+where config.hasFlow(source, sink)
+select sink, "Unvalidated redirect to user-provided URL detected from $@.", source,
+  source.toString()
+================================================================================
+Timestamp: 2025-10-23 20:42:17
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "spring-unvalidated-redirect"
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: type
+          right: "java.lang.String"
+
+sinks:
+  - id: REDIRECT_URL
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView, method: "<init>" }
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^redirect:.*"
+  - id: RETURN_REDIRECT
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: expr.value
+          right: "^redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: REDIRECT_URL
+    through: [PARAM_TO_REDIRECT*]
+  - source: USER_INPUT
+    sink: RETURN_REDIRECT
+    through: [PARAM_TO_REDIRECT*]
+
+report:
+  message: "Unvalidated URL redirection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-27)
+ERROR: getExpr() cannot be resolved for type Statement::ReturnStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,13-20)
+ERROR: getExpr() cannot be resolved for type Statement::ReturnStmt (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,29-36)
+ERROR: getAnOutParameter() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,26-43)
+ERROR: could not resolve type PrimitiveExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,10-23)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,33-51)
+Rule Content:
+/**
+ * @name Spring 未经验证的重定向
+ * @description 应用将用户重定向到用户提供的未经验证的目标URL
+ * @kind problem
+ * @id java/spring-unvalidated-redirect
+ * @severity warning
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.SpringController
+import DataFlow::PathGraph
+
+class UserInput extends DataFlow::Node {
+  UserInput() {
+    exists(MethodParameter p | 
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class RedirectSink extends DataFlow::Node {
+  RedirectSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "<init>" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.web.servlet", "ModelAndView") and
+        ma.getArgument(0).toString().matches("^redirect:.*") and
+        this.asExpr() = ma.getArgument(0)
+      )
+      or
+      exists(ReturnStmt ret |
+        ret.getExpr().toString().matches("^redirect:.*") and
+        this.asExpr() = ret.getExpr()
+      )
+    )
+  }
+}
+
+predicate isTainted(DataFlow::Node nodeFrom, DataFlow::Node nodeTo) {
+  nodeFrom.asParameter().getAnOutParameter() = nodeTo or
+  exists(PrimitiveExpr pe | 
+    nodeFrom.asParameter() = pe.getEnclosingCallable().getParameter(pe.getParameterNumber()) and
+    pe.getParameterCallable().getAnOutParameter() = nodeTo
+  )
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  exists(UserInput ui | source.getNode() = ui) and
+  exists(RedirectSink rs | sink.getNode() = rs) and
+  isTainted(source.getNode(), sink.getNode())
+select sink, "Unvalidated URL redirection detected", source, sink,
+  "Unsafe redirect to unchecked URL $@ from user input $@",
+  sink.getNode().toString(), source.getNode().toString()
+================================================================================
+Timestamp: 2025-10-23 20:43:10
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "spring-unvalidated-redirect"
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: type
+          right: "java.lang.String"
+
+sinks:
+  - id: REDIRECT_URL
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView, method: "<init>" }
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^redirect:.*"
+  - id: RETURN_REDIRECT
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: expr.value
+          right: "^redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: REDIRECT_URL
+    through: [PARAM_TO_REDIRECT*]
+  - source: USER_INPUT
+    sink: RETURN_REDIRECT
+    through: [PARAM_TO_REDIRECT*]
+
+report:
+  message: "Unvalidated URL redirection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'TaintPropagation' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,45-61)
+ERROR: missing one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,61-62)
+ERROR: unexpected input ')' expecting one of: '=', ';', '{' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,22-23)
+ERROR: missing one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,62-63)
+ERROR: unexpected input ')' expecting one of: '=', ';', '{' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,64-65)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,25-46)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,28-47)
+ERROR: getReturn() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,17-26)
+ERROR: getReturn() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,52-61)
+ERROR: getThisParameter() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,30-46)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,3-12)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,7-13)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,3-15)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,7-13)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,7-13)
+ERROR: could not resolve variable new (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,41-44)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,61-62)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,20-22)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,62-63)
+ERROR: unknown annotation 'new' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,42-45)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,33-51)
+ERROR: DataFlowImpl1::PathNode is not compatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,3-22)
+WARNING: unused variable 'source' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,38-44)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,7-19)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,46-62)
+ERROR: predicate () conflicts with predicate () from TestRule.ql:50 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,61-62)
+ERROR: predicate () conflicts with predicate () from TestRule.ql:49 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,62-63)
+Rule Content:
+/**
+ * @name Spring 未经验证的重定向
+ * @description 应用将用户重定向到用户提供的未经验证的目标URL
+ * @id java/spring-unvalidated-redirect
+ * @kind path-problem
+ * @severity warning
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInput extends TaintTracking::Source {
+  UserInput() {
+    exists(Parameter p |
+      p.getType().hasName("String") and
+      result.asParameter() = p
+    )
+  }
+}
+
+class RedirectSink extends TaintTracking::Sink {
+  RedirectSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.web.servlet", "ModelAndView") and
+      cc.getArgument(0).toString().matches("^redirect:.*") and
+      result.asExpr() = cc.getArgument(0)
+    ) or
+    exists(ReturnStmt ret |
+      ret.getResult().toString().matches("^redirect:.*") and
+      result.asExpr() = ret.getResult()
+    )
+  }
+}
+
+class TaintPropagation extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      m.getAParameter() = p and
+      (exists(m.getReturn()) and succ.asExpr() = m.getReturn()) or
+      succ.asParameter() = m.getThisParameter()
+    )
+  }
+}
+
+query predicate edges(DataFlow::Node source, DataFlow::Node sink) {
+  any(UserInput ui).flowsTo(sink, _, _, new TaintPropagation()) or
+  any(RedirectSink rs).hasSource(source, new TaintPropagation())
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, string srcText, string sinkText
+where
+  edges(source, sink) and
+  srcText = source.getNode().toString() and
+  sinkText = sink.getNode().toString()
+select sink, "Unvalidated URL redirection detected", source, sink,
+  "Unsafe redirect to unchecked URL $@ from user input $@",
+  sinkText, srcText
+================================================================================
+Timestamp: 2025-10-23 20:44:07
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "spring-unvalidated-redirect"
+  kind: taint
+  severity: WARNING
+  message: "Application redirects a user to a destination URL specified by a user supplied parameter that is not validated."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: type
+          right: "java.lang.String"
+
+sinks:
+  - id: REDIRECT_URL
+    match:
+      node: CALL
+      api: { type: org.springframework.web.servlet.ModelAndView, method: "<init>" }
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^redirect:.*"
+  - id: RETURN_REDIRECT
+    match:
+      node: RETURN
+      where:
+        - op: regex
+          left: expr.value
+          right: "^redirect:.*"
+
+propagations:
+  - id: PARAM_TO_REDIRECT
+    edge: param->return
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: REDIRECT_URL
+    through: [PARAM_TO_REDIRECT*]
+  - source: USER_INPUT
+    sink: RETURN_REDIRECT
+    through: [PARAM_TO_REDIRECT*]
+
+report:
+  message: "Unvalidated URL redirection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'MethodTaintStep' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,110-125)
+ERROR: unexpected input ')' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,127-128)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,31-52)
+ERROR: asParameter() cannot be resolved for type StringParameter.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-23)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,28-47)
+ERROR: asExpr() cannot be resolved for type RedirectSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-18)
+ERROR: asExpr() cannot be resolved for type RedirectSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,69-77)
+ERROR: getThisParameter() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,74-90)
+ERROR: could not resolve predicate localTaint/4 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,3-28)
+ERROR: could not resolve predicate MethodTaintStep/0 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,110-125)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,33-51)
+ERROR: DataFlowNodes::Public::Node is not compatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,29-65)
+ERROR: DataFlowNodes::Public::Node is not compatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,67-101)
+ERROR: could not resolve variable new (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,106-109)
+Rule Content:
+/**
+ * @name Spring 未验证的重定向漏洞
+ * @description 检测Spring应用中未经验证的用户输入用于重定向的情况
+ * @id java/spring-unvalidated-redirect
+ * @kind path-problem
+ * @severity warning
+ * @tags security
+ * @precision high
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.Spring
+
+class StringParameter extends TaintTracking::Source {
+  StringParameter() {
+    exists(Parameter p | 
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class RedirectSink extends TaintTracking::Sink {
+  RedirectSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("org.springframework.web.servlet", "ModelAndView") and
+      cc.getArgument(0).toString().matches("^redirect:.*") and
+      this.asExpr() = cc.getArgument(0)
+    )
+    or
+    exists(ReturnStmt rs |
+      rs.getResult().toString().matches("^redirect:.*") and
+      this.asExpr() = rs.getResult()
+    )
+  }
+}
+
+class MethodTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Method m | 
+      (pred.asParameter() = m.getAParameter() and succ.asExpr() = m.getACall().getResult())
+      or
+      (pred.asParameter() = m.getAParameter() and succ.asParameter() = m.getThisParameter())
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  exists(StringParameter sp | source.getNode() = sp) and
+  exists(RedirectSink rs | sink.getNode() = rs) and
+  TaintTracking::localTaint(DataFlow::exprNode(source.getNode()), DataFlow::exprNode(sink.getNode()), 0, new MethodTaintStep())
+select sink, source, 
+  "未经验证的重定向: 用户输入被直接用作重定向目标",
+  source.getNode(), "用户输入来自这里",
+  sink.getNode(), "未经验证的重定向到这里"
+================================================================================

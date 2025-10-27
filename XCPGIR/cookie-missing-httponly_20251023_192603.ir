@@ -1,0 +1,61 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-missing-httponly"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "A cookie was detected without setting the 'HttpOnly' flag. The 'HttpOnly' flag for cookies instructs the browser to forbid client-side scripts from reading the cookie. Set the 'HttpOnly' flag by calling 'cookie.setHttpOnly(true);'"  
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+sources:
+  - id: "COOKIE_CREATION"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+      where:
+        - op: "neq"
+          left: "methodFullName"
+          right: "setHttpOnly"
+sinks:
+  - id: "COOKIE_WITHOUT_HTTPONLY"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.HttpServletResponse"
+        method: "addCookie"
+      arg_index: 0
+sanitizers:
+  - id: "HTTPONLY_SET"
+    match:
+      node: "CALL"
+      api:
+        method: "setHttpOnly"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+barriers: []
+propagations:
+  - id: "COOKIE_PROPAGATION"
+    edge: "arg->param"
+    kind: "taint"
+flows:
+  - source: "COOKIE_CREATION"
+    sink: "COOKIE_WITHOUT_HTTPONLY"
+    through: ["COOKIE_PROPAGATION*"]
+    constraints:
+      path:
+        must_not: 
+          - {pattern: "CALL(<javax.servlet.http.Cookie>.setHttpOnly(true))"}
+report:
+  message: "Found cookie without HttpOnly flag"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "response.addCookie(new Cookie(\"name\", \"value\"));"
+  negative:
+    - "Cookie c = new Cookie(\"name\", \"value\"); c.setHttpOnly(true); response.addCookie(c);"
+```

@@ -1,0 +1,64 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "no-direct-response-writer"
+  kind: taint
+  severity: WARNING
+  message: "Detected a request with potential user-input going into a OutputStream or Writer object. This bypasses any view or template environments, including HTML escaping, which may expose this application to cross-site scripting (XSS) vulnerabilities."
+scope:
+  languages: [java]
+  frameworks: ["servlets"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter|getInputStream|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString
+sinks:
+  - id: RESPONSE_WRITER
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.http.HttpServletResponse
+        method: getWriter|getOutputStream
+    arg_index: 0
+  - id: OUTPUT_WRITER
+    match:
+      node: CALL
+      api:
+        type: java.io.PrintWriter|javax.servlet.ServletOutputStream|java.io.OutputStream
+        method: write
+sanitizers:
+  - id: HTML_ESCAPE
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.lang.StringEscapeUtils|org.springframework.web.util.HtmlUtils|org.owasp.esapi.ESAPI
+        method: escapeHtml|htmlEscape|encodeForHTML
+    effect: neutralize
+    scope: { sinks: [RESPONSE_WRITER, OUTPUT_WRITER] }
+barriers: []
+propagations:
+  - id: ARG_TO_RETURN
+    edge: arg->param
+    kind: taint
+flows:
+  - source: REQUEST_INPUT
+    sink: RESPONSE_WRITER
+    through: [ARG_TO_RETURN*]
+    constraints:
+      path:
+        must_not: [{ pattern: "CALL(org.apache.commons.lang.StringEscapeUtils.escapeHtml)" }]
+
+report:
+  message: "Potential XSS vulnerability detected: user input flows directly to response writer without HTML escaping"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "response.getWriter().write(request.getParameter(\"input\"));"
+  negative:
+    - "response.getWriter().write(StringEscapeUtils.escapeHtml(request.getParameter(\"input\")));"
+```

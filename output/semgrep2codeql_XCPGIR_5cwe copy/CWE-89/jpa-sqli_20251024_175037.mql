@@ -1,0 +1,72 @@
+/**
+ * @name JPA SQL Injection Vulnerability
+ * @description Detects formatted strings or concatenated strings used in JPA SQL queries 
+ *              without proper sanitization leading to SQL injection.
+ * @id java/jpa-sqli
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class StringFormatSource extends DataFlow::ExprNode {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlStringConcat extends DataFlow::ExprNode {
+  SqlStringConcat() {
+    exists(Variable v, BinaryExpr be |
+      be.getLeftOperand().getType().hasName("String") and
+      be.getRightOperand().getType().hasName("String") and
+      (be instanceof AddExpr) and
+      this.asExpr() = be and
+      v.getAnAssignedValue() = be and
+      v.getName().matches("(?i)SQL") 
+    )
+  }
+}
+
+class JpaQuerySink extends DataFlow::ExprNode {
+  JpaQuerySink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["createQuery", "createNativeQuery"]) and
+      ma.getMethod().getDeclaringType().getAnAncestor().hasQualifiedName("javax.persistence", "EntityManager") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JpaSqlInjectionFlow extends TaintTracking::Configuration {
+  JpaSqlInjectionFlow() { this = "JpaSqlInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or
+    source instanceof SqlStringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JpaQuerySink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from JpaSqlInjectionFlow config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "User input reaches JPA SQL query without sanitization", 
+  source, sink, "$@ flows from here to $@.", 
+  source.getNode(), "Potential SQL injection source",
+  sink.getNode(), "JPA query execution"

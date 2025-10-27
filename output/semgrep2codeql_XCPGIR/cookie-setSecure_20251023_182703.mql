@@ -1,0 +1,42 @@
+/**
+ * @name Insecure Cookie.setSecure Usage
+ * @description Detects when Cookie.setSecure(false) is called without secure override
+ * @kind problem
+ * @id java/cookie-setSecure
+ * @security-severity 7.5
+ * @precision high
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+
+class CookieCreation extends MethodAccess {
+  CookieCreation() {
+    this.getMethod().hasName("<init>") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie")
+  }
+}
+
+class InsecureSetSecure extends MethodAccess {
+  InsecureSetSecure() {
+    this.getMethod().hasName("setSecure") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.getArgument(0).(Literal).getValue() = "false"
+  }
+}
+
+class SecureSetSecure extends MethodAccess {
+  SecureSetSecure() {
+    this.getMethod().hasName("setSecure") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.getArgument(0).(Literal).getValue() = "true"
+  }
+}
+
+from CookieCreation ctor, InsecureSetSecure insecureSet, DataFlow::Node src, DataFlow::Node sink
+where
+  src.asExpr() = ctor and
+  sink.asExpr() = insecureSet and
+  not exists(SecureSetSecure secureSet | secureSet.getQualifier() = insecureSet.getQualifier()) and
+  DataFlow::localFlow(src, sink)
+select insecureSet, "Insecure Transport: Cookie.setSecure(false) detected without secure override. " +
+  "Cookies should be sent only over HTTPS to prevent cross-site scripting attacks."

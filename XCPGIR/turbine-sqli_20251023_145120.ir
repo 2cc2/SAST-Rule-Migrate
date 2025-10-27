@@ -1,0 +1,62 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+
+sources:
+  - id: UNSAFE_SQL_FORMATTING
+    match:
+      node: CALL
+      where:
+        - op: regex|null
+          left: methodFullName
+          right: "String.format"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_SQL_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: value
+          right: "...\" + \"..."
+
+barriers: []
+
+propagations:
+  - id: STRING_CONCAT_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMATTING
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(String.format)" } ]
+
+report:
+  message: "Detected a formatted string in a SQL statement."
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id=%s\", input));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```

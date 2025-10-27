@@ -1,0 +1,109 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-file-path"
+  kind: taint
+  severity: ERROR
+  message: "Detected user input controlling a file path. An attacker could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.servlet.http.HttpServletRequest
+      where:
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+        - op: neq
+          left: type
+          right: "(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: FILE_OPERATION
+    match:
+      node: CALL
+      api:
+        type: "java.io.File"
+        method: "<init>"
+      arg_index: 0
+  - id: FILE_READER
+    match:
+      node: CALL
+      api:
+        type: "java.io.FileReader"
+        method: "<init>"
+      arg_index: 0
+  - id: FILE_INPUT_STREAM
+    match:
+      node: CALL
+      api:
+        type: "java.io.FileInputStream"
+        method: "<init>"
+      arg_index: 0
+  - id: PATHS_GET
+    match:
+      node: CALL
+      api:
+        type: "java.nio.file.Paths"
+        method: "get"
+      arg_index: 0
+  - id: RESOURCE_ACCESS
+    match:
+      node: CALL
+      api:
+        type: "java.lang.Class"
+        method: "(getResourceAsStream|getResource)"
+      arg_index: 0
+  - id: CLASS_PATH_RESOURCE
+    match:
+      node: CALL
+      api:
+        type: "org.springframework.core.io.ClassPathResource"
+        method: "<init>"
+      arg_index: 0
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: "org.apache.commons.io.FilenameUtils"
+        method: "getName"
+    effect: neutralize
+    scope: { sinks: [FILE_OPERATION, FILE_READER, FILE_INPUT_STREAM, PATHS_GET, RESOURCE_ACCESS, CLASS_PATH_RESOURCE] }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: FILE_OPERATION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: FILE_READER
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: FILE_INPUT_STREAM
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: PATHS_GET
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: RESOURCE_ACCESS
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: CLASS_PATH_RESOURCE
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches file operation without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new File(request.getParameter(\"filename\"));"
+  negative:
+    - "new File(FilenameUtils.getName(request.getParameter(\"filename\")));"
+```

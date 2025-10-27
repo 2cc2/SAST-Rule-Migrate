@@ -1,0 +1,124 @@
+Timestamp: 2025-10-27 07:22:26
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: WARNING
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, or hardcode the correct host."
+scope:
+  languages: [python]
+  frameworks: [flask]
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "^ROUTEVAR"
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: ".*SCHEME://.*"
+propagations:
+  - id: STRING_FORMAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: FLASK_REQUEST
+    sink: URL_CONSTRUCTION
+    through: [STRING_FORMAT*]
+  - source: ROUTE_PARAM
+    sink: URL_CONSTRUCTION
+    through: [STRING_FORMAT*]
+report:
+  message: "User data flows into the host portion of this manually-constructed URL."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests:
+  positive:
+    - '@app.route("/") \n def index(param): \n     url = "http://" + param'
+  negative:
+    - '@app.route("/") \n def index(param): \n     url = "http://example.com"'
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-14)
+ERROR: could not resolve module semmle.python.security.strings.TaintedStrings (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-53)
+ERROR: could not resolve module semmle.python.web.flask.FlashRequest (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-44)
+ERROR: could not resolve module TaintedString (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,34-47)
+ERROR: could not resolve type MethodAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve type Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-21)
+ERROR: could not resolve module TaintedString (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,41-54)
+ERROR: could not resolve type MethodAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type StringLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-25)
+ERROR: could not resolve module TaintedString (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,23-36)
+ERROR: could not resolve module TaintedString (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,50-63)
+ERROR: could not resolve module TaintedString (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-16)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL. This could allow an attacker 
+ * to send data to their own server, potentially exposing sensitive data such as cookies or authorization 
+ * information sent with this request. They could also probe internal servers or other resources that the server 
+ * running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary 
+ * hosts. Instead, create an allowlist for approved hosts, or hardcode the correct host.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/tainted-url-host
+ * @precision high
+ */
+
+import python
+import semmle.python.security.strings.TaintedStrings
+import semmle.python.web.flask.FlashRequest
+
+class FlaskRequestSource extends TaintedString::Source {
+  FlaskRequestSource() {
+    // Source: Flask request parameters
+    exists(MethodAccess ma |
+      ma.getTarget().hasQualifiedName("flask", "request") and
+      this = ma.getAnArgument()
+    ) or
+    // Source: Route parameters with name matching ROUTEVAR*
+    exists(Parameter p | 
+      p.getName().matches("%ROUTEVAR%") and
+      this = p.getAnAccess()
+    )
+  }
+}
+
+class ManualUrlConstructionSink extends TaintedString::Sink {
+  ManualUrlConstructionSink() {
+    // Sink: Manual URL construction with dynamic host
+    exists(MethodAccess urlConstr |
+      urlConstr.getTarget().hasName("format") and
+      urlConstr.getArgument(0).toString().matches("%://%") and
+      this = urlConstr.getAnArgument()
+    ) or
+    exists(StringLiteral s |
+      s.getStringValue().matches("%://%") and
+      this = s.getAChildExpr()
+    )
+  }
+}
+
+query predicate flows(TaintedString::Source src, TaintedString::Sink sink) {
+  TaintedString::flowPath(src, sink)
+}
+
+from FlaskRequestSource src, ManualUrlConstructionSink sink
+where flows(src, sink)
+select sink, "User data flows into the host portion of this manually-constructed URL.", 
+  src, "User input", sink, "URL construction"
+================================================================================

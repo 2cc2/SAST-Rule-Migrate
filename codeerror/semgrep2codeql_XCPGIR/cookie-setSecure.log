@@ -1,0 +1,929 @@
+Timestamp: 2025-10-23 11:46:06
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: cookie-setSecure
+  kind: pattern
+  severity: WARNING
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: [java]
+  frameworks: ["javax.servlet"]
+sources:
+  - id: COOKIE_SETUP
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: <init> }
+sinks:
+  - id: INSECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: false
+sanitizers:
+  - id: SECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: true
+    effect: neutralize
+flows:
+  - source: COOKIE_SETUP
+    sink: INSECURE_SET_SECURE
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.http.Cookie.setSecure(true))" } ]
+report:
+  message: "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  vulnerability: Insecure Transport
+  owasp:
+    - A03:2017 - Sensitive Data Exposure
+    - A02:2021 - Cryptographic Failures
+  cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,40-63)
+ERROR: predicate 'isSanitizer' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,3-63,4)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,53-54)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,53-54)
+Rule Content:
+/**
+ * @name Insecure Cookie Secure Flag Setting
+ * @description Detects when cookies are created without setting the secure flag to true,
+ *              which ensures cookies are only sent over HTTPS.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-319
+ *       external/owasp/a03:2017
+ *       external/owasp/a02:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.Servlets
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("<init>") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class InsecureSetSecureCall extends DataFlow::Node {
+  InsecureSetSecureCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setSecure") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getArgument(0).(BooleanLiteral).getValue() = false and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SecureSetSecureCall extends DataFlow::Node {
+  SecureSetSecureCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setSecure") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      ma.getArgument(0).(BooleanLiteral).getValue() = true and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class InsecureCookieSecureFlow extends DataFlow::Configuration {
+  InsecureCookieSecureFlow() { this = "InsecureCookieSecureFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof InsecureSetSecureCall
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SecureSetSecureCall
+  }
+
+  override predicate isAdditionalFlowStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Ensure no secure setting between source and sink
+    not exists(SecureSetSecureCall secure |
+      DataFlow::localFlow(node1, secure) and
+      DataFlow::localFlow(secure, node2)
+    )
+  }
+}
+
+from InsecureCookieSecureFlow flow, DataFlow::Node source, DataFlow::Node sink
+where
+  flow.hasFlow(source, sink)
+select sink, "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting",
+  source, "Cookie created here",
+  sink, "Insecure Cookie.setSecure(false) call"
+================================================================================
+Timestamp: 2025-10-23 11:46:54
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: cookie-setSecure
+  kind: pattern
+  severity: WARNING
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: [java]
+  frameworks: ["javax.servlet"]
+sources:
+  - id: COOKIE_SETUP
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: <init> }
+sinks:
+  - id: INSECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: false
+sanitizers:
+  - id: SECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: true
+    effect: neutralize
+flows:
+  - source: COOKIE_SETUP
+    sink: INSECURE_SET_SECURE
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.http.Cookie.setSecure(true))" } ]
+report:
+  message: "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  vulnerability: Insecure Transport
+  owasp:
+    - A03:2017 - Sensitive Data Exposure
+    - A02:2021 - Cryptographic Failures
+  cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,30-51)
+ERROR: asExpr() cannot be resolved for type CookieCreation.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,37-56)
+ERROR: asExpr() cannot be resolved for type InsecureSetSecureCall.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-18)
+ERROR: could not resolve type TaintTracking::Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,40-64)
+ERROR: asExpr() cannot be resolved for type SecureSetSecureSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,12-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,36-64)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,55-56)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,55-56)
+Rule Content:
+/**
+ * @name Insecure Cookie Secure Flag Setting
+ * @description Detects when cookies are created without setting the secure flag to true,
+ *              which ensures cookies are only sent over HTTPS.
+ * @kind path-problem
+ * @problem.severity warning
+ * @precision high
+ * @id java/cookie-setSecure
+ * @tags security
+ *       external/cwe/cwe-319
+ *       external/owasp/a03:2017
+ *       external/owasp/a02:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class CookieCreation extends TaintTracking::Source {
+  CookieCreation() {
+    exists(Method m | 
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class InsecureSetSecureCall extends TaintTracking::Sink {
+  InsecureSetSecureCall() {
+    exists(Method m | 
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(MethodAccess ma |
+        ma.getMethod() = m and
+        ma.getArgument(0).(BooleanLiteral).getValue() = false
+      )
+    )
+  }
+}
+
+class SecureSetSecureSanitizer extends TaintTracking::Sanitizer {
+  SecureSetSecureSanitizer() {
+    exists(Method m |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(MethodAccess ma |
+        ma.getMethod() = m and
+        ma.getArgument(0).(BooleanLiteral).getValue() = true
+      )
+    )
+  }
+}
+
+class InsecureCookieConfig extends TaintTracking::Configuration {
+  InsecureCookieConfig() { this = "InsecureCookieConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof InsecureSetSecureCall
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof SecureSetSecureSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    none() // No additional taint steps needed
+  }
+}
+
+from InsecureCookieConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting",
+  source, "Cookie created here",
+  sink, "Insecure Cookie.setSecure(false) call"
+================================================================================
+Timestamp: 2025-10-23 11:47:46
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: cookie-setSecure
+  kind: pattern
+  severity: WARNING
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: [java]
+  frameworks: ["javax.servlet"]
+sources:
+  - id: COOKIE_SETUP
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: <init> }
+sinks:
+  - id: INSECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: false
+sanitizers:
+  - id: SECURE_SET_SECURE
+    match:
+      node: CALL
+      api: { type: javax.servlet.http.Cookie, method: setSecure }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: true
+    effect: neutralize
+flows:
+  - source: COOKIE_SETUP
+    sink: INSECURE_SET_SECURE
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.http.Cookie.setSecure(true))" } ]
+report:
+  message: "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+metadata:
+  vulnerability: Insecure Transport
+  owasp:
+    - A03:2017 - Sensitive Data Exposure
+    - A02:2021 - Cryptographic Failures
+  cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,40-63)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,57-58)
+ERROR: string is incompatible with boolean (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,57-58)
+Rule Content:
+/**
+ * @name Insecure Cookie Secure Flag Setting
+ * @description Detects when cookies are created without setting the secure flag to true,
+ *              which ensures cookies are only sent over HTTPS.
+ * @kind path-problem
+ * @id java/cookie-setSecure
+ * @problem.severity warning
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-319
+ *       external/owasp/a03:2017
+ *       external/owasp/a02:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(Method m | 
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(Expr e | e.(ConstructorCall).getConstructedType() = m.getDeclaringType())
+    )
+  }
+}
+
+class InsecureSetSecureCall extends DataFlow::Node {
+  InsecureSetSecureCall() {
+    exists(Method m | 
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(Call call |
+        call.getCallee() = m and
+        call.getArgument(0).(BooleanLiteral).getValue() = false
+      )
+    )
+  }
+}
+
+class SecureSetSecureCall extends DataFlow::Node {
+  SecureSetSecureCall() {
+    exists(Method m |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this.asExpr() = any(Call call |
+        call.getCallee() = m and
+        call.getArgument(0).(BooleanLiteral).getValue() = true
+      )
+    )
+  }
+}
+
+class InsecureCookieSecureFlow extends DataFlow::Configuration {
+  InsecureCookieSecureFlow() { this = "InsecureCookieSecureFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof InsecureSetSecureCall
+  }
+}
+
+from InsecureCookieSecureFlow flow, DataFlow::Node source, DataFlow::Node sink
+where 
+  flow.hasFlow(source, sink) and
+  not exists(SecureSetSecureCall secure | flow.hasFlow(source, secure))
+select sink, "Insecure Transport: Cookie.setSecure(false) detected without subsequent secure setting",
+  source, "Cookie created here",
+  sink, "Insecure Cookie.setSecure(false) call"
+================================================================================
+Timestamp: 2025-10-23 12:21:51
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-setSecure"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_CREATION"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "<init>"
+sinks:
+  - id: "INSECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie" 
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+sanitizers:
+  - id: "SECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+barriers: []
+propagations: []
+flows:
+  - source: "COOKIE_CREATION"
+    sink: "INSECURE_SET_SECURE"
+    constraints:
+      path:
+        must_not: ["SECURE_SET_SECURE"]
+report:
+  locations: ["sink"]
+  evidence:
+    capture:
+      - argument: 0
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,36-49)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,30-42)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-45)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,31-43)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,22-33)
+Rule Content:
+/**
+ * @name cookie-setSecure
+ * @description Default session middleware settings: `setSecure` not set to true. 
+ *              This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/cookie-setSecure
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+
+class CookieCreation extends MethodAccess {
+  CookieCreation() {
+    this.getMethod().hasName("<init>") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie")
+  }
+}
+
+class InsecureSetSecure extends MethodAccess {
+  InsecureSetSecure() {
+    this.getMethod().hasName("setSecure") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.getArgument(0).(Literal).getValue().toString() = "false"
+  }
+}
+
+class SecureSetSecure extends MethodAccess {
+  SecureSetSecure() {
+    this.getMethod().hasName("setSecure") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+    this.getArgument(0).(Literal).getValue().toString() = "true"
+  }
+}
+
+class CookieToInsecureFlow extends TaintTracking::Configuration {
+  CookieToInsecureFlow() { this = "CookieToInsecureFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(CookieCreation cc | source.asExpr() = cc)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(InsecureSetSecure iss | sink.asExpr() = iss)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SecureSetSecure sss | sanitizer.asExpr() = sss)
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, CookieToInsecureFlow config
+where config.hasFlow(source, sink)
+select sink, "Default session middleware settings: `setSecure` not set to true.", 
+  source, "Cookie created here"
+================================================================================
+Timestamp: 2025-10-23 12:22:35
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-setSecure"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_CREATION"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "<init>"
+sinks:
+  - id: "INSECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie" 
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+sanitizers:
+  - id: "SECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+barriers: []
+propagations: []
+flows:
+  - source: "COOKIE_CREATION"
+    sink: "INSECURE_SET_SECURE"
+    constraints:
+      path:
+        must_not: ["SECURE_SET_SECURE"]
+report:
+  locations: ["sink"]
+  evidence:
+    capture:
+      - argument: 0
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,16-24)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,16-24)
+ERROR: getArgument(int) cannot be resolved for type InsecureSetSecure.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,18-29)
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,16-24)
+ERROR: getArgument(int) cannot be resolved for type SecureSetSecure.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,18-29)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,36-64)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,33-51)
+Rule Content:
+/**
+ * @name cookie-setSecure
+ * @description Default session middleware settings: `setSecure` not set to true.
+ *              This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/cookie-setSecure
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class CookieCreation extends Expr {
+  CookieCreation() {
+    exists(Method m |
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this = m.getACall()
+    )
+  }
+}
+
+class InsecureSetSecure extends Expr {
+  InsecureSetSecure() {
+    exists(Method m, Literal lit |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this = m.getACall() and
+      lit = this.getArgument(0) and
+      lit.getValue().toString() = "false"
+    )
+  }
+}
+
+class SecureSetSecure extends Expr {
+  SecureSetSecure() {
+    exists(Method m, Literal lit |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      this = m.getACall() and
+      lit = this.getArgument(0) and
+      lit.getValue().toString() = "true"
+    )
+  }
+}
+
+class CookieToInsecureFlow extends TaintTracking::Configuration {
+  CookieToInsecureFlow() { this = "CookieToInsecureFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(CookieCreation cc | source.asExpr() = cc)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(InsecureSetSecure iss | sink.asExpr() = iss)
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(SecureSetSecure sss | node.asExpr() = sss)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, CookieToInsecureFlow config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Default session middleware settings: `setSecure` not set to true.",
+  source.getNode(), "Cookie created here"
+================================================================================
+Timestamp: 2025-10-23 12:23:32
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-setSecure"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_CREATION"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "<init>"
+sinks:
+  - id: "INSECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie" 
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+sanitizers:
+  - id: "SECURE_SET_SECURE"
+    match:
+      node: "CALL"
+      api:
+        type: "javax.servlet.http.Cookie"
+        method: "setSecure"
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+barriers: []
+propagations: []
+flows:
+  - source: "COOKIE_CREATION"
+    sink: "INSECURE_SET_SECURE"
+    constraints:
+      path:
+        must_not: ["SECURE_SET_SECURE"]
+report:
+  locations: ["sink"]
+  evidence:
+    capture:
+      - argument: 0
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTarget() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,9-18)
+ERROR: getTarget() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,9-18)
+ERROR: getTarget() cannot be resolved for type Expr::Call (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,9-18)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,36-64)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,33-51)
+Rule Content:
+/**
+ * @name cookie-setSecure
+ * @description Default session middleware settings: `setSecure` not set to true.
+ *              This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/cookie-setSecure
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(Method m, Call c |
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      c.getTarget() = m and
+      this.asExpr() = c
+    )
+  }
+}
+
+class InsecureSetSecure extends DataFlow::Node {
+  InsecureSetSecure() {
+    exists(Method m, Call c, Literal lit |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      c.getTarget() = m and
+      this.asExpr() = c and
+      lit = c.getArgument(0) and
+      lit.getValue().toString() = "false"
+    )
+  }
+}
+
+class SecureSetSecure extends DataFlow::Node {
+  SecureSetSecure() {
+    exists(Method m, Call c, Literal lit |
+      m.hasName("setSecure") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      c.getTarget() = m and
+      this.asExpr() = c and
+      lit = c.getArgument(0) and
+      lit.getValue().toString() = "true"
+    )
+  }
+}
+
+class CookieToInsecureFlow extends TaintTracking::Configuration {
+  CookieToInsecureFlow() { this = "CookieToInsecureFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof InsecureSetSecure
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof SecureSetSecure
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, CookieToInsecureFlow config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Default session middleware settings: `setSecure` not set to true.",
+  source.getNode(), "Cookie created here"
+================================================================================
+Timestamp: 2025-10-23 18:25:56
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "cookie-setSecure"
+  kind: "pattern"
+  severity: "WARNING"
+  message: "Default session middleware settings: `setSecure` not set to true. This ensures that the cookie is sent only over HTTPS to prevent cross-site scripting attacks."
+scope:
+  languages: ["java"]
+  frameworks: ["*"]
+  env: { os: ["*"], shell: ["*"] }
+sources:
+  - id: "COOKIE_CREATION"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.http.Cookie", method: "<init>" }
+sinks:
+  - id: "INSECURE_SET_FLAG"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.http.Cookie", method: "setSecure" }
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "false"
+sanitizers:
+  - id: "SECURE_SET_FLAG"
+    match:
+      node: "CALL"
+      api: { type: "javax.servlet.http.Cookie", method: "setSecure" }
+      where:
+        - op: "eq"
+          left: "arg[0].value"
+          right: "true"
+    effect: "neutralize"
+flows:
+  - source: "COOKIE_CREATION"
+    sink: "INSECURE_SET_FLAG"
+    constraints:
+      path:
+        must_not: ["SECURE_SET_FLAG"]
+report:
+  message: "Insecure Transport: Cookie.setSecure(false) detected without secure override"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "Cookie c = new Cookie(); c.setSecure(false);"
+  negative:
+    - "Cookie c = new Cookie(); c.setSecure(true);"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type FalseLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,10-22)
+ERROR: could not resolve type TrueLiteral (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,10-21)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,61-69)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,81-89)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,80-91)
+ERROR: getReceiver() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,108-119)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,31-43)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,28-40)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,6-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,35-47)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,14-26)
+Rule Content:
+/**
+ * @name Insecure Cookie.setSecure Usage
+ * @description Detects when Cookie.setSecure(false) is called without being overridden by setSecure(true)
+ * @kind problem
+ * @id java/insecure-cookie-setSecure
+ * @security-severity 7.5
+ * @precision high
+ */
+import java
+
+predicate isCookieConstructor(MethodAccess ma) {
+  ma.getMethod().hasName("<init>") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie")
+}
+
+predicate isSetSecureFalse(MethodAccess ma) {
+  ma.getMethod().hasName("setSecure") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+  exists(FalseLiteral f | ma.getArgument(0) = f)
+}
+
+predicate isSetSecureTrue(MethodAccess ma) {
+  ma.getMethod().hasName("setSecure") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+  exists(TrueLiteral t | ma.getArgument(0) = t)
+}
+
+from MethodAccess cookieCreation, MethodAccess insecureSet, DataFlow::Node src, DataFlow::Node sink
+where
+  isCookieConstructor(cookieCreation) and
+  isSetSecureFalse(insecureSet) and
+  not exists(MethodAccess secureSet | isSetSecureTrue(secureSet) and secureSet.getReceiver() = insecureSet.getReceiver()) and
+  src.asExpr() = cookieCreation and
+  sink.asExpr() = insecureSet and
+  DataFlow::localFlow(src, sink)
+select insecureSet, "Insecure Transport: Cookie.setSecure(false) detected without secure override. Cookies should be sent only over HTTPS to prevent cross-site scripting attacks."
+================================================================================

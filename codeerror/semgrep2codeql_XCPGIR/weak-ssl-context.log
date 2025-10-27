@@ -1,0 +1,83 @@
+Timestamp: 2025-10-23 13:59:47
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: weak-ssl-context
+  kind: pattern
+  severity: WARNING
+  message: "An insecure SSL context was detected. TLS versions 1.0, 1.1, and all SSL versions are considered weak encryption and are deprecated. Use SSLContext.getInstance(\"TLSv1.2\") for the best security."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources: []
+sinks:
+  - id: INSECURE_SSL_CONTEXT
+    match:
+      node: CALL
+      api: { package: javax.net.ssl, type: SSLContext, method: getInstance }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "TLSv1.2"
+        - op: neq
+          left: arg[0].value
+          right: "TLSv1.3"
+sanitizers: []
+barriers: []
+propagations: []
+flows:
+  - source: INSECURE_SSL_CONTEXT
+    sink: INSECURE_SSL_CONTEXT
+    constraints:
+      path:
+        must: [ { pattern: "CALL(javax.net.ssl.SSLContext.getInstance)" } ]
+report:
+  message: "Insecure SSL context detected with ${sink.arg0.preview}"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "SSLContext.getInstance(\"SSL\")"
+    - "SSLContext.getInstance(\"TLSv1.1\")"
+  negative:
+    - "SSLContext.getInstance(\"TLSv1.2\")"
+    - "SSLContext.getInstance(\"TLSv1.3\")"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getStringValue() cannot be resolved for type Expr::Literal (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,30-44)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,6-18)
+Rule Content:
+/**
+ * @name Weak SSL Context
+ * @description Detects insecure SSL context usage. TLS versions 1.0, 1.1, and all SSL versions 
+ *              are considered weak encryption and are deprecated.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/weak-ssl-context
+ * @tags security
+ *       deprecated
+ */
+
+import java
+
+predicate isInsecureSSLProtocol(string protocol) {
+  protocol = "TLS" or
+  protocol = "SSLv3" or
+  protocol = "SSLv2" or
+  protocol = "SSLv3" or
+  protocol = "TLSv1" or
+  protocol = "TLSv1.1"
+}
+
+from MethodAccess ma, Literal arg0
+where
+  ma.getMethod().hasName("getInstance") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.net.ssl", "SSLContext") and
+  arg0 = ma.getArgument(0) and
+  isInsecureSSLProtocol(arg0.getStringValue())
+select ma, 
+  "An insecure SSL context was detected. TLS versions 1.0, 1.1, and all SSL versions are deprecated. Use SSLContext.getInstance(\"TLSv1.2\") or \"TLSv1.3\" for better security."
+================================================================================

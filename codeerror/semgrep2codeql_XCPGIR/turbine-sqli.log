@@ -1,0 +1,141 @@
+Timestamp: 2025-10-23 14:50:14
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+scope:
+  languages: [java]
+  frameworks: ["turbine"]
+
+sources:
+  - id: UNSAFE_SQL_FORMATTING
+    match:
+      node: CALL
+      where:
+        - op: regex|null
+          left: methodFullName
+          right: "String.format"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: "BasePeer|GroupPeer", method: executeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_SQL_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: value
+          right: "...\" + \"..."
+
+barriers: []
+
+propagations:
+  - id: STRING_CONCAT_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMATTING
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(String.format)" } ]
+
+report:
+  message: "Detected a formatted string in a SQL statement."
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id=%s\", input));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Turbine (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-43)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,63-81)
+Rule Content:
+/**
+ * @name Turbine SQL Injection Vulnerability
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @id java/turbine-sqli
+ * @problem.severity warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+import semmle.code.java.frameworks.Turbine
+
+class TurbineSqlFormatter extends DataFlow::Node {
+  TurbineSqlFormatter() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "format" and
+      ma.getMethod().getDeclaringType().getName() = "String" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class TurbineSqlExecution extends DataFlow::Node {
+  TurbineSqlExecution() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "executeQuery" and
+        (
+          ma.getMethod().getDeclaringType().getName() = "BasePeer" or
+          ma.getMethod().getDeclaringType().getName() = "GroupPeer"
+        )
+      ) and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TurbineSqlTaintConfig extends TaintTracking::Configuration {
+  TurbineSqlTaintConfig() { this = "TurbineSqlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof TurbineSqlFormatter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof TurbineSqlExecution
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral lit |
+      lit.getValue().regexpMatch(".*\" *\\+ *\"+.*") and
+      sanitizer.asExpr() = lit
+    )
+  }
+}
+
+from TurbineSqlTaintConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables " +
+  "in the SQL statement are not properly sanitized. Use prepared statements instead.",
+  source, sink,
+  "Potential SQL injection vulnerability"
+================================================================================

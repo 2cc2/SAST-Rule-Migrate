@@ -1,0 +1,951 @@
+Timestamp: 2025-10-23 16:02:42
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-url-host"
+  kind: taint
+  severity: ERROR
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: WEB_REQUEST_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: type
+          right: "^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))"
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: constructor }
+      arg_index: 0
+  - id: STRING_CONCAT_URL
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\"http(s?)://%(v|s|q).*\"(\\s*\\+|\\.concat|\\.append|\\.format)"
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->return
+    kind: taint
+
+flows:
+  - source: WEB_REQUEST_PARAM
+    sink: URL_CONSTRUCTION
+    through: [PARAM_TO_ARG*]
+  - source: WEB_REQUEST_PARAM
+    sink: STRING_CONCAT_URL
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potentially tainted URL host construction detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,32-39)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,1-2)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-27)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,3-22)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: Expected a predicate without result but found 'getName', which is a predicate with result type 'string'. (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,7-31)
+WARNING: unused class 'WebRequestParameterSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,7-32)
+WARNING: unused class 'UrlConstructionSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,7-26)
+WARNING: unused class 'StringConcatUrlSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,7-26)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL. This could allow an attacker to 
+ *   send data to their own server, potentially exposing sensitive data such as cookies or authorization information 
+ *   sent with this request. They could also probe internal servers or other resources that the server running this 
+ *   code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, 
+ *   create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect 
+ *   the path or parameters.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.StringFormat
+
+class WebRequestParameterSource extends DataFlow::Node {
+  WebRequestParameterSource() {
+    exists(MethodParameter mp |
+      mp = this.asParameter() and
+      not mp.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      mp.getAnAnnotation().toString().matches("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)")
+    )
+  }
+}
+
+class UrlConstructionSink extends DataFlow::Node {
+  UrlConstructionSink() {
+    exists(ConstructorCall cc |
+      cc = this.asExpr() and
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      cc.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcatUrlSink extends DataFlow::Node {
+  StringConcatUrlSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() matches "concat|append|format" and
+      ma.getMethod().getDeclaringType() instanceof TypeString and
+      ma.getArgument(_) = this.asExpr() and
+      ma.getQualifier().toString().matches("\"http(s?)://%(v|s|q).*\"")
+    ) or
+    exists(BinaryOperation bo |
+      bo.getOperator() = BinaryOperation::PLUS and
+      (bo.getLeftOperand().toString().matches("\"http(s?)://%(v|s|q).*\"") or 
+       bo.getRightOperand().toString().matches("\"http(s?)://%(v|s|q).*\"")) and
+      this.asExpr() = bo
+    )
+  }
+}
+
+class TaintedUrlHostConfiguration extends TaintTracking::Configuration {
+  TaintedUrlHostConfiguration() { this = "TaintedUrlHost" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof WebRequestParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof UrlConstructionSink or
+    sink instanceof StringConcatUrlSink
+  }
+  
+  predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Handle parameter passing (arg->param)
+    exists(Method m, Parameter p, DataFlow::Argument arg |
+      m.getAParameter() = p and
+      arg.getCallable() = m and
+      arg.(DataFlow::ParameterNode).getParameter() = p and
+      node1.asArgument() = arg and
+      node2.asParameter() = p
+    )
+    or
+    // Handle string concatenation operations
+    exists(BinaryOperation bo |
+      bo.getOperator() = BinaryOperation::PLUS and
+      (bo.getLeftOperand() = node1.asExpr() or bo.getRightOperand() = node1.asExpr()) and
+      node2.asExpr() = bo
+    )
+    or
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or 
+       ma.getMethod().getName() = "append" or
+       ma.getMethod().getName() = "format") and
+      ma.getMethod().getDeclaringType() instanceof TypeString and
+      (ma.getAnArgument() = node1.asExpr() or ma.getQualifier() = node1.asExpr()) and
+      node2.asExpr() = ma
+    )
+  }
+}
+
+from TaintedUrlHostConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potentially tainted URL host construction detected. User input '$@' flows into URL host construction.",
+  source.getNode(), "user input"
+================================================================================
+Timestamp: 2025-10-23 16:04:16
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-url-host"
+  kind: taint
+  severity: ERROR
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: WEB_REQUEST_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: type
+          right: "^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))"
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: constructor }
+      arg_index: 0
+  - id: STRING_CONCAT_URL
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\"http(s?)://%(v|s|q).*\"(\\s*\\+|\\.concat|\\.append|\\.format)"
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->return
+    kind: taint
+
+flows:
+  - source: WEB_REQUEST_PARAM
+    sink: URL_CONSTRUCTION
+    through: [PARAM_TO_ARG*]
+  - source: WEB_REQUEST_PARAM
+    sink: STRING_CONCAT_URL
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potentially tainted URL host construction detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryOperation::PLUS and', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,26-41)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,1-2)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-27)
+ERROR: could not resolve type BinaryOperation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,12-27)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+WARNING: unused class 'WebRequestParameterSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,7-32)
+WARNING: unused class 'UrlConstructionSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,7-26)
+WARNING: unused class 'StringConcatUrlSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,7-26)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL. This could allow an attacker to 
+ *   send data to their own server, potentially exposing sensitive data such as cookies or authorization information 
+ *   sent with this request. They could also probe internal servers or other resources that the server running this 
+ *   code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, 
+ *   create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect 
+ *   the path or parameters.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.StringFormat
+
+class WebRequestParameterSource extends DataFlow::Node {
+  WebRequestParameterSource() {
+    exists(MethodParameter mp |
+      mp = this.asParameter() and
+      not mp.getType().toString().regexpMatch("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      exists(Annotation a | 
+        a = mp.getAnAnnotation() and
+        a.getType().toString().regexpMatch("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)")
+      )
+    )
+  }
+}
+
+class UrlConstructionSink extends DataFlow::Node {
+  UrlConstructionSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class StringConcatUrlSink extends DataFlow::Node {
+  StringConcatUrlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("concat") or 
+       ma.getMethod().hasName("append") or
+       ma.getMethod().hasName("format")) and
+      ma.getMethod().getDeclaringType() instanceof TypeString and
+      (ma.getAnArgument() = this.asExpr() or ma.getQualifier() = this.asExpr()) and
+      ma.getQualifier().toString().regexpMatch("\"http(s?)://%(v|s|q).*\"")
+    )
+    or
+    exists(BinaryOperation bo |
+      bo.getOperator() = BinaryOperation::PLUS and
+      (bo.getLeftOperand().toString().regexpMatch("\"http(s?)://%(v|s|q).*\"") or 
+       bo.getRightOperand().toString().regexpMatch("\"http(s?)://%(v|s|q).*\"")) and
+      this.asExpr() = bo
+    )
+  }
+}
+
+class TaintedUrlHostConfiguration extends TaintTracking::Configuration {
+  TaintedUrlHostConfiguration() { this = "TaintedUrlHost" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof WebRequestParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof UrlConstructionSink or
+    sink instanceof StringConcatUrlSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Handle parameter passing
+    exists(Method m, Parameter p, DataFlow::ParameterNode paramNode |
+      paramNode.getParameter() = p and
+      p = m.getAParameter() and
+      exists(DataFlow::ArgumentNode argNode |
+        argNode.getCallable() = m and
+        node1.asExpr() = argNode.asExpr() and
+        node2.asExpr() = paramNode.asExpr()
+      )
+    )
+    or
+    // Handle string concatenation operations
+    exists(BinaryOperation bo |
+      bo.getOperator() = BinaryOperation::PLUS and
+      (bo.getLeftOperand() = node1.asExpr() or bo.getRightOperand() = node1.asExpr()) and
+      node2.asExpr() = bo
+    )
+    or
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("concat") or 
+       ma.getMethod().hasName("append") or
+       ma.getMethod().hasName("format")) and
+      ma.getMethod().getDeclaringType() instanceof TypeString and
+      (ma.getAnArgument() = node1.asExpr() or ma.getQualifier() = node1.asExpr()) and
+      node2.asExpr() = ma
+    )
+  }
+}
+
+from TaintedUrlHostConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Potentially tainted URL host construction detected. User input '$@' flows into URL host construction.",
+  source.getNode(), "user input"
+================================================================================
+Timestamp: 2025-10-23 16:05:31
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-url-host"
+  kind: taint
+  severity: ERROR
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters."
+scope:
+  languages: [java]
+  frameworks: ["spring"]
+  
+sources:
+  - id: WEB_REQUEST_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: type
+          right: "^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))"
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: constructor }
+      arg_index: 0
+  - id: STRING_CONCAT_URL
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: "\"http(s?)://%(v|s|q).*\"(\\s*\\+|\\.concat|\\.append|\\.format)"
+
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->return
+    kind: taint
+
+flows:
+  - source: WEB_REQUEST_PARAM
+    sink: URL_CONSTRUCTION
+    through: [PARAM_TO_ARG*]
+  - source: WEB_REQUEST_PARAM
+    sink: STRING_CONCAT_URL
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potentially tainted URL host construction detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,3-11)
+ERROR: missing one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,35-36)
+ERROR: missing one of: '}' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,12-21)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+', '|' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:86,1-2)
+ERROR: could not resolve type MethodParam (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,12-23)
+ERROR: could not resolve type ExprCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-20)
+ERROR: could not resolve type TaintedUrlHostConfiguration (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,8-35)
+ERROR: could not resolve type Param (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,22-27)
+ERROR: getParameter() cannot be resolved for type DataFlowNodes::Public::ParameterNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,12-24)
+ERROR: could not resolve type DataFlow::ArgumentNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:72,16-38)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: unknown annotation 'attach' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,1-7)
+ERROR: could not resolve variable override (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,3-11)
+WARNING: unused predicate 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,22-30)
+WARNING: unused predicate 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,22-28)
+WARNING: unused predicate 'isAdditionalTaintStep' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,22-43)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL. This could allow an attacker to
+ *   send data to their own server, potentially exposing sensitive data such as cookies or authorization information
+ *   sent with this request. They could also probe internal servers or other resources that the server running this
+ *   code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead,
+ *   create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect
+ *   the path or parameters.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.StringFormat
+
+class WebRequestParameterSource extends DataFlow::Node {
+  WebRequestParameterSource() {
+    exists(MethodParam mp |
+      mp = this.asParameter() and
+      not mp.getType().toString().regexpMatch("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      exists(Annotation a |
+        a = mp.getAnAnnotation() and
+        a.getType().toString().regexpMatch("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)")
+      )
+    )
+  }
+}
+
+class UrlSink extends DataFlow::Node {
+  UrlSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class UrlStringConcatSink extends DataFlow::Node {
+  UrlStringConcatSink() {
+    exists(ExprCall ec |
+      (ec.getCallee().hasName("concat") or
+       ec.getCallee().hasName("append") or
+       ec.getCallee().hasName("format")) and
+      ec.getCallee().getDeclaringType() instanceof TypeString and
+      (ec.getArgument(_) = this.asExpr() or ec.getQualifier() = this.asExpr()) and
+      ec.getQualifier().toString().regexpMatch("http(s?)://.*")
+    )
+  }
+}
+
+attach TaintedUrlHostConfiguration() {
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof WebRequestParameterSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof UrlSink or
+    sink instanceof UrlStringConcatSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Parameter propagation
+    exists(Method m, Param p |
+      p = m.getAParameter() and
+      exists(DataFlow::ParameterNode pn |
+        pn.getParameter() = p and
+        exists(DataFlow::ArgumentNode an |
+          an.getCallable() = m and
+          node1.asExpr() = an.asExpr() and
+          node2.asExpr() = pn.asExpr()
+        )
+      )
+    )
+    or
+    // String concatenation
+    exists(AddExpr add |
+      (add.getLeftOperand() = node1.asExpr() or add.getRightOperand() = node1.asExpr()) and
+      node2.asExpr() = add
+    )
+  }
+}
+
+from TaintedUrlHostConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(),
+  "Potentially tainted URL host construction detected. User input '$@' flows into URL host construction.",
+  source.getNode(), "user input"
+================================================================================
+Timestamp: 2025-10-23 20:48:40
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: java.tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+        - op: in
+          left: annotation.type
+          right: [RequestBody, PathVariable, RequestParam, RequestHeader, CookieValue, ModelAttribute]
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: java.net.URL.<init>
+        - arg_index: 0
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: http(s?)://%(v|s|q).*
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [STRING_CONCAT*]
+report:
+  message: Found potential SSRF vulnerability via tainted URL host construction
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - new URL(userControlledHostParam)
+  negative:
+    - new URL("https://trusted.example.com")
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,25-46)
+ERROR: getAnnotatedElement() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,32-51)
+ERROR: asVariable() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,18-28)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,31-50)
+ERROR: getConstructor() cannot be resolved for type Expr::MethodCall (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,14-28)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,3-12)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,7-13)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,3-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,16-28)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,31-37)
+ERROR: 'result' cannot be used in this context (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,16-22)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,47-75)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,33-51)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of URL construction.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInput extends TaintTracking::Source {
+  UserInput() {
+    exists(Parameter p |
+      p.getType().toString().matches("^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))") and
+      (
+        exists(Annotation anno |
+          anno.getType().getName() in ["RequestBody", "PathVariable", "RequestParam", 
+                                      "RequestHeader", "CookieValue", "ModelAttribute"] and
+          anno.getTarget() = p.getAnnotatedElement()
+        )
+      ) and
+      result = p.asVariable()
+    )
+  }
+}
+
+class URLConstruction extends TaintTracking::Sink {
+  URLConstruction() {
+    exists(Constructor urlConst |
+      urlConst.getDeclaringType().hasQualifiedName("java.net", "URL") and
+      (
+        // Match URL constructor calls
+        exists(MethodAccess ma |
+          ma.getConstructor() = urlConst and
+          ma.getArgument(0) = result.asExpr()
+        )
+        or
+        // Match URL string literals with placeholders
+        exists(StringLiteral sl |
+          sl.getValue().regexpMatch("http(s?)://%(v|s|q).*") and
+          sl = result.asExpr()
+        )
+      )
+    )
+  }
+}
+
+class TaintedUrlHostFlowConfiguration extends TaintTracking::Configuration {
+  TaintedUrlHostFlowConfiguration() { this = "TaintedUrlHostFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof URLConstruction }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      // Handle string concatenation
+      ma.getMethod().getName().matches("concat") and
+      pred.asExpr() = ma.getArgument(0) and
+      succ.asExpr() = ma
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedUrlHostFlowConfiguration conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User data flows into the host portion of this manually-constructed URL. This could allow SSRF attacks."
+================================================================================
+Timestamp: 2025-10-23 20:50:00
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: java.tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+        - op: in
+          left: annotation.type
+          right: [RequestBody, PathVariable, RequestParam, RequestHeader, CookieValue, ModelAttribute]
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: java.net.URL.<init>
+        - arg_index: 0
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: http(s?)://%(v|s|q).*
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [STRING_CONCAT*]
+report:
+  message: Found potential SSRF vulnerability via tainted URL host construction
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - new URL(userControlledHostParam)
+  negative:
+    - new URL("https://trusted.example.com")
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,7-41)
+ERROR: token recognition error at: '^' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,39-40)
+ERROR: missing one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,38-39)
+ERROR: token recognition error at: '?' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,41-42)
+ERROR: token recognition error at: '!(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,42-43)
+ERROR: no viable parse for input '(Integer|', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,40-41)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,1-2)
+ERROR: matches() cannot be resolved for type string (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,30-37)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,3-12)
+WARNING: unused class 'UserInput' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,7-16)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of URL construction
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.SpringController
+import DataFlow::PathGraph
+
+class UserInput extends DataFlow::Node {
+  UserInput() {
+    exists(Method m, Parameter p |
+      m instanceof SpringControllerMethod and
+      p = m.getAParameter() and
+      p.getType().toString().matches(/^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))/) and
+      (
+        exists(Annotation a |
+          a.getType().getName().matches("RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute") and
+          a.getAnnotatedElement() = p.getAnnotatedElement()
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class URLConstruction extends DataFlow::Node {
+  URLConstruction() {
+    exists(ConstructorCall cc |
+      cc.getConstructor().getDeclaringType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+    or
+    exists(StringLiteral sl |
+      sl.getValue().regexpMatch("http(s?)://%(v|s|q).*") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class TaintedUrlHostFlow extends TaintTracking::Configuration {
+  TaintedUrlHostFlow() { this = "TaintedUrlHostFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof URLConstruction }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryExpr be |
+      be.getOperator() = BinaryOp.PLUS and
+      (be.getLeftOperand() = pred.asExpr() or be.getRightOperand() = pred.asExpr()) and
+      succ.asExpr() = be
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedUrlHostFlow conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User data flows into the host portion of this manually-constructed URL. This could allow SSRF attacks."
+================================================================================
+Timestamp: 2025-10-23 20:51:01
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: java.tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: type
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+        - op: in
+          left: annotation.type
+          right: [RequestBody, PathVariable, RequestParam, RequestHeader, CookieValue, ModelAttribute]
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: java.net.URL.<init>
+        - arg_index: 0
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: http(s?)://%(v|s|q).*
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [STRING_CONCAT*]
+report:
+  message: Found potential SSRF vulnerability via tainted URL host construction
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - new URL(userControlledHostParam)
+  negative:
+    - new URL("https://trusted.example.com")
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'PLUS' expecting one of: 'super' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,35-39)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,1-2)
+ERROR: could not resolve type SpringControllerParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,47-72)
+ERROR: could not resolve type NewExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-19)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,10-21)
+ERROR: getAnnotatedElement() cannot be resolved for type Variable::Parameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,7-26)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,34-62)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,59-63)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,80-84)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of URL construction
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.spring.SpringController
+import DataFlow::PathGraph
+
+predicate isSourceParameter(Parameter p) {
+  not p.getType() instanceof PrimitiveType and
+  exists(Annotation a |
+    a.getType().getName() in ["RequestBody", "PathVariable", "RequestParam", 
+                             "RequestHeader", "CookieValue", "ModelAttribute"] and
+    p.getAnnotatedElement() = a.getAnnotatedElement()
+  )
+}
+
+class UserInput extends DataFlow::Node {
+  UserInput() { this.asParameter() instanceof SpringControllerParameter and isSourceParameter(this.asParameter()) }
+}
+
+class URLConstruction extends DataFlow::Node {
+  URLConstruction() {
+    exists(NewExpr ne |
+      ne.getConstructor().getDeclaringType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = ne.getArgument(0)
+    )
+    or
+    exists(StringLiteral sl |
+      sl.getValue().regexpMatch("http(s?)://%(v|s|q).*") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class TaintedUrlHostFlow extends TaintTracking::Configuration {
+  TaintedUrlHostFlow() { this = "TaintedUrlHostFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof URLConstruction }
+  
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryExpr be |
+      be.getOperator() = BinaryOp.PLUS and
+      (be.getLeftOperand() = pred.asExpr() or be.getRightOperand() = pred.asExpr()) and
+      succ.asExpr() = be
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedUrlHostFlow conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "User data flows into the host portion of this manually-constructed URL. This could allow SSRF attacks."
+================================================================================

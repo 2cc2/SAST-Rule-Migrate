@@ -1,0 +1,66 @@
+/**
+ * @name Cookie missing HttpOnly flag
+ * @description A cookie was detected without setting the 'HttpOnly' flag. 
+ *              The 'HttpOnly' flag for cookies instructs the browser to forbid 
+ *              client-side scripts from reading the cookie. 
+ *              Set the 'HttpOnly' flag by calling 'cookie.setHttpOnly(true);'
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/cookie-missing-httponly
+ * @tags security
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class CookieCreation extends DataFlow::Node {
+  CookieCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+      not ma.getMethod().getName() = "setHttpOnly" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class HttpOnlyCheck extends DataFlow::Node {
+  HttpOnlyCheck() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "setHttpOnly" and
+      ma.getArgument(0).(Literal).getValue().toInt() = 1 and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class CookieSink extends DataFlow::Node {
+  CookieSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      ma.getMethod().getName() = "addCookie" and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "CookieMissingHttpOnlyConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof CookieCreation
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CookieSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof HttpOnlyCheck
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Found cookie without HttpOnly flag", source, sink,
+  "A cookie was detected without the 'HttpOnly' flag."

@@ -1,0 +1,50 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: blowfish-insufficient-key-size
+  kind: value
+  severity: WARNING
+  message: "Using less than 128 bits for Blowfish is considered insecure. Use 128 bits or more, or switch to use AES instead."
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: BLOWFISH_KEYGEN
+    match:
+      node: CALL
+      api: { type: javax.crypto.KeyGenerator, method: getInstance }
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "Blowfish"
+sinks:
+  - id: INSECURE_KEY_SIZE
+    match:
+      node: CALL
+      api: { type: javax.crypto.KeyGenerator, method: init }
+      arg_index: 0
+      where:
+        - op: lt
+          left: arg[0].value
+          right: 128
+propagations:
+  - id: KEYGEN_TO_INIT
+    edge: arg->param
+    kind: value
+flows:
+  - source: BLOWFISH_KEYGEN
+    sink: INSECURE_KEY_SIZE
+    through: [KEYGEN_TO_INIT]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(javax.crypto.KeyGenerator.init)" } ]
+report:
+  message: "Insecure Blowfish key size detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "KeyGenerator.getInstance(\"Blowfish\").init(64);"
+  negative:
+    - "KeyGenerator.getInstance(\"Blowfish\").init(256);"
+```

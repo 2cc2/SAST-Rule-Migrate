@@ -1,0 +1,933 @@
+Timestamp: 2025-10-23 15:04:46
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { method: createQuery|createNativeQuery }
+      arg_index: 0
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+barriers: []
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: STRING_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+report:
+  message: "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "entityManager.createNativeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", input))"
+    - "entityManager.createQuery(sql1 + sql2)"
+  negative:
+    - "entityManager.createQuery(\"SELECT * FROM users\")"
+    - "entityManager.createNativeQuery(connection.prepareStatement(\"SELECT * FROM users WHERE id = ?\"))"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JPA (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: getChild(int) cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,33-41)
+ERROR: could not resolve type VariableAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,46-60)
+ERROR: getChild(int) cannot be resolved for type Expr::AddExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,33-41)
+ERROR: could not resolve type VariableAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,46-60)
+ERROR: getLhs() cannot be resolved for type Expr::Assignment (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,14-20)
+ERROR: could not resolve type Sanitizer (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,42-51)
+ERROR: asExpr() cannot be resolved for type PreparedStatementSanitizer.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-18)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:73,60-78)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JPA
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(Assignment assign |
+      assign.getRhs().(AddExpr).getChild(0).(VariableAccess).getName().regexpMatch(".*\\$X.*") and
+      assign.getRhs().(AddExpr).getChild(1).(VariableAccess).getName().regexpMatch(".*\\$Y.*") and
+      assign.getLhs() = this.asExpr()
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName().matches("createQuery") or 
+       ma.getMethod().getName().matches("createNativeQuery")) and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends Sanitizer {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName().matches("prepareStatement") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+}
+
+from JpaSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'.",
+  source, sink, "Potential JPA SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-23 15:05:30
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { method: createQuery|createNativeQuery }
+      arg_index: 0
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+barriers: []
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: STRING_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+report:
+  message: "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "entityManager.createNativeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", input))"
+    - "entityManager.createQuery(sql1 + sql2)"
+  negative:
+    - "entityManager.createQuery(\"SELECT * FROM users\")"
+    - "entityManager.createNativeQuery(connection.prepareStatement(\"SELECT * FROM users WHERE id = ?\"))"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JPA (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: getLeftOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,18-32)
+ERROR: getRightOperand() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,19-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,22-34)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,22-34)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:71,60-78)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JPA
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(Expr add, Expr left, Expr right |
+      add instanceof AddExpr and
+      left = add.getLeftOperand() and
+      right = add.getRightOperand() and
+      this.asExpr().getParent() instanceof Assignment and
+      this.asExpr() = add
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(Method m, MethodAccess ma |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getMethod() = m and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(Method m, MethodAccess ma |
+      (m.hasName("createQuery") or m.hasName("createNativeQuery")) and
+      ma.getMethod() = m and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("prepareStatement") and
+      m.getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      ma.getMethod() = m and
+      sanitizer.asExpr() = ma
+    )
+  }
+}
+
+from JpaSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'.",
+  source, sink, "Potential JPA SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-23 15:06:28
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String \\$SQL = \\$X \\+ \\$Y"
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { method: createQuery|createNativeQuery }
+      arg_index: 0
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+barriers: []
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: STRING_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+report:
+  message: "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "entityManager.createNativeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", input))"
+    - "entityManager.createQuery(sql1 + sql2)"
+  negative:
+    - "entityManager.createQuery(\"SELECT * FROM users\")"
+    - "entityManager.createNativeQuery(connection.prepareStatement(\"SELECT * FROM users WHERE id = ?\"))"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.jpa.Jpa (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: getLhs() cannot be resolved for type Expr::Assignment (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,14-20)
+ERROR: could not resolve type JpaQueryCreationMethodAccess (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,12-40)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,33-51)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,60-78)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.jpa.Jpa
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(Assignment assign, Variable lhsVar, Expr rhs |
+      rhs instanceof AddExpr and
+      assign.getLhs() = lhsVar.getAnAccess() and
+      assign.getRhs() = rhs and
+      lhsVar.getName().matches("SQL") and
+      this.asExpr() = rhs
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodAccess formatAccess |
+      formatAccess.getMethod().hasName("format") and
+      formatAccess.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = formatAccess
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(JpaQueryCreationMethodAccess qcma |
+      (qcma.getMethodName() = "createQuery" or qcma.getMethodName() = "createNativeQuery") and
+      this.asExpr() = qcma.getQueryArgument()
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodAccess prepStmt |
+      prepStmt.getMethod().hasName("prepareStatement") and
+      prepStmt.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      sanitizer.asExpr() = prepStmt
+    )
+  }
+}
+
+from JpaSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Use prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'.",
+  source, sink, "Potential JPA SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-23 20:06:11
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jpa-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+  
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: concat }
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+
+sinks:
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+  - id: NATIVE_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_CONCAT
+    match: { node: LITERAL }
+    effect: neutralize
+    scope: { sources: [STRING_CONCAT] }
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_CONCAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" } ]
+
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(request.getParameter(\"query\"))"
+    - "em.createNativeQuery(String.format(\"SELECT * FROM %s\", table))"
+  negative:
+    - "em.createQuery(\"SELECT * FROM table\")"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jpa.Jpa (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,8-43)
+ERROR: could not resolve type LiteralType (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,31-42)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,37-65)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,22-31)
+ERROR: test is always false, as ReturnStmt is incompatible with the expression type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,30-40)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:67,63-81)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.jpa.Jpa
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "concat" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "format" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlQuerySink extends DataFlow::Node {
+  SqlQuerySink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "createQuery" or ma.getMethod().getName() = "createNativeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence", "EntityManager") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlQuerySink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof LiteralType
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    node.asExpr() instanceof ReturnStmt
+  }
+}
+
+from JpaSqlInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential SQL injection vulnerability due to string concatenation in JPA query"
+================================================================================
+Timestamp: 2025-10-23 20:07:25
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jpa-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+  
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: concat }
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+
+sinks:
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+  - id: NATIVE_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_CONCAT
+    match: { node: LITERAL }
+    effect: neutralize
+    scope: { sources: [STRING_CONCAT] }
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_CONCAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" } ]
+
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(request.getParameter(\"query\"))"
+    - "em.createNativeQuery(String.format(\"SELECT * FROM %s\", table))"
+  negative:
+    - "em.createQuery(\"SELECT * FROM table\")"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type LiteralType (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,31-42)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:20,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,37-65)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,22-31)
+ERROR: test is always false, as ReturnStmt is incompatible with the expression type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,30-40)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,63-81)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(Method m | 
+      m.hasName("concat") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(_)
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(Method m |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(_)
+    )
+  }
+}
+
+class SqlQuerySink extends DataFlow::Node {
+  SqlQuerySink() {
+    exists(Method m | 
+      (m.hasName("createQuery") or m.hasName("createNativeQuery")) and
+      m.getDeclaringType().hasQualifiedName("javax.persistence", "EntityManager") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlQuerySink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof LiteralType
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    node.asExpr() instanceof ReturnStmt
+  }
+}
+
+from JpaSqlInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential SQL injection vulnerability due to string concatenation in JPA query"
+================================================================================
+Timestamp: 2025-10-23 20:08:41
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jpa-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: ["jpa"]
+  
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: concat }
+  - id: STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+
+sinks:
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+  - id: NATIVE_QUERY
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_CONCAT
+    match: { node: LITERAL }
+    effect: neutralize
+    scope: { sources: [STRING_CONCAT] }
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: STRING_CONCAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_CONCAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: SQL_QUERY
+    through: [STRING_PROPAGATION*]
+  - source: STRING_FORMAT
+    sink: NATIVE_QUERY
+    through: [STRING_PROPAGATION*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL" } ]
+
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(request.getParameter(\"query\"))"
+    - "em.createNativeQuery(String.format(\"SELECT * FROM %s\", table))"
+  negative:
+    - "em.createQuery(\"SELECT * FROM table\")"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: isStringLiteralType() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,20-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,33-51)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized. Use prepared 
+ *              statements (java.sql.PreparedStatement) instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jpa-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("concat") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlQuerySink extends DataFlow::Node {
+  SqlQuerySink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("createQuery") or ma.getMethod().hasName("createNativeQuery")) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.persistence", "EntityManager") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JpaSqlInjectionConfig extends TaintTracking::Configuration {
+  JpaSqlInjectionConfig() { this = "JpaSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringConcatSource or
+    source instanceof StringFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlQuerySink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType().isStringLiteralType()
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JpaSqlInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, sink, "Potential SQL injection vulnerability due to string concatenation in JPA query"
+================================================================================

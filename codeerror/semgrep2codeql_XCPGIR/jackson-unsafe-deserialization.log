@@ -1,0 +1,955 @@
+Timestamp: 2025-10-23 12:46:25
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control the JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: [jackson]
+
+sources:
+  - id: UNSAFE_JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+  - id: DEFAULT_TYPING_ENABLED
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: enableDefaultTyping }
+  - id: DANGEROUS_TYPE_ANNOTATION
+    match:
+      node: ANNOTATION
+      type: { name: JsonTypeInfo }
+      where:
+        - op: regex
+          left: value
+          right: "use.*Id\\.CLASS"
+
+propagations:
+  - id: OBJECT_MAPPER_INIT
+    edge: field-store
+    kind: taint
+  - id: METHOD_CALL
+    edge: arg->param
+    kind: taint
+
+sanitizers:
+  - id: SAFE_TYPE
+    match:
+      node: TYPE_DECL
+      where:
+        - op: not_regex
+          left: name
+          right: "Object|Serializable|Comparable"
+    effect: neutralize
+
+flows:
+  - source: UNSAFE_JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    through: [METHOD_CALL*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(com.fasterxml.jackson.databind.ObjectMapper.enableDefaultTyping)" } ]
+  - source: DANGEROUS_TYPE_ANNOTATION
+    sink: UNSAFE_DESERIALIZATION
+    through: [OBJECT_MAPPER_INIT*]
+
+report:
+  message: "Unsafe Jackson deserialization detected"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }, { annotation: "JsonTypeInfo" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: token recognition error at: '"%Id\.' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,53-58)
+ERROR: token recognition error at: '") and\n' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,65-71)
+ERROR: no viable parse for input 'CLASS%', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,59-64)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+', '|' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,1-2)
+ERROR: asParameter() cannot be resolved for type Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,55-66)
+ERROR: matches() cannot be resolved for type string (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,45-52)
+ERROR: asType() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,17-23)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,50-78)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-11)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,22-33)
+Rule Content:
+/**
+ * @name Jackson Unsafe Deserialization
+ * @description Detects unsafe Jackson deserialization configurations that can lead to RCE
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jackson-unsafe-deserialization
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // Source: Unsafe JSON input to readValue
+    exists(MethodAccess readValue |
+      readValue.getMethod().hasName("readValue") and
+      readValue.getMethod().getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      source.asParameter() = readValue.getArgument(0).asParameter() or
+      source.asExpr() = readValue.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    // Sink 1: Unsafe deserialization via readValue
+    exists(MethodAccess readValue |
+      readValue.getMethod().hasName("readValue") and
+      readValue.getMethod().getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      sink.asExpr() = readValue
+    )
+    or
+    // Sink 2: enableDefaultTyping call
+    exists(MethodAccess enableTyping |
+      enableTyping.getMethod().hasName("enableDefaultTyping") and
+      enableTyping.getMethod().getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      sink.asExpr() = enableTyping
+    )
+    or
+    // Sink 3: Dangerous @JsonTypeInfo annotation
+    exists(Annotation annotation |
+      annotation.getType().hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      annotation.getValue("use").toString().matches("%Id\.CLASS%") and
+      sink.asExpr() = annotation
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Sanitizer: Safe type declarations
+    exists(Type t |
+      not t.getName().matches("Object|Serializable|Comparable") and
+      sanitizer.asType() = t
+    )
+  }
+}
+
+from JacksonUnsafeDeserializationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Unsafe Jackson deserialization detected (source: $@, sink: $@)",
+  source.getNode(), "User-controlled input",
+  sink.getNode(), "Potential unsafe deserialization"
+================================================================================
+Timestamp: 2025-10-23 12:47:13
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control the JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: [jackson]
+
+sources:
+  - id: UNSAFE_JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+  - id: DEFAULT_TYPING_ENABLED
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: enableDefaultTyping }
+  - id: DANGEROUS_TYPE_ANNOTATION
+    match:
+      node: ANNOTATION
+      type: { name: JsonTypeInfo }
+      where:
+        - op: regex
+          left: value
+          right: "use.*Id\\.CLASS"
+
+propagations:
+  - id: OBJECT_MAPPER_INIT
+    edge: field-store
+    kind: taint
+  - id: METHOD_CALL
+    edge: arg->param
+    kind: taint
+
+sanitizers:
+  - id: SAFE_TYPE
+    match:
+      node: TYPE_DECL
+      where:
+        - op: not_regex
+          left: name
+          right: "Object|Serializable|Comparable"
+    effect: neutralize
+
+flows:
+  - source: UNSAFE_JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    through: [METHOD_CALL*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(com.fasterxml.jackson.databind.ObjectMapper.enableDefaultTyping)" } ]
+  - source: DANGEROUS_TYPE_ANNOTATION
+    sink: UNSAFE_DESERIALIZATION
+    through: [OBJECT_MAPPER_INIT*]
+
+report:
+  message: "Unsafe Jackson deserialization detected"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }, { annotation: "JsonTypeInfo" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type CallExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,22-30)
+ERROR: could not resolve type CallExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,22-30)
+ERROR: could not resolve type CallExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+ERROR: getValue() cannot be resolved for type Annotation::AnnotationElement (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,19-27)
+ERROR: asType() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,17-23)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,50-78)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,49-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:66,76-94)
+Rule Content:
+/**
+ * @name Jackson Unsafe Deserialization
+ * @description Detects unsafe Jackson deserialization configurations that can lead to RCE
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jackson-unsafe-deserialization
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, CallExpr call |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      call.getCallee() = m and
+      (
+        source.asParameter() = call.getArgument(0).asParameter()
+        or
+        source.asExpr() = call.getArgument(0)
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    // Unsafe deserialization via readValue
+    exists(Method m, CallExpr call |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      call.getCallee() = m and
+      sink.asExpr() = call
+    )
+    or
+    // enableDefaultTyping call
+    exists(Method m, CallExpr call |
+      m.hasName("enableDefaultTyping") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      call.getCallee() = m and
+      sink.asExpr() = call
+    )
+    or
+    // Dangerous @JsonTypeInfo annotation
+    exists(Annotation ann, AnnotationType atype |
+      atype.hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      ann.getType() = atype and
+      exists(AnnotationElement annotElem |
+        annotElem.getName() = "use" and
+        annotElem.getValue().toString().matches("%Id\\.CLASS%")
+      ) and
+      sink.asExpr() = ann
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(RefType t |
+      not t.getName().matches("Object|Serializable|Comparable") and
+      sanitizer.asType() = t
+    )
+  }
+}
+
+from JacksonUnsafeDeserializationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Unsafe Jackson deserialization detected (source: $@, sink: $@)",
+  source.getNode(), "User-controlled input",
+  sink.getNode(), "Potential unsafe deserialization"
+================================================================================
+Timestamp: 2025-10-23 12:48:21
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control the JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: [jackson]
+
+sources:
+  - id: UNSAFE_JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+  - id: DEFAULT_TYPING_ENABLED
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: enableDefaultTyping }
+  - id: DANGEROUS_TYPE_ANNOTATION
+    match:
+      node: ANNOTATION
+      type: { name: JsonTypeInfo }
+      where:
+        - op: regex
+          left: value
+          right: "use.*Id\\.CLASS"
+
+propagations:
+  - id: OBJECT_MAPPER_INIT
+    edge: field-store
+    kind: taint
+  - id: METHOD_CALL
+    edge: arg->param
+    kind: taint
+
+sanitizers:
+  - id: SAFE_TYPE
+    match:
+      node: TYPE_DECL
+      where:
+        - op: not_regex
+          left: name
+          right: "Object|Serializable|Comparable"
+    effect: neutralize
+
+flows:
+  - source: UNSAFE_JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    through: [METHOD_CALL*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(com.fasterxml.jackson.databind.ObjectMapper.enableDefaultTyping)" } ]
+  - source: DANGEROUS_TYPE_ANNOTATION
+    sink: UNSAFE_DESERIALIZATION
+    through: [OBJECT_MAPPER_INIT*]
+
+report:
+  message: "Unsafe Jackson deserialization detected"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }, { annotation: "JsonTypeInfo" }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,50-78)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:68,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,49-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,76-94)
+ERROR: Variable::Parameter is incompatible with Expr::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,30-31)
+WARNING: unused variable 'f' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:74,18-19)
+Rule Content:
+/**
+ * @name Jackson Unsafe Deserialization
+ * @description Detects unsafe Jackson deserialization configurations that can lead to RCE
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jackson-unsafe-deserialization
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserialization" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      ma.getMethod() = m and
+      (
+        source.asParameter() = ma.getArgument(0)
+        or
+        source.asExpr() = ma.getArgument(0)
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    // Sink 1: readValue call
+    exists(Method m, MethodAccess ma |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma
+    )
+    or
+    // Sink 2: enableDefaultTyping call
+    exists(Method m, MethodAccess ma |
+      m.hasName("enableDefaultTyping") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma
+    )
+    or
+    // Sink 3: Dangerous JsonTypeInfo annotation
+    exists(Annotation a |
+      a.getType().hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      exists(Expr useExpr |
+        a.getValue("use") = useExpr and
+        useExpr.toString().matches(".*Id\\.CLASS.*")
+      ) and
+      sink.asExpr() = a
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(RefType t |
+      t = node.getType() and
+      not t.hasName("Object") and
+      not t.hasName("Serializable") and
+      not t.hasName("Comparable")
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Propagation via method calls
+    exists(MethodAccess ma |
+      node1.asExpr() = ma.getArgument(_) and
+      node2.asExpr() = ma
+    )
+    or
+    // Propagation via field access
+    exists(Field f, FieldRead fr |
+      node1.asExpr() = fr.getQualifier() and
+      node2.asExpr() = fr
+    )
+  }
+}
+
+from JacksonUnsafeDeserializationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Unsafe Jackson deserialization detected (source: $@, sink: $@)",
+  source.getNode(), "User-controlled input",
+  sink.getNode(), "Potential unsafe deserialization"
+================================================================================
+Timestamp: 2025-10-23 18:45:20
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: ["jackson"]
+sources:
+  - id: JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+      arg_index: 0
+sanitizers:
+  - id: TYPE_SAFETY
+    match:
+      node: ANNOTATION
+      api: { type: com.fasterxml.jackson.annotation.JsonTypeInfo, method: "use" }
+    effect:
+      when:
+        op: neq
+        left: annotation.value
+        right: "Id.CLASS"
+barriers:
+  - id: SAFE_TYPE
+    match:
+      node: FIELD
+      type:
+        name: java.lang.Object | java.io.Serializable | java.lang.Comparable
+        match: subtype
+    effect: stop
+propagations:
+  - id: FIELD_TO_OBJECT
+    edge: field-load
+    kind: taint
+flows:
+  - source: JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    constraints:
+      path:
+        must_not: [ { pattern: "ANNOTATION(com.fasterxml.jackson.annotation.JsonTypeInfo(use=CASE))" } ]
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+      - annotation_type: "JsonTypeInfo"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asField() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:29,14-21)
+ERROR: asField() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,15-22)
+ERROR: asField() cannot be resolved for type DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,12-19)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,50-78)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,49-67)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,76-94)
+Rule Content:
+/**
+ * @name Jackson unsafe deserialization
+ * @description Using Jackson with default typing enabled can lead to RCE when deserializing untrusted JSON
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @id java/jackson-unsafe-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Parameter p | 
+      m.getAParameter() = p and
+      p.getType().hasName("String") and
+      source.asParameter() = p
+    )
+    or
+    exists(Field f |
+      f.getType().hasName("String") and
+      source.asField() = f
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "readValue" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Annotation a |
+      a.getType().hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      not a.getValue("use").(Literal).getValue().toString() = "Id.CLASS" and
+      sanitizer.asExpr() = a
+    )
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    exists(Field f |
+      f.getType() instanceof RefType and
+      (
+        f.getType().hasName("Object") or
+        f.getType().hasName("Serializable") or
+        f.getType().hasName("Comparable")
+      ) and
+      barrier.asField() = f
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Field f |
+      pred.asField() = f and
+      succ.asExpr() = f.getAnAccess()
+    )
+  }
+}
+
+from JacksonUnsafeDeserializationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential unsafe Jackson deserialization from $@", source.getNode(),
+  "this user input"
+================================================================================
+Timestamp: 2025-10-23 18:46:28
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: ["jackson"]
+sources:
+  - id: JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+      arg_index: 0
+sanitizers:
+  - id: TYPE_SAFETY
+    match:
+      node: ANNOTATION
+      api: { type: com.fasterxml.jackson.annotation.JsonTypeInfo, method: "use" }
+    effect:
+      when:
+        op: neq
+        left: annotation.value
+        right: "Id.CLASS"
+barriers:
+  - id: SAFE_TYPE
+    match:
+      node: FIELD
+      type:
+        name: java.lang.Object | java.io.Serializable | java.lang.Comparable
+        match: subtype
+    effect: stop
+propagations:
+  - id: FIELD_TO_OBJECT
+    edge: field-load
+    kind: taint
+flows:
+  - source: JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    constraints:
+      path:
+        must_not: [ { pattern: "ANNOTATION(com.fasterxml.jackson.annotation.JsonTypeInfo(use=CASE))" } ]
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+      - annotation_type: "JsonTypeInfo"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,22-34)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:60,50-78)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:84,33-51)
+Rule Content:
+/**
+ * @name Jackson unsafe deserialization
+ * @description Using Jackson with default typing enabled can lead to RCE when deserializing untrusted JSON
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @id java/jackson-unsafe-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+
+class JacksonSource extends DataFlow::ExprNode {
+  JacksonSource() {
+    exists(Parameter p | 
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+    or
+    exists(Field f |
+      f.getType().hasName("String") and
+      this.asExpr() = f.getAnAccess()
+    )
+  }
+}
+
+class JacksonSink extends DataFlow::ExprNode {
+  JacksonSink() {
+    exists(Method m, MethodAccess ma |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      ma.getMethod() = m and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JacksonSanitizer extends DataFlow::Node {
+  JacksonSanitizer() {
+    exists(Annotation a |
+      a.getType().hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      not a.getValue("use").toString() = "Id.CLASS" and
+      this.asExpr() = a
+    )
+  }
+}
+
+class DangerousFieldType extends RefType {
+  DangerousFieldType() {
+    this.hasName("Object") or
+    this.hasName("Serializable") or
+    this.hasName("Comparable")
+  }
+}
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof JacksonSource }
+  
+  override predicate isSink(DataFlow::Node sink) { sink instanceof JacksonSink }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) { sanitizer instanceof JacksonSanitizer }
+  
+  override predicate isBarrier(DataFlow::Node node) {
+    exists(Field f |
+      f.getType() instanceof DangerousFieldType and
+      node.asExpr() = f.getAnAccess()
+    )
+  }
+  
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Field f | 
+      pred.asExpr() = f.getAnAccess() and
+      succ.asExpr() = f.getAnAccess()
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JacksonUnsafeDeserializationConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, "Potential unsafe Jackson deserialization from $@", source, source.toString()
+================================================================================
+Timestamp: 2025-10-23 18:47:20
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jackson-unsafe-deserialization
+  kind: taint
+  severity: WARNING
+  message: >-
+    When using Jackson to marshall/unmarshall JSON to Java objects,
+    enabling default typing is dangerous and can lead to RCE. If an attacker
+    can control JSON input it might be possible to provide a malicious JSON which
+    can be used to exploit unsecure deserialization.
+scope:
+  languages: [java]
+  frameworks: ["jackson"]
+sources:
+  - id: JSON_INPUT
+    match:
+      node: PARAM | FIELD
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: UNSAFE_DESERIALIZATION
+    match:
+      node: CALL
+      api: { type: com.fasterxml.jackson.databind.ObjectMapper, method: readValue }
+      arg_index: 0
+sanitizers:
+  - id: TYPE_SAFETY
+    match:
+      node: ANNOTATION
+      api: { type: com.fasterxml.jackson.annotation.JsonTypeInfo, method: "use" }
+    effect:
+      when:
+        op: neq
+        left: annotation.value
+        right: "Id.CLASS"
+barriers:
+  - id: SAFE_TYPE
+    match:
+      node: FIELD
+      type:
+        name: java.lang.Object | java.io.Serializable | java.lang.Comparable
+        match: subtype
+    effect: stop
+propagations:
+  - id: FIELD_TO_OBJECT
+    edge: field-load
+    kind: taint
+flows:
+  - source: JSON_INPUT
+    sink: UNSAFE_DESERIALIZATION
+    constraints:
+      path:
+        must_not: [ { pattern: "ANNOTATION(com.fasterxml.jackson.annotation.JsonTypeInfo(use=CASE))" } ]
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture:
+      - argument: 0
+      - annotation_type: "JsonTypeInfo"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlowUtil (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-46)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,50-78)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:85,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:85,33-51)
+Rule Content:
+/**
+ * @name Jackson unsafe deserialization
+ * @description Using Jackson with default typing enabled can lead to RCE when deserializing untrusted JSON
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @id java/jackson-unsafe-deserialization
+ * @tags security
+ *       external/cwe/cwe-502
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Jackson
+import semmle.code.java.dataflow.DataFlowUtil
+
+class JacksonSource extends DataFlow::ExprNode {
+  JacksonSource() {
+    exists(Parameter p | 
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+    or
+    exists(Field f |
+      f.getType().hasName("String") and
+      this.asExpr() = f.getAnAccess()
+    )
+  }
+}
+
+class JacksonSink extends DataFlow::ExprNode {
+  JacksonSink() {
+    exists(Method m, Call ma |
+      m.hasName("readValue") and
+      m.getDeclaringType().hasQualifiedName("com.fasterxml.jackson.databind", "ObjectMapper") and
+      ma.getCallee() = m and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class JacksonSanitizer extends DataFlow::Node {
+  JacksonSanitizer() {
+    exists(Annotation a |
+      a.getType().hasQualifiedName("com.fasterxml.jackson.annotation", "JsonTypeInfo") and
+      not a.getValue("use").toString() = "Id.CLASS" and
+      this.asExpr() = a
+    )
+  }
+}
+
+class DangerousFieldType extends RefType {
+  DangerousFieldType() {
+    this.hasName("Object") or
+    this.hasName("Serializable") or
+    this.hasName("Comparable")
+  }
+}
+
+class JacksonUnsafeDeserializationConfig extends TaintTracking::Configuration {
+  JacksonUnsafeDeserializationConfig() { this = "JacksonUnsafeDeserializationConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof JacksonSource }
+  
+  override predicate isSink(DataFlow::Node sink) { sink instanceof JacksonSink }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) { sanitizer instanceof JacksonSanitizer }
+  
+  override predicate isBarrier(DataFlow::Node node) {
+    exists(Field f |
+      f.getType() instanceof DangerousFieldType and
+      node.asExpr() = f.getAnAccess()
+    )
+  }
+  
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Field f | 
+      pred.asExpr() = f.getAnAccess() and
+      succ.asExpr() = f.getAnAccess()
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, JacksonUnsafeDeserializationConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, "Potential unsafe Jackson deserialization from $@", source, source.toString()
+================================================================================

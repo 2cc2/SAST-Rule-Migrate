@@ -1,0 +1,48 @@
+/**
+ * @name GCM Detection
+ * @description Detects usage of GCM encryption and checks for IV/nonce reuse.
+ * @kind path-problem
+ * @problem.severity recommendation
+ * @precision high
+ * @id java/gcm-detection
+ * @tags security
+ *       external/cwe/cwe-329
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class GCMUsage extends MethodAccess {
+  GCMUsage() {
+    this.getMethod().hasName("getInstance") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.crypto", "Cipher") and
+    this.getArgument(0).(Literal).getValue() = "AES/GCM/NoPadding"
+  }
+}
+
+class GCMParamSpecConstructor extends MethodAccess {
+  GCMParamSpecConstructor() {
+    this.getMethod().hasName("<init>") and
+    this.getMethod().getDeclaringType().hasQualifiedName("javax.crypto.spec", "GCMParameterSpec")
+  }
+}
+
+class GCMTaintConfig extends TaintTracking::Configuration {
+  GCMTaintConfig() { this = "GCMTaintConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(GCMUsage gcm | source.asExpr() = gcm)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(GCMParamSpecConstructor gcmParam | sink.asExpr() = gcmParam)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, GCMTaintConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "GCM detected, please check that IV/nonce is not reused. " +
+  "Initialization Vector (IV) should be random and unique to prevent security issues.",
+  source.getNode(), "GCM encryption usage here"

@@ -1,0 +1,64 @@
+/**
+ * @name Unescaped Expression Language segments
+ * @description Detects Expression Language segments without XML escaping before output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class UnescapedELSource extends DataFlow::Node {
+  UnescapedELSource() {
+    exists(Literal lit |
+      lit.getValue().matches("\\$\\{(?!.*escapeXml).*\\}") and
+      this.asExpr() = lit
+    )
+  }
+}
+
+class JspPrintSink extends DataFlow::Node {
+  JspPrintSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("print") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp", "JspWriter") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class EscapeXmlSanitizer extends DataFlow::Node {
+  EscapeXmlSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("escapeXml") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core.fn", "") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class UnescapedELToJspPrint extends TaintTracking::Configuration {
+  UnescapedELToJspPrint() {
+    this = "Unescaped EL to JspWriter.print flow"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnescapedELSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof JspPrintSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof EscapeXmlSanitizer
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, UnescapedELToJspPrint cfg
+where cfg.hasFlow(source, sink)
+select sink, source, "Unescaped Expression Language segment detected. Potential XSS vulnerability."

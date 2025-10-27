@@ -1,0 +1,2597 @@
+Timestamp: 2025-10-23 10:37:00
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: eq
+          left: type
+          right: String
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+    where:
+      - op: regex
+        left: receiver
+        right: ".*prepareStatement.*"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_CONSTRUCTION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, QUERY_CONSTRUCTION*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not: []
+        
+report:
+  message: "SQL Injection vulnerability: User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: 
+    capture:
+      - { argument: 0 }
+      - { receiver: true }
+
+metadata:
+  cwe: "CWE-89"
+  owasp: ["A01:2017", "A03:2021"]
+  confidence: MEDIUM
+  likelihood: LOW
+  impact: HIGH
+```
+Error: [Errno 2] No such file or directory: 'codeql'
+Rule Content:
+/**
+ * @name SQL Injection from string concatenation
+ * @description Detects SQL injection vulnerabilities caused by string concatenation of user input
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @id java/sql-injection-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.jboss.JBoss
+import semmle.code.java.security.SqlInjectionQuery
+import DataFlow::PathGraph
+
+class StringParam extends DataFlow::Expr {
+  StringParam() {
+    exists(Method m, Parameter p | 
+      m.getAParameter() = p and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class PreparedStatementExecution extends DataFlow::Expr {
+  PreparedStatementExecution() {
+    exists(MethodAccess ma | 
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this = ma.getQualifier()
+    )
+  }
+}
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof StringParam
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName({"prepareStatement", "createStatement"}) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      sink.asExpr() = ma.getQualifier()
+    ) or
+    sink.asExpr() instanceof PreparedStatementExecution
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(StringConcatenation sc | 
+      node1.asExpr().(StringConcatenation).getAnOperand() = node2.asExpr()
+    ) or
+    exists(Assignment assign |
+      assign.getDest() = node1.asExpr() and
+      assign.getSource() = node2.asExpr()
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "SQL Injection vulnerability: User input reaches SQL execution without sanitization", 
+  source, sink,
+  "$@ flows to $@ and is used in unsafe SQL query construction.",
+  source.toString(), sink.toString()
+================================================================================
+Timestamp: 2025-10-23 10:37:28
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: eq
+          left: type
+          right: String
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+    where:
+      - op: regex
+        left: receiver
+        right: ".*prepareStatement.*"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_CONSTRUCTION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, QUERY_CONSTRUCTION*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not: []
+        
+report:
+  message: "SQL Injection vulnerability: User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: 
+    capture:
+      - { argument: 0 }
+      - { receiver: true }
+
+metadata:
+  cwe: "CWE-89"
+  owasp: ["A01:2017", "A03:2021"]
+  confidence: MEDIUM
+  likelihood: LOW
+  impact: HIGH
+```
+Error: [Errno 2] No such file or directory: 'codeql'
+Rule Content:
+/**
+ * @name SQL Injection from string concatenation
+ * @description Detects SQL injection vulnerabilities caused by string concatenation of user input
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @id java/sql-injection-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.jboss.JBoss
+import semmle.code.java.security.SqlInjectionQuery
+import DataFlow::PathGraph
+
+class StringParam extends DataFlow::Expr {
+  StringParam() {
+    exists(Method m, Parameter p | 
+      m.getAParameter() = p and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class PreparedStatementExecution extends DataFlow::Expr {
+  PreparedStatementExecution() {
+    exists(MethodAccess ma | 
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this = ma.getQualifier()
+    )
+  }
+}
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof StringParam
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName({"prepareStatement", "createStatement"}) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      sink.asExpr() = ma.getQualifier()
+    ) or
+    sink.asExpr() instanceof PreparedStatementExecution
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(StringConcatenation sc | 
+      node1.asExpr().(StringConcatenation).getAnOperand() = node2.asExpr()
+    ) or
+    exists(Assignment assign |
+      assign.getDest() = node1.asExpr() and
+      assign.getSource() = node2.asExpr()
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "SQL Injection vulnerability: User input reaches SQL execution without sanitization", 
+  source, sink,
+  "$@ flows to $@ and is used in unsafe SQL query construction.",
+  source.toString(), sink.toString()
+================================================================================
+Timestamp: 2025-10-23 10:37:55
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: eq
+          left: type
+          right: String
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+    where:
+      - op: regex
+        left: receiver
+        right: ".*prepareStatement.*"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_CONSTRUCTION
+    edge: assignment
+    kind: taint
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*, QUERY_CONSTRUCTION*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not: []
+        
+report:
+  message: "SQL Injection vulnerability: User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: 
+    capture:
+      - { argument: 0 }
+      - { receiver: true }
+
+metadata:
+  cwe: "CWE-89"
+  owasp: ["A01:2017", "A03:2021"]
+  confidence: MEDIUM
+  likelihood: LOW
+  impact: HIGH
+```
+Error: [Errno 2] No such file or directory: 'codeql'
+Rule Content:
+/**
+ * @name SQL Injection from string concatenation
+ * @description Detects unsafe SQL query construction via string concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @id java/sql-injection-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.jboss.JBoss
+import semmle.code.java.security.SqlInjectionQuery
+import DataFlow::PathGraph
+
+class StringParam extends DataFlow::Node {
+  StringParam() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class PreparedStatementExecQuery extends DataFlow::Node {
+  PreparedStatementExecQuery() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringParam
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof PreparedStatementExecQuery or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("prepareStatement") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(StringConcatenation sc |
+      node1.asExpr() = sc and
+      node2.asExpr() = sc.getAnOperand()
+    ) or
+    exists(Assignment a |
+      node1.asExpr() = a.getDest() and
+      node2.asExpr() = a.getSource()
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink,
+  "SQL Injection vulnerability: User input reaches SQL execution without sanitization",
+  source, sink,
+  "User input flows to unsafe SQL query construction via string concatenation",
+  source.getNode(), sink.getNode()
+================================================================================
+Timestamp: 2025-10-23 11:17:25
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "...\\+\\s*\\$X\\s*\\+..."
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: ARG_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_PARAM*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type AssignmentExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-26)
+ERROR: could not resolve type TypeSqlPreparedStatement (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,62-86)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,38-66)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,37-55)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:39,64-82)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind problem
+ * @id java/sql-string-concatenation
+ * @severity error
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class SqlStringConcatenation extends TaintTracking::Configuration {
+  SqlStringConcatenation() {
+    this = "SqlStringConcatenation"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(AssignmentExpr assign |
+      source.asExpr() = assign.getRightOperand() and
+      exists(MethodAccess ma | 
+        ma.getMethod().getName().matches("%.+\\+\\s*\\$X\\s*\\+%") and
+        source.asExpr() = ma
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess executeQuery |
+      executeQuery.getMethod().getDeclaringType() instanceof TypeSqlPreparedStatement and
+      executeQuery.getMethod().hasName("executeQuery") and
+      sink.asExpr() = executeQuery.getArgument(0)
+    )
+  }
+}
+
+from SqlStringConcatenation config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User input reaches SQL execution via string concatenation"
+================================================================================
+Timestamp: 2025-10-23 11:18:23
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "...\\+\\s*\\$X\\s*\\+..."
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: ARG_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_PARAM*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,29-30)
+ERROR: extraneous input ')' expecting one of: '}' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,5-6)
+ERROR: could not resolve module semmle.code.java.frameworks.jboss.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-47)
+ERROR: could not resolve type AssignmentExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-26)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,44-72)
+ERROR: could not resolve variable stringAddition (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,14-28)
+ERROR: could not resolve variable stringAddition (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,9-23)
+ERROR: could not resolve variable stringAddition (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,9-23)
+ERROR: could not resolve variable stringAddition (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,27-41)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,70-88)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind path-problem
+ * @id java/sql-string-concatenation
+ * @severity error
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jboss.JBoss
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() {
+    this = "SqlStringConcatenationConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(AssignmentExpr assign |
+      source.asExpr() = assign.getRightOperand() and
+      exists(stringAddition |
+        stringAddition.getRightOperand().toString().matches("%\\+\\s*\\$X\\s*\\+%") or
+        stringAddition.getLeftOperand().toString().matches("%\\+\\s*\\$X\\s*\\+%") and
+        source.asExpr() = stringAddition
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      mc.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      mc.getMethod().hasName("executeQuery") and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution via string concatenation",
+  source.getNode(), "潜在危险输入源",
+  sink.getNode(), "存在SQL注入风险的执行点"
+================================================================================
+Timestamp: 2025-10-23 11:19:03
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "...\\+\\s*\\$X\\s*\\+..."
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: ARG_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXEC
+    through: [ARG_PARAM*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type Operation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-21)
+ERROR: getRValue() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,14-23)
+ERROR: getRValue() cannot be resolved for type Expr::AssignExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,32-41)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,70-88)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind path-problem
+ * @id java/sql-string-concatenation
+ * @severity error
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() {
+    this = "SqlStringConcatenationConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Operation op, AssignExpr assign |
+      assign.getRValue() = op and
+      (
+        op.getRightOperand().toString().matches(".*\\+\\s*\\$X\\s*\\+.*") or
+        op.getLeftOperand().toString().matches(".*\\+\\s*\\$X\\s*\\+.*")
+      ) and
+      source.asExpr() = assign.getRValue()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getMethod().hasName("executeQuery") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), sink.getNode(),
+  "User input reaches SQL execution via string concatenation"
+================================================================================
+Timestamp: 2025-10-23 11:27:43
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "\$X"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+
+propagations:
+  - id: METHOD_LOCAL
+    edge: param->local
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->call
+    kind: taint
+    where:
+      - op: eq
+        left: methodFullName
+        right: "java.lang.String.concat"
+
+sanitizers: []
+barriers: []
+
+flows:
+  - source: USER_INPUT_PARAM
+    sink: SQL_EXECUTION
+    through: [METHOD_LOCAL, STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.Session.connection)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not: []
+
+report:
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = '\" + input + \"'\"; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet rs = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet rs = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'MethodAccess concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,1-2)
+ERROR: could not resolve module semmle.code.java.StringConcatenation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-44)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-27)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-27)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: predicate 'isSanitizer' has relational type DataFlowNodes::Public::Node at position 1, not matching the overridden predicate's string (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,22-33)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,3-11)
+WARNING: unused variable 'node1' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,59-64)
+WARNING: unused variable 'node2' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,81-86)
+WARNING: unused predicate 'isBarrier' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,22-31)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description Detects SQL query construction via string concatenation in Java with JBoss.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringConcatenation
+import DataFlow::PathGraph
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodParameter p |
+      p.getName().matches("%X") and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    none()
+  }
+
+  override predicate isSanitizer(DataFlow::Node node, DataFlow::Node knownSanitized) {
+    none()
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Handle string concatenation
+    exists(MethodAccess concat |
+      concat.getMethod().hasQualifiedName("java.lang", "String", "concat") and
+      node1.asExpr() = concat.getArgument(0) and
+      node2.asExpr() = concat
+    )
+    or
+    // Handle parameter to local variable flow
+    exists(LocalVariableDecl lvd |
+      node1.asParameter() = lvd.getAnAccess() and
+      node2.asVariable() = lvd.getVariable()
+    )
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    none()
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "In $METHOD, $X is used to construct a SQL query via string concatenation.", 
+  source, sink, 
+  "SQL query construction via string concatenation"
+================================================================================
+Timestamp: 2025-10-23 11:28:28
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "\$X"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+
+propagations:
+  - id: METHOD_LOCAL
+    edge: param->local
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->call
+    kind: taint
+    where:
+      - op: eq
+        left: methodFullName
+        right: "java.lang.String.concat"
+
+sanitizers: []
+barriers: []
+
+flows:
+  - source: USER_INPUT_PARAM
+    sink: SQL_EXECUTION
+    through: [METHOD_LOCAL, STRING_CONCAT*]
+    constraints:
+      path:
+        must:
+          - { pattern: "CALL(java.sql.Session.connection)" }
+          - { pattern: "CALL(java.sql.Connection.prepareStatement)" }
+        must_not: []
+
+report:
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = '\" + input + \"'\"; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet rs = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet rs = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'MethodAccess concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-41)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:14,31-45)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,12-27)
+ERROR: asParameter() cannot be resolved for type SqlStringSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,12-23)
+ERROR: could not resolve type DataFlow::Expr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,29-43)
+WARNING: module 'PathGraph' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:12,8-27)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,35-63)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,3-11)
+WARNING: unused variable 'node1' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,59-64)
+WARNING: unused variable 'node2' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,81-86)
+WARNING: unused predicate 'isBarrier' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,22-31)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description Detects SQL query construction via string concatenation in Java with JBoss.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JBoss
+import DataFlow::PathGraph
+
+class SqlStringSource extends DataFlow::Expr {
+  SqlStringSource() {
+    exists(MethodParameter p |
+      p.getName().matches("%X") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlStringSink extends DataFlow::Expr {
+  SqlStringSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlStringFlowConfig extends TaintTracking::Configuration {
+  SqlStringFlowConfig() { this = "SqlStringFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof SqlStringSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof SqlStringSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Handle string concatenation
+    exists(MethodAccess concat |
+      concat.getMethod().hasQualifiedName("java.lang", "String", "concat") and
+      node1.asExpr() = concat.getArgument(0) and
+      node2.asExpr() = concat
+    )
+    or
+    // Handle parameter to local variable flow
+    exists(LocalVariableDecl lvd |
+      node1.asParameter() = lvd.getAnAccess() and
+      node2.asVariable() = lvd.getVariable()
+    )
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    none()
+  }
+}
+
+from SqlStringFlowConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "In $METHOD, $X is used to construct a SQL query via string concatenation.", 
+  source, sink, 
+  "SQL query construction via string concatenation"
+================================================================================
+Timestamp: 2025-10-23 11:30:32
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      where:
+        - op: eq
+          left: receiver.methodFullName
+          right: "java.sql.Connection.prepareStatement"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    where:
+      - op: regex
+        left: methodFullName
+        right: "java.lang.String.concat|\\+"
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+
+report:
+  message: "User input reaches SQL execution through string concatenation"
+  locations: ["source", "sink", "path"]
+  evidence: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jboss.JBossClasses (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,8-54)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:19,12-27)
+ERROR: getSourceDeclaration() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,35-55)
+ERROR: getSourceDeclaration() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,55-75)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,70-88)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jboss.JBossClasses
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodParameter p |
+      source.asParameter() = p and
+      p.getType().hasName("java.lang.String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getQualifier().getType().getSourceDeclaration().getQualifiedName() = "java.sql.PreparedStatement" and
+      sink.asExpr() = ma.getQualifier() and
+      exists(MethodAccess prepareStatementCall |
+        prepareStatementCall.getMethod().getName() = "prepareStatement" and
+        prepareStatementCall.getQualifier().getType().getSourceDeclaration().getQualifiedName() = "java.sql.Connection"
+      )
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" and ma.getMethod().getDeclaringType().hasName("java.lang.String")) or
+      (ma.getMethod().getName() = "plus" and ma.getMethod().getDeclaringType().hasName("java.lang.String"))
+      and
+      node1.asExpr() = ma.getAnArgument() and
+      node2.asExpr() = ma
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "User input reaches SQL execution through string concatenation", source.getNode(),
+  "User-provided value", source.getNode(), "flows to SQL execution here"
+================================================================================
+Timestamp: 2025-10-23 11:31:29
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      where:
+        - op: eq
+          left: receiver.methodFullName
+          right: "java.sql.Connection.prepareStatement"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    where:
+      - op: regex
+        left: methodFullName
+        right: "java.lang.String.concat|\\+"
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+
+report:
+  message: "User input reaches SQL execution through string concatenation"
+  locations: ["source", "sink", "path"]
+  evidence: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getSourceDeclaration() cannot be resolved for type Type::Type (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,19-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,22-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,70-88)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.security.QueryInjection
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType().getSourceDeclaration().hasQualifiedName("java.lang", "String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("executeQuery") and
+      m.getDeclaringType().getSourceDeclaration().hasQualifiedName("java.sql", "PreparedStatement") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getQualifier() and
+      exists(Method prepareStatementMethod |
+        prepareStatementMethod.hasName("prepareStatement") and
+        prepareStatementMethod.getDeclaringType().getSourceDeclaration()
+                               .hasQualifiedName("java.sql", "Connection")
+      )
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" and 
+       ma.getMethod().getDeclaringType().hasName("java.lang.String")) or
+      (ma.getMethod().hasName("plus") and
+       ma.getMethod().getDeclaringType().hasName("java.lang.String")) and
+      node1.asExpr() = ma.getAnArgument() and
+      node2.asExpr() = ma
+    )
+  }
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "User input reaches SQL execution through string concatenation", source, sink,
+  "User-provided value", source, "flows to SQL execution here"
+================================================================================
+Timestamp: 2025-10-23 11:32:27
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      where:
+        - op: eq
+          left: receiver.methodFullName
+          right: "java.sql.Connection.prepareStatement"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+    where:
+      - op: regex
+        left: methodFullName
+        right: "java.lang.String.concat|\\+"
+
+flows:
+  - source: USER_INPUT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+
+report:
+  message: "User input reaches SQL execution through string concatenation"
+  locations: ["source", "sink", "path"]
+  evidence: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,6-10)
+ERROR: no viable parse for input 'ADD and', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,29-32)
+ERROR: unexpected input 'and' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,33-36)
+ERROR: unexpected input '.' expecting one of: '::' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,9-10)
+ERROR: extraneous input '(' expecting one of: ')' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,24-25)
+ERROR: unexpected input '.' expecting one of: '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,34-35)
+ERROR: getOperatorKind() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,9-24)
+ERROR: could not resolve type ADD (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:47,29-32)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,6-10)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,14-26)
+ERROR: No higher-order predicate with name node1 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,29-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:54,10-22)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,43-61)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,70-88)
+WARNING: unused variable 'node1' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,44-49)
+WARNING: unused variable 'node2' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,66-71)
+WARNING: unused variable 'getLeftOperand' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,10-24)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description In $METHOD, $X is used to construct a SQL query via string concatenation.
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ * @tags security
+ *       external/jboss
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.security.QueryInjection
+
+class SqlStringConcatenationConfig extends TaintTracking::Configuration {
+  SqlStringConcatenationConfig() { this = "SqlStringConcatenationConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType().hasName("java.lang.String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      sink.asExpr() = ma.getQualifier() and
+      exists(MethodAccess prepareStatementCall |
+        prepareStatementCall.getMethod().hasName("prepareStatement") and
+        prepareStatementCall.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection")
+      )
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exprConcatenation(node1, node2)
+    or
+    stringConcatMethod(node1, node2)
+  }
+}
+
+predicate exprConcatenation(DataFlow::Node node1, DataFlow::Node node2) {
+  exists(BinaryExpr bin |
+    bin.getOperatorKind() = ADD and
+    (bin.getLeftOperand() = node1.asExpr() or bin.getRightOperand() = node1.asExpr()) and
+    node2.asExpr() = bin
+  )
+}
+
+predicate stringConcatMethod(DataFlow::Node node1, DataFlow::Node node2) {
+  exists(MethodAccess ma |
+    ma.getMethod().hasName("concat") and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    ma.getAnArgument() = node1.asExpr() and
+    node2.asExpr() = ma
+  )
+}
+
+from SqlStringConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "User input reaches SQL execution through string concatenation", source, sink,
+  "User-provided value", source, "flows to SQL execution here"
+================================================================================
+Timestamp: 2025-10-23 12:08:43
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation"
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->assignment
+    kind: taint
+  - id: QUERY_PROPAGATION
+    edge: assignment->arg
+    kind: taint
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXEC
+    through: [STRING_CONCAT, QUERY_PROPAGATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source", "sink", "path"]
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet rs = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet rs = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.jboss.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-47)
+ERROR: could not resolve type TaintTracking::Source (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,31-52)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,12-27)
+ERROR: asParameter() cannot be resolved for type StringParameter.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,12-23)
+ERROR: could not resolve type TaintTracking::Sink (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,32-51)
+ERROR: asExpr() cannot be resolved for type SqlExecutionSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,12-18)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,42-46)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,63-67)
+WARNING: unused class 'StringParameter' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,7-22)
+WARNING: unused class 'SqlExecutionSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,7-23)
+Rule Content:
+/**
+ * @name SQL Injection via String Concatenation
+ * @description Detects SQL injection vulnerabilities caused by string concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jboss.JBoss
+
+class StringParameter extends TaintTracking::Source {
+  StringParameter() {
+    exists(MethodParameter p | 
+      p.getType().hasName("java.lang.String") and 
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends TaintTracking::Sink {
+  SqlExecutionSink() {
+    exists(MethodAccess call |
+      call.getMethod().getName() = "executeQuery" and
+      call.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+class StringConcatTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryExpr concat |
+      concat.getOperator() = BinaryOperator.PLUS and
+      pred.asExpr() = concat.getLeftOperand() and
+      succ.asExpr() = concat
+    )
+  }
+}
+
+class QueryPropagationStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(AssignExpr assign, LocalVariableRef var |
+      pred.asExpr() = assign.getRightOperand() and
+      succ.asExpr() = var and
+      var.getVariable() = assign.getLeftOperand()
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() {
+    this = "SqlStringConcatConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    pred instanceof StringConcatTaintStep or
+    pred instanceof QueryPropagationStep
+  }
+}
+
+from SqlStringConcatConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, 
+  "In $@, user input reaches SQL execution via string concatenation.", source.getNode(),
+  "User input flows to SQL execution"
+================================================================================
+Timestamp: 2025-10-23 12:09:40
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation"
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->assignment
+    kind: taint
+  - id: QUERY_PROPAGATION
+    edge: assignment->arg
+    kind: taint
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXEC
+    through: [STRING_CONCAT, QUERY_PROPAGATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source", "sink", "path"]
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet rs = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet rs = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryOperation::PLUS and', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,27-42)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-41)
+ERROR: could not resolve type BinaryOperation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-27)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,42-46)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:34,63-67)
+WARNING: unused class 'StringParameterSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,7-28)
+WARNING: unused class 'SqlExecutionSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,7-23)
+Rule Content:
+/**
+ * @name SQL Injection via String Concatenation
+ * @description Detects SQL injection vulnerabilities caused by string concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JBoss
+
+class StringParameterSource extends DataFlow::Node {
+  StringParameterSource() {
+    exists(Method m, Parameter p |
+      m.hasQualifiedName("java.sql", "PreparedStatement", "executeQuery") and
+      p.getType().hasName("java.lang.String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class StringConcatTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryOperation bop |
+      bop.getOperator() = BinaryOperation::PLUS and
+      pred.asExpr() = bop.getLeftOperand() and
+      succ.asExpr() = bop
+    )
+  }
+}
+
+class QueryPropagationStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Assignment assign, LocalVariableDecl lvd |
+      pred.asExpr() = assign.getRightOperand() and
+      succ.asExpr() = lvd.getAnAccess() and
+      lvd.getAnAssignedValue() = assign.getLeftOperand()
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() {
+    this = "SqlStringConcatConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringParameterSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    pred instanceof StringConcatTaintStep or
+    pred instanceof QueryPropagationStep
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    node instanceof Return
+  }
+}
+
+from SqlStringConcatConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, 
+  "In $@, user input reaches SQL execution via string concatenation.", source.getNode(),
+  "User input flows to SQL execution"
+================================================================================
+Timestamp: 2025-10-23 12:10:45
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: find-sql-string-concatenation
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation"
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+        match: exact
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+      arg_index: 0
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->assignment
+    kind: taint
+  - id: QUERY_PROPAGATION
+    edge: assignment->arg
+    kind: taint
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXEC
+    through: [STRING_CONCAT, QUERY_PROPAGATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution via string concatenation"
+  locations: ["source", "sink", "path"]
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet rs = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet rs = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryExpr::PLUS and', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,28-38)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:40,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.JavaSql (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-43)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-23)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: unused variable 'm' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,19-20)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,42-46)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,63-67)
+WARNING: unused class 'StringParameterSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:13,7-28)
+WARNING: unused class 'SqlExecutionSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,7-23)
+Rule Content:
+/**
+ * @name SQL Injection via String Concatenation
+ * @description Detects SQL injection vulnerabilities caused by string concatenation
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JavaSql
+
+class StringParameterSource extends DataFlow::Node {
+  StringParameterSource() {
+    exists(Method m, Parameter p |
+      p.getType().hasName("java.lang.String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class StringConcatTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryExpr expr |
+      expr.getOperator() = BinaryExpr::PLUS and
+      pred.asExpr() = expr.getLeftOperand() and
+      succ.asExpr() = expr
+    )
+  }
+}
+
+class QueryPropagationTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(AssignStmt assign, LocalVariableAccess lva |
+      pred.asExpr() = assign.getRValue() and
+      succ.asExpr() = lva and
+      lva.getVariable() = assign.getLValue()
+    ) or
+    exists(VariableAccess va |
+      pred.asExpr() = va.getVariable().getAnAssignedValue() and
+      succ.asExpr() = va
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() {
+    this = "SqlStringConcatConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringParameterSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    pred instanceof StringConcatTaintStep or
+    pred instanceof QueryPropagationTaintStep
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    exists(ReturnStmt ret | node.asExpr() = ret.getExpr())
+  }
+}
+
+from SqlStringConcatConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, 
+  "In $@, user input reaches SQL execution via string concatenation.", source.getNode(),
+  "User input flows to SQL execution"
+================================================================================
+Timestamp: 2025-10-23 18:13:20
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "$X"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet result = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet result = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jboss.JBossAPI (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:11,8-50)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:33,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,63-81)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description Detects SQL query construction via string concatenation which may lead to SQL injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jboss.JBossAPI
+
+class SqlStringConcatSource extends DataFlow::Node {
+  SqlStringConcatSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      p.getName().regexpMatch("$X") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() { this = "SqlStringConcatConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    none()
+  }
+}
+
+from SqlStringConcatConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "In $METHOD, $X is used to construct a SQL query via string concatenation.", 
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability due to string concatenation"
+================================================================================
+Timestamp: 2025-10-23 18:13:59
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "$X"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet result = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet result = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getACall() cannot be resolved for type Member::Method (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:27,25-33)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,63-81)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description Detects SQL query construction via string concatenation which may lead to SQL injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class SqlStringConcatSource extends DataFlow::Node {
+  SqlStringConcatSource() {
+    exists(Parameter p |
+      p.getName().regexpMatch(".*") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Method m |
+      m.hasName("executeQuery") and
+      m.getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() { this = "SqlStringConcatConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    none()
+  }
+}
+
+from SqlStringConcatConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "In $METHOD, $X is used to construct a SQL query via string concatenation.", 
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability due to string concatenation"
+================================================================================
+Timestamp: 2025-10-23 18:14:38
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SQL_STRING_CONCAT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "$X"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: java.sql.PreparedStatement, method: executeQuery }
+sanitizers: []
+barriers: []
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "String query = \"SELECT * FROM users WHERE id = \" + input; PreparedStatement ps = session.connection().prepareStatement(query); ResultSet result = ps.executeQuery();"
+  negative:
+    - "String query = \"SELECT * FROM users WHERE id = ?\"; PreparedStatement ps = session.connection().prepareStatement(query); ps.setString(1, input); ResultSet result = ps.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type Plus (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,30-34)
+ERROR: could not resolve type Plus (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:41,30-34)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:64,63-81)
+Rule Content:
+/**
+ * @name find-sql-string-concatenation
+ * @description Detects SQL query construction via string concatenation which may lead to SQL injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/sql-string-concatenation
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class SqlStringConcatSource extends DataFlow::Node {
+  SqlStringConcatSource() {
+    exists(Parameter p |
+      p.getName().regexpMatch(".*") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("executeQuery") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") and
+      this.asExpr() = ma.getQualifier()
+    )
+  }
+}
+
+class StringConcatPropagator extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(BinaryExpr bin |
+      bin.getOp() instanceof Plus and
+      pred.asExpr() = bin.getLeftOperand() and
+      succ.asExpr() = bin
+    )
+    or
+    exists(BinaryExpr bin |
+      bin.getOp() instanceof Plus and
+      pred.asExpr() = bin.getRightOperand() and
+      succ.asExpr() = bin
+    )
+  }
+}
+
+class SqlStringConcatConfig extends TaintTracking::Configuration {
+  SqlStringConcatConfig() { this = "SqlStringConcatConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlStringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    none()
+  }
+}
+
+from SqlStringConcatConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "In $METHOD, $X is used to construct a SQL query via string concatenation.", 
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability due to string concatenation"
+================================================================================
+Timestamp: 2025-10-23 22:10:26
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: "java.lang.String"
+        match: exact
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: "java.sql.PreparedStatement", method: "executeQuery" }
+sanitizers:
+  - id: SQL_ESCAPE
+    match: { node: CALL }
+    effect: neutralize
+    scope: { sinks: [SQL_EXECUTION] }
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_PREPARATION
+    edge: arg->arg
+    kind: taint
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*, QUERY_PREPARATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY); ResultSet $RESULT = $PS.executeQuery();"
+  negative:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement(ESAPI.encoder().encodeForSQL($QUERY)); ResultSet $RESULT = $PS.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.jboss.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve type MethodParameter (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-27)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,44-72)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,12-24)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,59-63)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,80-84)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,22-33)
+Rule Content:
+/**
+ * @name SQL injection vulnerability due to string concatenation
+ * @description Detects when user input is directly concatenated into a SQL query.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.0
+ * @precision high
+ * @id java/unsafe-sql-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jboss.JBoss
+
+class UnsafeSQLConcatenationConfig extends TaintTracking::Configuration {
+  UnsafeSQLConcatenationConfig() { this = "UnsafeSQLConcatenationConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodParameter p |
+      source.asParameter() = p and
+      p.getType().hasName("java.lang.String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasName("java.sql.PreparedStatement") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    // String concatenation taint propagation
+    exists(BinaryExpr concat |
+      (concat.getOp() instanceof Add or concat.getOp() instanceof Concat) and
+      (pred.asExpr() = concat.getLeftOperand() and succ.asExpr() = concat) or
+      (pred.asExpr() = concat.getRightOperand() and succ.asExpr() = concat)
+    ) or
+    // Argument to argument propagation
+    exists(MethodAccess ma, int i, int j |
+      pred.asExpr() = ma.getArgument(i) and
+      succ.asExpr() = ma.getArgument(j)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getArgument(0) = node.asExpr() and
+      ma.getMethod().getDeclaringType().hasName("org.owasp.esapi.Encoder")
+    )
+  }
+}
+
+from UnsafeSQLConcatenationConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization in $@", 
+  source.getNode(), source.getVerboseString(),
+  sink.getNode(), sink.getVerboseString()
+================================================================================
+Timestamp: 2025-10-23 22:11:19
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: "java.lang.String"
+        match: exact
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: "java.sql.PreparedStatement", method: "executeQuery" }
+sanitizers:
+  - id: SQL_ESCAPE
+    match: { node: CALL }
+    effect: neutralize
+    scope: { sinks: [SQL_EXECUTION] }
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_PREPARATION
+    edge: arg->arg
+    kind: taint
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*, QUERY_PREPARATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY); ResultSet $RESULT = $PS.executeQuery();"
+  negative:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement(ESAPI.encoder().encodeForSQL($QUERY)); ResultSet $RESULT = $PS.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'BinaryExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:38,12-22)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,1-2)
+ERROR: could not resolve module semmle.code.java.StringConcatenation (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-44)
+ERROR: query module does not have any queries in scope (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:28,22-34)
+ERROR: annotation 'override' can only be used on member predicates and fields (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,3-11)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:52,12-24)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,59-63)
+WARNING: unused variable 'succ' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:36,80-84)
+WARNING: unused predicate 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,22-33)
+Rule Content:
+/**
+ * @name SQL injection vulnerability due to string concatenation
+ * @description Detects when user input is directly concatenated into a SQL query.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.0
+ * @precision high
+ * @id java/find-sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringConcatenation
+
+class SQLStringConcatConfig extends TaintTracking::Configuration {
+  SQLStringConcatConfig() { this = "SQLStringConcatConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType().hasName("java.lang.String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      ma.getMethod() = m and
+      m.hasName("executeQuery") and
+      m.getDeclaringType().hasName("java.sql.PreparedStatement") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    // String concatenation taint propagation
+    exists(BinaryExpr concat |
+      concat.getOp() instanceof Add or
+      concat.getOp() instanceof Concat and
+      ((pred.asExpr() = concat.getLeftOperand() and succ.asExpr() = concat) or
+       (pred.asExpr() = concat.getRightOperand() and succ.asExpr() = concat))
+    ) or
+    // Argument to argument propagation
+    exists(MethodAccess ma, int i, int j |
+      pred.asExpr() = ma.getArgument(i) and
+      succ.asExpr() = ma.getArgument(j)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma, Method m |
+      ma.getMethod() = m and
+      m.getDeclaringType().getQualifiedName().matches("org.owasp.esapi.%") and
+      ma.getArgument(0) = node.asExpr()
+    )
+  }
+}
+
+from SQLStringConcatConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "In $@, $@ is used to construct a SQL query via string concatenation",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================
+Timestamp: 2025-10-23 22:12:09
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "find-sql-string-concatenation"
+  kind: taint
+  severity: ERROR
+  message: "In $METHOD, $X is used to construct a SQL query via string concatenation."
+scope:
+  languages: [java]
+  frameworks: ["jboss"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: STRING_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: "java.lang.String"
+        match: exact
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: "java.sql.PreparedStatement", method: "executeQuery" }
+sanitizers:
+  - id: SQL_ESCAPE
+    match: { node: CALL }
+    effect: neutralize
+    scope: { sinks: [SQL_EXECUTION] }
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: QUERY_PREPARATION
+    edge: arg->arg
+    kind: taint
+flows:
+  - source: STRING_PARAM
+    sink: SQL_EXECUTION
+    through: [STRING_CONCAT*, QUERY_PREPARATION*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.sql.PreparedStatement.executeQuery)" } ]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement($QUERY); ResultSet $RESULT = $PS.executeQuery();"
+  negative:
+    - "PreparedStatement $PS = $SESSION.connection().prepareStatement(ESAPI.encoder().encodeForSQL($QUERY)); ResultSet $RESULT = $PS.executeQuery();"
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JBoss (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,8-41)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:17,37-65)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,36-54)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,63-81)
+Rule Content:
+/**
+ * @name SQL injection vulnerability due to string concatenation
+ * @description Detects when user input is directly concatenated into a SQL query.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.0
+ * @precision high
+ * @id java/find-sql-string-concatenation
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JBoss
+
+class SQLStringConcatConfig extends TaintTracking::Configuration {
+  SQLStringConcatConfig() { this = "SQLStringConcatConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getType().hasName("java.lang.String")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call call |
+      call.getCallee() = m and
+      m.hasName("executeQuery") and
+      m.getDeclaringType().hasName("java.sql.PreparedStatement") and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    // String concatenation taint propagation
+    exists(AddExpr add |
+      (pred.asExpr() = add.getLeftOperand() and succ.asExpr() = add) or
+      (pred.asExpr() = add.getRightOperand() and succ.asExpr() = add)
+    ) or
+    // Argument to argument propagation
+    exists(Call call, int i, int j |
+      pred.asExpr() = call.getArgument(i) and
+      succ.asExpr() = call.getArgument(j)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(Method m, Call call |
+      call.getCallee() = m and
+      m.getDeclaringType().getQualifiedName().matches("org.owasp.esapi.%") and
+      call.getArgument(0) = node.asExpr()
+    )
+  }
+}
+
+from SQLStringConcatConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization in $@",
+  source.getNode(), source.toString(),
+  sink.getNode(), sink.toString()
+================================================================================

@@ -1,0 +1,76 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+sources:
+  - id: LAMBDA_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+        - op: or
+          conditions:
+            - op: eq
+              left: methodFullName
+              right: "$HANDLERTYPE $HANDLER($TYPE $EVENT, com.amazonaws.services.lambda.runtime.Context $CONTEXT)"
+            - op: eq
+              left: methodFullName
+              right: "$HANDLERTYPE $HANDLER(InputStream $EVENT, OutputStream $OUT, com.amazonaws.services.lambda.runtime.Context $CONTEXT)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.PreparedStatement
+        method: executeQuery
+      arg_index: 0
+  - id: JDBCTEMPLATE_QUERY
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: ".*queryFor(.*)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: LAMBDA_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(java.sql.PreparedStatement.setString)"
+report:
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE id = \" + event.getParameter(\"id\"));"
+  negative:
+    - "stmt.executeQuery(\"SELECT * FROM users WHERE id = ?\");"
+    - "stmt.setString(1, event.getParameter(\"id\"));"
+    - "stmt.executeQuery();"
+```

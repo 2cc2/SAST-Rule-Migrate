@@ -1,0 +1,771 @@
+Timestamp: 2025-10-23 13:52:58
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "java-reverse-shell"
+  kind: hybrid
+  severity: WARNING
+  message: "Semgrep found potential reverse shell behavior"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: "java.lang.ProcessBuilder", method: "start" }
+sinks:
+  - id: SOCKET_IO
+    match:
+      node: CALL
+      or:
+        - api: { type: "java.net.Socket", method: "getInputStream" }
+        - api: { type: "java.io.InputStream", methods: ["read", "available"] }
+        - api: { type: "java.io.OutputStream", methods: ["write", "flush"] }
+propagations:
+  - id: SOCKET_TO_IO
+    edge: field-access
+    kind: taint
+barriers:
+  - id: PROCESS_DESTROY
+    match:
+      node: CALL
+      api: { type: "java.lang.Process", method: "destroy" }
+    effect: stop
+flows:
+  - source: PROCESS_START
+    sink: SOCKET_IO
+    constraints:
+      path:
+        must:
+          - pattern: "CALL(java.net.Socket)"
+          - pattern: "LOOP(while)"
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{node: "CALL(java.net.Socket)"}, {node: "CALL(java.lang.ProcessBuilder.start)"}] }
+metadata:
+  cwe: ["CWE-78"]
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type BarrierGuard (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:49,34-46)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:51,12-24)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,34-62)
+ERROR: cannot override final predicate TaintTrackingImpl::Configuration.isBarrier(Node node) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:70,22-31)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:83,30-48)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:83,57-75)
+WARNING: unused variable 'pred' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,44-48)
+WARNING: unused method 'blocks' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+Rule Content:
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior where process output is redirected to socket I/O
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.8
+ * @precision high
+ * @id java/reverse-shell
+ * @tags security
+ *       external/cwe/cwe-78
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class ProcessStartSource extends DataFlow::Node {
+  ProcessStartSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      ma.getMethod().getName() = "start" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SocketIOSink extends DataFlow::Node {
+  SocketIOSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+        ma.getMethod().getName() = "getInputStream"
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "InputStream") and
+        ma.getMethod().getName() in ["read", "available"]
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "OutputStream") and
+        ma.getMethod().getName() in ["write", "flush"]
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class ProcessStopBarrier extends BarrierGuard {
+  override predicate blocks(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Process") and
+      ma.getMethod().getName() = "destroy" and
+      succ.asExpr() = ma
+    )
+  }
+}
+
+class ReverseShellConfig extends TaintTracking::Configuration {
+  ReverseShellConfig() { this = "ReverseShellConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ProcessStartSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SocketIOSink
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof ProcessStopBarrier
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(FieldAccess fa | 
+      fa.getField().getType() instanceof RefType and
+      pred.asExpr() = fa.getQualifier() and
+      succ.asExpr() = fa
+    )
+  }
+}
+
+from ReverseShellConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  source.getNode() + " produces process output that flows to socket I/O " + sink.getNode() + ", which may indicate a reverse shell",
+  source.getNode(), "Process output source",
+  sink.getNode(), "Socket I/O sink"
+================================================================================
+Timestamp: 2025-10-23 13:53:49
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "java-reverse-shell"
+  kind: hybrid
+  severity: WARNING
+  message: "Semgrep found potential reverse shell behavior"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: "java.lang.ProcessBuilder", method: "start" }
+sinks:
+  - id: SOCKET_IO
+    match:
+      node: CALL
+      or:
+        - api: { type: "java.net.Socket", method: "getInputStream" }
+        - api: { type: "java.io.InputStream", methods: ["read", "available"] }
+        - api: { type: "java.io.OutputStream", methods: ["write", "flush"] }
+propagations:
+  - id: SOCKET_TO_IO
+    edge: field-access
+    kind: taint
+barriers:
+  - id: PROCESS_DESTROY
+    match:
+      node: CALL
+      api: { type: "java.lang.Process", method: "destroy" }
+    effect: stop
+flows:
+  - source: PROCESS_START
+    sink: SOCKET_IO
+    constraints:
+      path:
+        must:
+          - pattern: "CALL(java.net.Socket)"
+          - pattern: "LOOP(while)"
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{node: "CALL(java.net.Socket)"}, {node: "CALL(java.lang.ProcessBuilder.start)"}] }
+metadata:
+  cwe: ["CWE-78"]
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,74-75)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,3-75)
+ERROR: could not parse type name (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,70-71)
+ERROR: expected a term but found an expression instead (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,3-71)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,67-73)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,74-75)
+ERROR: extraneous input 'exists' expecting one of: '(', Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,63-69)
+ERROR: unexpected input ')' expecting one of: 'boolean', 'date', 'float', 'int', 'string', Lowerid, Upperid, Atlowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,70-71)
+ERROR: could not resolve module semmle.code.java.ControlFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-36)
+ERROR: getAPathTo(<unknown>) cannot be resolved for type DataFlowNodes::Public::ExprNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,39-49)
+ERROR: asExpr() cannot be resolved for type DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,57-63)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:93,74-75)
+ERROR: getAPathTo(<unknown>) cannot be resolved for type DataFlowNodes::Public::ExprNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,37-47)
+ERROR: asExpr() cannot be resolved for type DataFlowImpl1::PathNode (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,53-59)
+ERROR: could not resolve type  (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:94,70-71)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:23,27-39)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,27-39)
+WARNING: type 'Configuration' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:63,32-60)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:82,12-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:90,6-24)
+WARNING: type 'PathNode' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:90,33-51)
+Rule Content:
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior where process output is redirected to socket I/O
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/reverse-shell
+ * @tags security
+ *       external/cwe/cwe-78
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.ControlFlow
+
+class ProcessStartSource extends DataFlow::Node {
+  ProcessStartSource() {
+    exists(Method m | 
+      m.getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      m.getName() = "start" and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getQualifier()
+    )
+  }
+}
+
+class SocketIOOperation extends DataFlow::Node {
+  SocketIOOperation() {
+    exists(Method m |
+      (
+        m.getDeclaringType().hasQualifiedName("java.net", "Socket") and
+        m.getName() = "getInputStream"
+      ) or
+      (
+        m.getDeclaringType().hasQualifiedName("java.io", "InputStream") and
+        m.getName() in ["read", "available"]
+      ) or
+      (
+        m.getDeclaringType().hasQualifiedName("java.io", "OutputStream") and
+        m.getName() in ["write", "flush"]
+      ) and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m)
+    )
+  }
+}
+
+class SocketObject extends DataFlow::Node {
+  SocketObject() {
+    exists(Class c | 
+      c.hasQualifiedName("java.net", "Socket") and
+      this.getType() = c
+    )
+  }
+}
+
+class WhileLoop extends DataFlow::Node {
+  WhileLoop() {
+    exists(WhileStmt ws | this.asExpr() = ws.getCondition())
+  }
+}
+
+class ReverseShellFlow extends TaintTracking::Configuration {
+  ReverseShellFlow() { this = "ReverseShellFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ProcessStartSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SocketIOOperation
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(FieldAccess fa | 
+      pred.asExpr() = fa.getQualifier() and
+      succ.asExpr() = fa
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Process") and
+      ma.getMethod().getName() = "destroy" and
+      node.asExpr() = ma
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SocketObject socket, WhileLoop loop
+where 
+  any(ReverseShellFlow cfg).hasFlowPath(source, sink) and
+  DataFlow::exprNode(socket.asExpr()).getAPathTo(source.asExpr()).exists() and
+  DataFlow::exprNode(loop.asExpr()).getAPathTo(sink.asExpr()).exists()
+select sink.getNode(),
+  source.getNode() + " produces process output that flows to socket I/O " + sink.getNode() + ", indicating potential reverse shell",
+  source.getNode(), "Process output source",
+  sink.getNode(), "Socket I/O sink"
+================================================================================
+Timestamp: 2025-10-23 13:54:39
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "java-reverse-shell"
+  kind: hybrid
+  severity: WARNING
+  message: "Semgrep found potential reverse shell behavior"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+sources:
+  - id: PROCESS_START
+    match:
+      node: CALL
+      api: { type: "java.lang.ProcessBuilder", method: "start" }
+sinks:
+  - id: SOCKET_IO
+    match:
+      node: CALL
+      or:
+        - api: { type: "java.net.Socket", method: "getInputStream" }
+        - api: { type: "java.io.InputStream", methods: ["read", "available"] }
+        - api: { type: "java.io.OutputStream", methods: ["write", "flush"] }
+propagations:
+  - id: SOCKET_TO_IO
+    edge: field-access
+    kind: taint
+barriers:
+  - id: PROCESS_DESTROY
+    match:
+      node: CALL
+      api: { type: "java.lang.Process", method: "destroy" }
+    effect: stop
+flows:
+  - source: PROCESS_START
+    sink: SOCKET_IO
+    constraints:
+      path:
+        must:
+          - pattern: "CALL(java.net.Socket)"
+          - pattern: "LOOP(while)"
+report:
+  locations: ["source", "sink"]
+  evidence: { capture: [{node: "CALL(java.net.Socket)"}, {node: "CALL(java.lang.ProcessBuilder.start)"}] }
+metadata:
+  cwe: ["CWE-78"]
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  references: ["https://owasp.org/Top10/A03_2021-Injection"]
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:18,34-42)
+ERROR: asExpr() cannot be resolved for type ProcessStartSource.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:24,14-20)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:30,28-36)
+ERROR: asExpr() cannot be resolved for type SocketIOSink.extends (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve module TaintTracking (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:50,34-47)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,31-39)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,29-37)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,34-42)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,44-52)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,65-73)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,32-40)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,6-14)
+ERROR: could not resolve module DataFlow (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:81,33-41)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:22,14-26)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:62,12-24)
+WARNING: unused method 'isSource' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'isSink' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:57,22-28)
+WARNING: unused method 'isSanitizer' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:61,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:69,22-43)
+WARNING: unused method 'isBarrier' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:76,22-31)
+Rule Content:
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior where process output is redirected to socket I/O
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.8
+ * @precision high
+ * @id java/reverse-shell
+ * @tags security
+ *       external/cwe/cwe-78
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import DataFlow::PathGraph
+
+class ProcessStartSource extends DataFlow::Node {
+  ProcessStartSource() {
+    exists(Call call |
+      call.getCallee().(Constructor).getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      exists(MethodAccess ma | 
+        ma.getMethod().getName() = "start" and
+        this.asExpr() = ma.getQualifier()
+      )
+    )
+  }
+}
+
+class SocketIOSink extends DataFlow::Node {
+  SocketIOSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+        ma.getMethod().getName() = "getInputStream"
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "InputStream") and
+        ma.getMethod().getName() in ["read", "available"]
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "OutputStream") and
+        ma.getMethod().getName() in ["write", "flush"]
+      ) and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class ReverseShellConfig extends TaintTracking::Configuration {
+  ReverseShellConfig() { this = "ReverseShellConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ProcessStartSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SocketIOSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Process") and
+      ma.getMethod().getName() = "destroy" and
+      node.asExpr() = ma
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(FieldAccess fa | 
+      pred.asExpr() = fa.getQualifier() and
+      succ.asExpr() = fa
+    )
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    exists(WhileStmt ws | node.asExpr() = ws.getCondition())
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where any(ReverseShellConfig cfg).hasFlowPath(source, sink)
+select sink, 
+  "Potential reverse shell detected: process output flows to socket I/O",
+  source, "ProcessBuilder.start() call",
+  sink, "Socket I/O operation"
+================================================================================
+Timestamp: 2025-10-23 19:22:25
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "java-reverse-shell"
+  kind: hybrid
+  severity: WARNING
+  message: "Semgrep found potential reverse shell behavior"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SOCKET_CREATION
+    match:
+      node: CALL
+      api: { type: "java.net.Socket", method: "<init>" }
+sinks:
+  - id: PROCESS_BUILDER
+    match:
+      node: CALL
+      api: { type: "java.lang.ProcessBuilder", method: "start" }
+  - id: IO_OPERATION
+    match:
+      node: CALL
+      api: { type: "java.io.InputStream", method: "read" }
+sanitizers: []
+barriers: []
+propagations:
+  - id: SOCKET_TO_INPUT
+    edge: arg->param
+    kind: taint
+  - id: INPUT_TO_OUTPUT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SOCKET_CREATION
+    sink: IO_OPERATION
+    through: [SOCKET_TO_INPUT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.net.Socket.getInputStream)" } ]
+  - source: PROCESS_BUILDER
+    sink: IO_OPERATION
+    through: []
+report:
+  message: "Potential reverse shell behavior detected"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:15,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:55,10-22)
+ERROR: Expr::Expr is not compatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:58,5-63)
+ERROR: Expr::MethodCall is not compatible with DataFlowNodes::Public::Node (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:59,5-46)
+Rule Content:
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior in Java code
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/reverse-shell
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class SocketCreation extends DataFlow::Node {
+  SocketCreation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("<init>") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket")
+      and this.asExpr() = ma
+    )
+  }
+}
+
+class ProcessBuilderStart extends DataFlow::Node {
+  ProcessBuilderStart() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("start") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder")
+      and this.asExpr() = ma
+    )
+  }
+}
+
+class IOOperation extends DataFlow::Node {
+  IOOperation() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("read") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "InputStream")
+      and this.asExpr() = ma
+    )
+  }
+}
+
+class SocketToInputStream extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getInputStream") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      pred.asExpr() = ma.getQualifier() and
+      succ.asExpr() = ma
+    )
+  }
+}
+
+predicate isSocketToIOFlow(DataFlow::Node source, DataFlow::Node sink) {
+  exists(MethodAccess socketGetInput |
+    socketGetInput.getMethod().hasName("getInputStream") and
+    socketGetInput.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+    DataFlow::localFlow(source, socketGetInput.getQualifier()) and
+    DataFlow::localFlow(socketGetInput, sink)
+  )
+}
+
+predicate isProcessBuilderToIOFlow(DataFlow::Node source, DataFlow::Node sink) {
+  DataFlow::localFlow(source, sink)
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where 
+  (source instanceof SocketCreation and sink instanceof IOOperation and isSocketToIOFlow(source, sink)) or
+  (source instanceof ProcessBuilderStart and sink instanceof IOOperation and isProcessBuilderToIOFlow(source, sink))
+select sink, "Potential reverse shell behavior detected", source, sink.toString()
+================================================================================
+Timestamp: 2025-10-23 19:23:46
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "java-reverse-shell"
+  kind: hybrid
+  severity: WARNING
+  message: "Semgrep found potential reverse shell behavior"
+scope:
+  languages: [java]
+  frameworks: ["*"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: SOCKET_CREATION
+    match:
+      node: CALL
+      api: { type: "java.net.Socket", method: "<init>" }
+sinks:
+  - id: PROCESS_BUILDER
+    match:
+      node: CALL
+      api: { type: "java.lang.ProcessBuilder", method: "start" }
+  - id: IO_OPERATION
+    match:
+      node: CALL
+      api: { type: "java.io.InputStream", method: "read" }
+sanitizers: []
+barriers: []
+propagations:
+  - id: SOCKET_TO_INPUT
+    edge: arg->param
+    kind: taint
+  - id: INPUT_TO_OUTPUT
+    edge: arg->param
+    kind: taint
+flows:
+  - source: SOCKET_CREATION
+    sink: IO_OPERATION
+    through: [SOCKET_TO_INPUT*]
+    constraints:
+      path:
+        must: [ { pattern: "CALL(java.net.Socket.getInputStream)" } ]
+  - source: PROCESS_BUILDER
+    sink: IO_OPERATION
+    through: []
+report:
+  message: "Potential reverse shell behavior detected"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests: {}
+```
+Error: Compiling query plan for /Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,42-46)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,46-47)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,65-66)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:45,34-35)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,11-12)
+ERROR: query module contains multiple select clauses (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: SocketToInputStreamTaintStep must implement abstract predicate FlowSteps::AdditionalTaintStep.step(Node node1, Node node2) (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:43,7-35)
+ERROR: predicate 'step' does not override another predicate (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,3-41)
+ERROR: predicate 'step' requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,22-26)
+ERROR: predicate requires a body (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,63-65)
+WARNING: type 'MethodAccess' has been deprecated and may be removed in future (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:56,12-24)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,48-62)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:48 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:44,42-47)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:44 (/Users/djoker/Desktop/CTGA/demo/migrate/persistent_codeql/java-security-queries/queries/test-rule/TestRule.ql:48,7-12)
+Rule Content:
+/**
+ * @name Java Reverse Shell Detection
+ * @description Detects potential reverse shell behavior in Java code
+ * @kind problem
+ * @problem.severity warning
+ * @id java/reverse-shell
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class SocketSource extends DataFlow::Node {
+  SocketSource() {
+    exists(Method m |
+      m.hasName("<init>") and
+      m.getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      this.asParameter() = m.getAParameter()
+    )
+  }
+}
+
+class ProcessBuilderSink extends DataFlow::Node {
+  ProcessBuilderSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("start") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "ProcessBuilder") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class IOSink extends DataFlow::Node {
+  IOSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("read") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "InputStream") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SocketToInputStreamTaintStep extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node from, DataFlow::Node to) {
+    exists(MethodAccess getInput |
+      getInput.getMethod().hasName("getInputStream") and
+      getInput.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      from.asExpr() = getInput.getQualifier() and
+      to.asExpr() = getInput
+    )
+  }
+}
+
+predicate socketToIOFlow(DataFlow::Node source, DataFlow::Node sink) {
+  exists(DataFlow::Node inputStream |
+    exists(MethodAccess getInput |
+      getInput.getMethod().hasName("getInputStream") and
+      getInput.getMethod().getDeclaringType().hasQualifiedName("java.net", "Socket") and
+      inputStream.asExpr() = getInput
+    ) and
+    TaintTracking::localTaint(source, inputStream) and
+    TaintTracking::localTaint(inputStream, sink)
+  )
+}
+
+predicate processBuilderToIOFlow(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaint(source, sink)
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where 
+  (source instanceof SocketSource and sink instanceof IOSink and socketToIOFlow(source, sink)) or
+  (source instanceof ProcessBuilderSink and sink instanceof IOSink and processBuilderToIOFlow(source, sink))
+select sink, "Potential reverse shell behavior detected", source, sink.toString()
+================================================================================

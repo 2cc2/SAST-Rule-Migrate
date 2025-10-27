@@ -1,0 +1,63 @@
+/**
+ * @name Unvalidated Redirect
+ * @kind path-problem
+ * @id java/unvalidated-redirect
+ * @severity Warning
+ * @description Application redirects to a destination URL specified by a user-supplied parameter
+ *              that is not validated. This could direct users to malicious locations. Consider
+ *              using an allowlist to validate URLs.
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class UserInput extends DataFlow::ExprNode {
+  UserInput() {
+    exists(Method m |
+      m.hasName("getParameter") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class RedirectSink extends DataFlow::ExprNode {
+  RedirectSink() {
+    exists(Method m |
+      m.hasName("sendRedirect") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      this.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getArgument(0)
+    )
+  }
+}
+
+class HeaderSink extends DataFlow::ExprNode {
+  HeaderSink() {
+    exists(Method m, MethodAccess ma |
+      m.hasName("addHeader") and
+      m.getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletResponse") and
+      ma.getMethod() = m and
+      ma.getArgument(1).(StringLiteral).getValue() = "Location" and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class UnvalidatedRedirectFlow extends TaintTracking::Configuration {
+  UnvalidatedRedirectFlow() { this = "UnvalidatedRedirectFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInput }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof RedirectSink or sink instanceof HeaderSink
+  }
+}
+
+from UnvalidatedRedirectFlow config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potential open redirect vulnerability found: $@ flows to $@", 
+  source, source.getNode().toString(), 
+  sink, sink.getNode().toString()

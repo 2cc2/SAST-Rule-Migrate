@@ -1,0 +1,53 @@
+/**
+ * @name Unsafe Reflection
+ * @description Use of externally-controlled input to select classes may allow bypassing authentication or access control checks
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/unsafe-reflection
+ * @tags security
+ *       external/cwe/cwe-470
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class UnsafeReflectionConfig extends TaintTracking::Configuration {
+  UnsafeReflectionConfig() { this = "UnsafeReflectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, Call call |
+      m.hasName("forName") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Class") and
+      call.getCallee() = m and
+      call.getArgument(0) = source.asExpr() and
+      not source.asExpr() instanceof Literal
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, Call call |
+      m.hasName("newInstance") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Class") and
+      call.getCallee() = m and
+      call.getQualifier() = sink.asExpr()
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Call call |
+      call.getArgument(0) = node1.asExpr() and
+      exists(int i | call.getArgument(i) = node2.asExpr())
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, UnsafeReflectionConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "If an attacker can supply values that the application then uses to determine which class to instantiate, the potential exists for the attacker to create unintended control flow paths",
+  source, sink,
+  "$@ flows to reflection instantiation here.",
+  source.getNode(), "User input",
+  sink.getNode(), "Class instantiation"
