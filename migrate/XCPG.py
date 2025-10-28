@@ -3,7 +3,7 @@ import os
 import re
 import time
 from datetime import datetime
-from sast_tools.codeql import validate_codeql_rule
+from sast_tools.muticodeql import validate_codeql_rule
 from agent.llm_client import LLM
 from agent.prompt.codeql import IRTransformPrompt, RepairPrompt,AbstractPrompt
 from agent.prompt.IR import IRPrompt
@@ -100,7 +100,7 @@ def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast
     
     for attempt in range(1, max_retries + 1):
         print(f"\n🔄 第 {attempt} 次尝试生成规则...")
-        prompt = IRTransformPrompt().format(IR=IR_content, language="java", sast=sast,example=example)
+        prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast,example=example)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
         print(f"[📜] LLM 响应内容：\n{response}")
         rule_content = get_rule_from_llm(response)
@@ -127,9 +127,9 @@ def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast
                 log.write(f"Rule Content:\n{rule_content}\n")
                 # log.write(f"Prompt:\n{prompt}\n")
                 log.write(f"{'=' * 80}\n")
-            prompt = AbstractPrompt().format(code=rule_content, error=result['error'].strip(),  language="java", sast=sast)
+            prompt = AbstractPrompt().format(code=rule_content, error=result['error'].strip(),  language="python", sast=sast)
             advise= llm.Transform(prompt=prompt, max_tokens=3000)
-            prompt = RepairPrompt().format(code=rule_content, language="java", error=result['error'].strip(), sast=sast,advise=advise)
+            prompt = RepairPrompt().format(code=rule_content, language="python", error=result['error'].strip(), sast=sast,advise=advise)
             time.sleep(2)  # 避免过快请求
             print("[🔄] 正在重新生成规则...")
             print(f"当前提示词：{prompt}")
@@ -173,11 +173,11 @@ def process_multiple_files(directory: str,IR:str, output_dir: str, log_dir: str)
         migrate_rule(file_path, IR,output_dir, log_dir)
   
 if __name__ == "__main__":
-    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java_classified_rules"  
-    IR_directory = "/Users/djoker/Desktop/CTGA/demo/XCPGIR5/" 
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_XCPGIR_5cwe"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/python_classified_rules"  
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/XCPGIR5_pyy/" 
+    output_directory = "/home/cbb/SAST-Rule-Migrate/output/semgrep2codeql_XCPGIR_5cwe_pyy"
 
-    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_XCPGIR_5cwe"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/semgrep2codeql_XCPGIR_5cwe_pyy"
     for directory in [input_directory, output_directory, log_directory]:
         if not os.path.exists(directory):
             os.makedirs(directory)

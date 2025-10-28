@@ -1,64 +1,89 @@
 /**
- * @name JDBC SQL Formatted String Injection
- * @description Detects possible JDBC injection when using string formatting/concatenation
- *              instead of parameterized queries with JdbcTemplate methods.
+ * @name OGNL Injection
+ * @description A expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation.
  * @kind path-problem
  * @problem.severity warning
- * @id java/jdbc-sql-formatted-string
- * @tags security
- *       external/cwe/cwe-089
+ * @id java/ognl-injection
  */
 
 import java
 import semmle.code.java.dataflow.TaintTracking
-import semmle.code.java.frameworks.spring.JdbcTemplate
+import semmle.code.java.frameworks.ognl.Ognl
 
-class StringFormatSource extends DataFlow::Node {
-  StringFormatSource() {
-    exists(Method m, Call ma |
-      m.hasName("format") and
-      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
-      ma.getCallee() = m and
-      this.asExpr() = ma
-    )
-  }
-}
-
-class StringConcatSource extends DataFlow::Node {
-  StringConcatSource() {
-    exists(AddExpr e |
-      e.getLeftOperand().getType() instanceof TypeString and
-      e.getRightOperand().getType() instanceof TypeString and
-      this.asExpr() = e
-    )
-  }
-}
-
-class JdbcSink extends DataFlow::Node {
-  JdbcSink() {
-    exists(Method m, Call ma |
-      m.hasName(["queryForObject", "update", "execute", "insert"]) and
-      m.getDeclaringType().getASupertype*().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
-      ma.getCallee() = m and
-      this.asExpr() = ma.getArgument(0)
-    )
-  }
-}
-
-class JdbcTaintConfig extends TaintTracking::Configuration {
-  JdbcTaintConfig() { this = "JdbcTaintConfig" }
+class OgnlConfiguration extends TaintTracking::Configuration {
+  OgnlConfiguration() { this = "OgnlInjection" }
 
   override predicate isSource(DataFlow::Node source) {
-    source instanceof StringFormatSource or source instanceof StringConcatSource
+    exists(Parameter p | source.asParameter() = p and p.getValue().toString() != "")
+    or
+    exists(LocalVariable v | source.asLocalVariable() = v and v.getInitializer().toString() != "")
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    sink instanceof JdbcSink
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getGetMethod") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(1)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getSetMethod") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(1)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getField") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(1)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setProperties") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setProperty") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getValue") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("setValue") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlReflectionProvider")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("translateVariables") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "TextParseUtil")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("evaluate") 
+      and ma.getMethod().getDeclaringType().hasQualifiedName("ognl", "OgnlUtil")
+      and sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof Literal
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    node.getBasicBlock().getASuccessor() instanceof ReturnStmt
   }
 }
 
-from DataFlow::PathNode source, DataFlow::PathNode sink, JdbcTaintConfig config
-where config.hasFlowPath(source, sink)
-select sink, "Possible JDBC injection detected. Use parameterized queries instead of string concatenation/formatting.",
-  source, "This is the source of the formatted/concatenated string",
-  sink, "This is the JDBC query sink"
+from DataFlow::PathNode source, DataFlow::PathNode sink, OgnlConfiguration conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential OGNL Injection vulnerability detected"

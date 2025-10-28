@@ -4,7 +4,7 @@ import time
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sast_tools.codeql import validate_codeql_rule
+from sast_tools.muticodeql import validate_codeql_rule,ensure_dir
 from agent.llm_client import LLM
 from agent.prompt.codeql import IRTransformPrompt, RepairPrompt, AbstractPrompt
 from agent.prompt.IR import IRPrompt
@@ -102,8 +102,10 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
         if not rule_content:
             thread_print("⚠️ 未找到规则内容，尝试调整提示词重试...")
             continue
-
-        result = validate_codeql_rule(rule_content)
+        
+        result = validate_codeql_rule(rule_content, language="python")
+        
+        # result = validate_codeql_rule(rule_content)
         if result["valid"]:
             thread_print("✅ 验证通过，保存结果...")
             save_IR(IR_content, IR_dir, base_name=input_filename)
@@ -132,6 +134,7 @@ def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir
     print(f"[📂] 输出目录已有 {len(output_files)} 个文件")
 
     yaml_files = get_all_yaml_files(directory)
+    # yaml_files = yaml_files[:5]
     print(f"[📄] 待迁移 YAML 文件数: {len(yaml_files)}")
 
     existing = [os.path.splitext(f)[0].split('_')[0] for f in os.listdir(output_dir)]
@@ -156,16 +159,16 @@ def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir
 
 
 if __name__ == "__main__":
-    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/python_classified_rules"
-    IR_directory = "/Users/djoker/Desktop/CTGA/demo/Py_XCPGIR5"
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/Py_semgrep2codeql_XCPGIR_5cwe"
-    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/Py_semgrep2codeql_XCPGIR_5cwe"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/python_classified_rules"
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/Py_XCPGIR5"
+    output_directory = "/home/cbb/SAST-Rule-Migrate/output/Py_semgrep2codeql_XCPGIR_5cwe"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/Py_semgrep2codeql_XCPGIR_5cwe"
 
     for d in [input_directory, IR_directory, output_directory, log_directory]:
         os.makedirs(d, exist_ok=True)
 
     start = datetime.now()
-    process_multiple_files(input_directory, IR_directory, output_directory, log_directory, max_workers=4)
+    process_multiple_files(input_directory, IR_directory, output_directory, log_directory, max_workers=10)
     end = datetime.now()
 
     print(f"\n✅ 全部任务完成，总耗时: {end - start}")

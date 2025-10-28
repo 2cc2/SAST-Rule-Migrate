@@ -1,149 +1,218 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import subprocess
 import uuid
 import shutil
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
-# CodeQL 可执行文件路径
-codeql_path = "/Users/djoker/Desktop/CodeQL/codeql/codeql"
+# ------------ 配置区 ------------
+codeql_path = "/home/cbb/codeql-cli/codeql/codeql"  # CodeQL 可执行文件路径
+base_path = "/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test"  # 持久化目录
+max_workers = 3  # 并发线程数
+cmd_timeout = 300  # 子进程超时（秒）
+keep_on_fail = True  # 是否在验证失败时保留临时目录
+# ---------------------------------
+
+packages_dir = os.path.expanduser("~/.codeql/packages")
 
 
-# --- 工具函数 ---
-def ensure_dir(path):
-    """确保目录存在"""
-    os.makedirs(path, exist_ok=True)
+def ensure_dir(p):
+    os.makedirs(p, exist_ok=True)
 
 
-# --- 主验证函数 ---
-def validate_codeql_rule(rule_content: str, base_path: str, language: str = "python") -> dict:
-    """
-    多线程安全的 CodeQL 规则验证函数
-    每个线程使用独立的临时目录运行验证，结束后自动清理缓存。
+def write_codeql_pack_yaml(root_dir: str, language: str = "python"):
+    """写入 codeql-pack.yml"""
+    pack_file = os.path.join(root_dir, "codeql-pack.yml")
+    with open(pack_file, "w") as f:
+        f.write(
+            f"name: sast/{language}-security-queries\n"
+            "version: 0.0.1\n"
+            "library: false\n"
+            f"dependencies:\n  codeql/{language}-all: \"*\"\n"
+        )
+    return pack_file
 
-    :param rule_content: CodeQL 查询规则内容
-    :param base_path: 临时存放路径的根目录
-    :param language: 编程语言（默认 python）
-    :return: {'valid': bool, 'error': str}
-    """
+
+def write_rule_file(rule_file: str, rule_content: str):
+    with open(rule_file, "w", encoding="utf-8") as f:
+        f.write(rule_content)
+
+
+def write_sample_code(sample_file: str, language: str = "python"):
+    """写入简单样例源码"""
+    if language == "python":
+        content = "import os\nos.system('ls')\n"
+    elif language == "java":
+        content = (
+            "public class Sample {\n"
+            "  public static void main(String[] args) {\n"
+            "    Runtime.getRuntime().exec(\"ls\");\n"
+            "  }\n"
+            "}\n"
+        )
+    elif language == "javascript":
+        content = "eval('console.log(1)');"
+    else:
+        content = "// sample\n"
+    with open(sample_file, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def run_cmd(cmd, cwd=None, timeout=cmd_timeout):
+    """运行子进程命令并返回 (returncode, stdout, stderr)"""
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "CODEQL_PACKAGES_DIR": packages_dir}
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as e:
+        return 124, "", f"TimeoutExpired: {e}"
+    except Exception as e:
+        return 1, "", f"Exception: {e}"
+
+
+def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language: str = "python"):
+    """验证单个 CodeQL 规则"""
     result = {"valid": True, "error": ""}
-    thread_id = uuid.uuid4().hex[:8]  # 每个线程独立 ID
-    persist_path = os.path.join(base_path, f"run_{thread_id}")
+    thread_id = uuid.uuid4().hex[:8]
+    persist_path = os.path.join(base_dir, f"run_{thread_id}")
 
     try:
         ensure_dir(persist_path)
 
-        # 1. 构建 CodeQL 包结构
         root_dir = os.path.join(persist_path, f"{language}-security-queries")
-        query_dir = os.path.join(root_dir, "queries/test-rule")
+        query_dir = os.path.join(root_dir, "queries", "test-rule")
         ensure_dir(query_dir)
 
-        # 写入 codeql-pack.yml
-        with open(os.path.join(root_dir, "codeql-pack.yml"), "w") as f:
-            f.write(
-                f"name: sast/{language}-security-queries\n"
-                f"version: 0.0.1\n"
-                f"library: false\n"
-                f"dependencies:\n  codeql/{language}-all: \"*\"\n"
-            )
-
-        # 写入 CodeQL 查询规则文件
+        # 写入包配置与规则
+        write_codeql_pack_yaml(root_dir, language)
         rule_file = os.path.join(query_dir, "TestRule.ql")
-        with open(rule_file, "w") as f:
-            f.write(rule_content)
+        write_rule_file(rule_file, rule_content)
 
-        # 写入简单 Python 漏洞示例
+        # 写入样例代码
         sample_dir = os.path.join(persist_path, "sample", language)
         ensure_dir(sample_dir)
-        sample_file = os.path.join(sample_dir, "vuln_example.py")
-        with open(sample_file, "w") as f:
-            f.write("import os\nos.system('ls')\n")
+        sample_file = os.path.join(sample_dir, f"vuln_example.{('py' if language == 'python' else 'java' if language == 'java' else 'js')}")
+        write_sample_code(sample_file, language)
 
-        # 2. 创建 CodeQL 数据库
+        # 创建 CodeQL 数据库
         db_path = os.path.join(persist_path, f"{language}-db")
+        ensure_dir(db_path)
+
         print(f"[🔧] ({thread_id}) 正在创建 CodeQL 数据库...")
-        subprocess.run(
-            [
+
+        # 根据语言切换数据库构建命令
+        if language == "java":
+            command = "mvn clean package -DskipTests"
+            create_cmd = [
+                codeql_path, "database", "create", db_path,
+                "--language=" + language,
+                "--source-root=" + sample_dir,
+                "--command=" + command,
+                "--overwrite"
+            ]
+            print(f"[🔄] ({thread_id}) 正在执行 Maven 构建命令：{command}")
+        else:
+            create_cmd = [
                 codeql_path, "database", "create", db_path,
                 "--language=" + language,
                 "--source-root=" + sample_dir,
                 "--overwrite"
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+            ]
 
-        # 3. 运行 CodeQL 查询验证
-        print(f"[🚀] ({thread_id}) 正在运行规则验证...")
-        process = subprocess.run(
-            [codeql_path, "query", "run", rule_file, "--database", db_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        code, out, err = run_cmd(create_cmd)
 
-        if process.returncode != 0:
+        if code != 0:
             result["valid"] = False
-            result["error"] = process.stderr.strip() or "Unknown CodeQL failure"
-        else:
-            print(f"[✅] ({thread_id}) 验证通过")
+            result["error"] = f"Database creation failed: {err.strip()}"
+            return result
 
-    except subprocess.CalledProcessError as e:
-        result["valid"] = False
-        result["error"] = e.stderr.strip() or str(e)
+        # 安装依赖
+        # print(f"[📦] ({thread_id}) 安装 CodeQL 依赖包...")
+        # code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
+        # if code != 0:
+        #     result["valid"] = False
+        #     result["error"] = f"Pack install failed: {err_pack.strip()}"
+        #     return result
+
+        # 运行查询
+        print(f"[🚀] ({thread_id}) 正在运行规则验证...")
+        code, out, err = run_cmd([codeql_path, "query", "run", rule_file, "--database", db_path])
+        if code != 0:
+            result["valid"] = False
+            result["error"] = err.strip() or "Unknown CodeQL failure"
+        else:
+            result["valid"] = True
+            result["error"] = ""
+
+        return result
 
     except Exception as e:
         result["valid"] = False
         result["error"] = str(e)
+        return result
 
     finally:
-        # ✅ 验证完成后自动清理缓存目录
-        try:
-            shutil.rmtree(persist_path)
-            print(f"[🧹] ({thread_id}) 已删除临时目录 {persist_path}")
-        except Exception as cleanup_err:
-            print(f"[⚠️] ({thread_id}) 删除临时目录失败: {cleanup_err}")
-
-    return result
+        # 清理临时目录
+        if os.path.exists(persist_path):
+            try:
+                shutil.rmtree(persist_path)
+            except Exception as e:
+                print(f"[cleanup warning] failed to remove {persist_path}: {e}")
 
 
-# --- 多线程批量执行 ---
-def validate_rules_concurrently(rules, base_path, max_workers=3, language="python"):
-    """
-    并发验证多条 CodeQL 规则。
-    """
-    ensure_dir(base_path)
+def validate_rules_concurrently(rules, base_dir, max_workers=3, language="python"):
+    """并发验证多个规则"""
+    ensure_dir(base_dir)
     results = []
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(validate_codeql_rule, rule, base_path, language)
-            for rule in rules
-        ]
+        futures = [executor.submit(validate_codeql_rule, r, base_dir, language) for r in rules]
         for future in as_completed(futures):
             results.append(future.result())
-
     return results
 
 
-# --- 主程序入口 ---
 if __name__ == "__main__":
-    base_path = "/Users/djoker/Desktop/CTGA/test/codeql_test"
-    ensure_dir(base_path)
+    sample_rule = '''/**
+ * @name Use of exec function
+ * @description Detects usage of the exec function in Python code
+ * @id python/exec-usage
+ * @kind problem
+ * @problem.severity warning
+ * @tags security
+ *       external/cwe/cwe-078
+ */
 
-    # 示例规则（Python）
-    rule = '''import python
+import python
 
-from Call c
-where c.getTarget().getName() = "system"
-select c, "Potential command injection via os.system"
+from Call call, Name name
+where
+  name = call.getFunc() and
+  name.getId() = "exec"
+select call, "Use of exec function detected"
 '''
+    rules = [sample_rule] * 3
 
-    # 模拟 3 条规则并发验证
-    rules = [rule] * 3
-    results = validate_rules_concurrently(rules, base_path, max_workers=3, language="python")
+    ensure_dir(base_path)
+    print(f"[{datetime.now()}] Starting validation with {max_workers} workers...")
+    result = validate_codeql_rule(sample_rule, base_path, language = "python")
+    print(result)
+    # results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="python")
 
-    print("\n=== 验证结果汇总 ===")
-    for i, res in enumerate(results, 1):
-        print(f"规则 {i}: {res}")
+    # summary_path = os.path.join(base_path, "validation_summary.json")
+    # with open(summary_path, "w", encoding="utf-8") as f:
+    #     json.dump(results, f, indent=2, ensure_ascii=False)
+
+    # print(f"[{datetime.now()}] Done. Results saved to {summary_path}")
+    # for i, r in enumerate(results, 1):
+    #     print(f"Rule {i}: valid={r['valid']}, error={r.get('error','')}")
