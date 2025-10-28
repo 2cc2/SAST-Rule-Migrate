@@ -1,4 +1,4 @@
-Timestamp: 2025-10-28 17:59:24
+Timestamp: 2025-10-28 21:24:34
 Attempt: 1
 IR Content:
 ```yaml
@@ -8,208 +8,219 @@ rule:
   kind: taint
   severity: ERROR
   message: "Detected subprocess function '$FUNC' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  metadata:
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+    references:
+      - https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess
+      - https://docs.python.org/3/library/subprocess.html
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+    category: security
+    technology: [python]
+    confidence: LOW
+    impact: HIGH
+
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, csh, tcsh, ksh, zsh] }
+
 sources:
-  - id: DYNAMIC_SHELL_COMMAND
+  - id: SHELL_COMMAND
     match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
-      where:
-        - op: not
-          condition:
-            op: or
-            conditions:
-              - op: regex
-                left: arg[0].value
-                right: "^[\"'].*[\"']$"
-              - op: in
-                left: arg[0].value
-                right: ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
-  - id: PYTHON_SHELL_COMMAND
-    match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
+      node: LITERAL
       where:
         - op: regex
-          left: arg[0].value
-          right: "^(python)$"
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh)/"
+  
+  - id: PYTHON_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "=~/(python)/"
+
 sinks:
-  - id: SHELL_EXEC
+  - id: SUBPROCESS_CALL
     match:
       node: CALL
       api: { package: subprocess, method: "$FUNC" }
       arg_index: 0
+
 sanitizers:
-  - id: SHLEX_ESCAPE
+  - id: STATIC_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: neq
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh|python)/"
+    effect: neutralize
+
+barriers:
+  - id: SAFE_CONSTRUCTOR
     match:
       node: CALL
-      api: { package: shlex, method: escape }
-    effect: neutralize
-    scope: { sinks: [SHELL_EXEC] }
+      api: { package: subprocess, method: "CalledProcessError|SubprocessError" }
+    effect: stop
+
 propagations:
-  - id: ARG_TO_ARG
-    edge: arg->arg
+  - id: ARG_TO_PARAM
+    edge: arg->param
     kind: taint
+
 flows:
-  - source: DYNAMIC_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+  - source: SHELL_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
-          - pattern: "CALL(subprocess.CalledProcessError)"
-          - pattern: "CALL(subprocess.SubprocessError)"
-  - source: PYTHON_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+  
+  - source: PYTHON_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+
 report:
-  message: "Detected subprocess function without static string that may be vulnerable to command injection"
+  message: "Detected potentially unsafe subprocess call with dynamic shell command"
   locations: ["source", "sink"]
   evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "subprocess.call(user_input)"
-    - "subprocess.run([shell_input, '-c', dynamic_command])"
-  negative:
-    - "subprocess.call(['ls'])"
-    - "subprocess.run([shlex.escape(user_input)])"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module TaintTracking::Global<DangerousSubprocessConfig> (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:72,34-82)
-ERROR: could not resolve signature DataFlow::ConfigSig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:57,45-64)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:14,34-52)
-ERROR: getTarget() cannot be resolved for type SubprocessFunction.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
-ERROR: could not resolve type DataFlow::MethodValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:16,23-44)
-ERROR: asExpr() cannot be resolved for type DangerousShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:23,29-35)
-ERROR: asExpr() cannot be resolved for type DangerousShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:25,14-20)
-ERROR: could not resolve type DataFlow::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:25,34-57)
-ERROR: asExpr() cannot be resolved for type DangerousShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:26,14-20)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:35,29-35)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:36,12-18)
-ERROR: asExpr() cannot be resolved for type DangerousShellSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:43,60-66)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:49,12-30)
-ERROR: could not resolve type DataFlow::MethodValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:50,25-46)
-ERROR: could not resolve type DataFlow::MethodValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:51,25-46)
-ERROR: asExpr() cannot be resolved for type ShlexSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:52,31-37)
-ERROR: could not resolve module DangerousSubprocessFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:74,6-29)
-ERROR: could not resolve module DangerousSubprocessFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:74,48-71)
-ERROR: could not resolve module DangerousSubprocessFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:76,3-26)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: DangerousShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:20,7-27)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:32,7-24)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: DangerousShellSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:41,7-25)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:47,7-21)
-WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:58,13-21)
-WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:63,13-19)
-WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1d512b73/python-security-queries/queries/test-rule/TestRule.ql:67,13-24)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.CommandInjection (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:32,30-38)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:34,12-15)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:36,14-17)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:49,38-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:52,34-42)
+ERROR: could not resolve predicate regexpMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:55,11-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:60,41-49)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:62,12-15)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:72,52-65)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:75,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:79,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:83,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:87,32-40)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:18,26-34)
+ERROR: could not resolve predicate regexpMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:21,5-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:25,27-35)
+ERROR: could not resolve predicate regexpMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:28,5-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:92,48-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:92,75-83)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:33,3-17)
+ERROR: could not resolve variable node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:43,9-13)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:61,3-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:79,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:83,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_568d485b/python-security-queries/queries/test-rule/TestRule.ql:87,22-31)
 Rule Content:
 /**
- * @name Dangerous Subprocess Use Audit
- * @description Detects subprocess functions without static strings that may be vulnerable to command injection
- * @kind taint
- * @severity Error
+ * @name Dangerous Subprocess Use
+ * @description Detects subprocess function calls without static command strings that may be vulnerable to command injection
+ * @kind path-problem
  * @problem.severity error
+ * @precision high
  * @id python/dangerous-subprocess-use-audit
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
+import semmle.python.security.CommandInjection
+import DataFlow::PathGraph
 
-class SubprocessFunction extends DataFlow::CallNode {
-  SubprocessFunction() {
-    this.getTarget().(DataFlow::MethodValue).getAPackageName() = "subprocess"
-  }
+predicate isShellCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asSource().asConstantStringLiteral().getLiteral() |
+    regexpMatches(command, "/(sh|bash|ksh|csh|tcsh|zsh)/")
+  )
 }
 
-class DangerousShellSource extends DataFlow::Node {
-  DangerousShellSource() {
-    exists(SubprocessFunction call |
-      call.getArg(0) = this.asExpr() and
-      not (
-        this.asExpr() instanceof DataFlow::StringLiteral or
-        this.asExpr().getStringValue() in ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
+predicate isPythonCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asSource().asConstantStringLiteral().getLiteral() |
+    regexpMatches(command, "/(python)/")
+  )
+}
+
+class SubprocessCall extends DataFlow::Node {
+  SubprocessCall() {
+    exists(API::Call call |
+      call.getTarget().fromSource() and
+      exists(API::BuiltInFunction func |
+        func.getQualifiedName() = "subprocess." + func.getName() and
+        (
+          func.getName().matches("%call%") or
+          func.getName().matches("%run%") or
+          func.getName().matches("%Popen%")
+        ) and
+        node = call.getArgument(0)
       )
     )
   }
 }
 
-class PythonShellSource extends DataFlow::Node {
-  PythonShellSource() {
-    exists(SubprocessFunction call |
-      call.getArg(0) = this.asExpr() and
-      this.asExpr().getStringValue() = "python"
+class StaticCommandSanitizer extends DataFlow::Configuration {
+  StaticCommandSanitizer() { this = "StaticCommandSanitizer" }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(string value |
+      node.asSource().asConstantStringLiteral().getLiteral() = value and
+      not regexpMatches(value, "/(sh|bash|ksh|csh|tcsh|zsh|python)/")
     )
   }
 }
 
-class DangerousShellSink extends DataFlow::Node {
-  DangerousShellSink() {
-    exists(SubprocessFunction call | call.getArg(0) = this.asExpr())
-  }
-}
-
-class ShlexSanitizer extends DataFlow::Node {
-  ShlexSanitizer() {
-    exists(DataFlow::CallNode call |
-      call.getTarget().(DataFlow::MethodValue).getAPackageName() = "shlex" and
-      call.getTarget().(DataFlow::MethodValue).getName() = "escape" and
-      call.getResult() = this.asExpr()
+class SafeSubprocessConstructor extends DataFlow::BarrierGuard {
+  SafeSubprocessConstructor() {
+    exists(API::Call call |
+      call.getTarget().fromSource() and
+      (
+        call.getTarget().getName() = "CalledProcessError" or
+        call.getTarget().getName() = "SubprocessError"
+      )
     )
   }
 }
 
-module DangerousSubprocessConfig implements DataFlow::ConfigSig {
-  predicate isSource(DataFlow::Node source) {
-    source instanceof DangerousShellSource or
-    source instanceof PythonShellSource
+class DangerousSubprocessFlowConfiguration extends TaintTracking::Configuration {
+  DangerousSubprocessFlowConfiguration() { this = "DangerousSubprocessFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isShellCommand(source) or isPythonCommand(source)
   }
 
-  predicate isSink(DataFlow::Node sink) {
-    sink instanceof DangerousShellSink
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SubprocessCall
   }
 
-  predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer instanceof ShlexSanitizer
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StaticCommandSanitizer scs | scs.isSanitizer(sanitizer))
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    exists(SafeSubprocessConstructor ssc | ssc.controls(barrier))
   }
 }
 
-module DangerousSubprocessFlow = TaintTracking::Global<DangerousSubprocessConfig>;
-
-from DangerousSubprocessFlow::PathNode source, DangerousSubprocessFlow::PathNode sink
-where
-  DangerousSubprocessFlow::flow(source, sink)
-select sink, "Detected subprocess function without static string that may be vulnerable to command injection",
-  source, "Potential dangerous shell command"
+from DangerousSubprocessFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected subprocess function call without a static string. If this data can be controlled by a malicious actor, " +
+  "it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an " +
+  "external resource. You may consider using 'shlex.escape()'.", 
+  source.getNode(), sink.getNode(),
+  "Potential command injection vulnerability"
 ================================================================================
-Timestamp: 2025-10-28 18:02:25
+Timestamp: 2025-10-28 21:26:48
 Attempt: 2
 IR Content:
 ```yaml
@@ -219,212 +230,213 @@ rule:
   kind: taint
   severity: ERROR
   message: "Detected subprocess function '$FUNC' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  metadata:
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+    references:
+      - https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess
+      - https://docs.python.org/3/library/subprocess.html
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+    category: security
+    technology: [python]
+    confidence: LOW
+    impact: HIGH
+
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, csh, tcsh, ksh, zsh] }
+
 sources:
-  - id: DYNAMIC_SHELL_COMMAND
+  - id: SHELL_COMMAND
     match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
-      where:
-        - op: not
-          condition:
-            op: or
-            conditions:
-              - op: regex
-                left: arg[0].value
-                right: "^[\"'].*[\"']$"
-              - op: in
-                left: arg[0].value
-                right: ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
-  - id: PYTHON_SHELL_COMMAND
-    match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
+      node: LITERAL
       where:
         - op: regex
-          left: arg[0].value
-          right: "^(python)$"
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh)/"
+  
+  - id: PYTHON_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "=~/(python)/"
+
 sinks:
-  - id: SHELL_EXEC
+  - id: SUBPROCESS_CALL
     match:
       node: CALL
       api: { package: subprocess, method: "$FUNC" }
       arg_index: 0
+
 sanitizers:
-  - id: SHLEX_ESCAPE
+  - id: STATIC_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: neq
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh|python)/"
+    effect: neutralize
+
+barriers:
+  - id: SAFE_CONSTRUCTOR
     match:
       node: CALL
-      api: { package: shlex, method: escape }
-    effect: neutralize
-    scope: { sinks: [SHELL_EXEC] }
+      api: { package: subprocess, method: "CalledProcessError|SubprocessError" }
+    effect: stop
+
 propagations:
-  - id: ARG_TO_ARG
-    edge: arg->arg
+  - id: ARG_TO_PARAM
+    edge: arg->param
     kind: taint
+
 flows:
-  - source: DYNAMIC_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+  - source: SHELL_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
-          - pattern: "CALL(subprocess.CalledProcessError)"
-          - pattern: "CALL(subprocess.SubprocessError)"
-  - source: PYTHON_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+  
+  - source: PYTHON_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+
 report:
-  message: "Detected subprocess function without static string that may be vulnerable to command injection"
+  message: "Detected potentially unsafe subprocess call with dynamic shell command"
   locations: ["source", "sink"]
   evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "subprocess.call(user_input)"
-    - "subprocess.run([shell_input, '-c', dynamic_command])"
-  negative:
-    - "subprocess.call(['ls'])"
-    - "subprocess.run([shlex.escape(user_input)])"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:12,8-27)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:14,30-48)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:16,12-18)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:29,32-38)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:31,14-20)
-ERROR: getStringValue() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:32,14-28)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:41,32-38)
-ERROR: getStringValue() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:42,12-26)
-ERROR: asExpr() cannot be resolved for type ShellSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:49,59-65)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:55,12-18)
-ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:58,12-21)
-ERROR: getResult() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:59,12-21)
-ERROR: asExpr() cannot be resolved for type ShlexSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:59,31-37)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:81,37-55)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:81,64-82)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: DynamicShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:26,7-25)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: PythonShellSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:38,7-24)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShellSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:47,7-16)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: ShlexSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:67,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:72,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91aa3fbe/python-security-queries/queries/test-rule/TestRule.ql:76,22-33)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:17,8-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:33,30-38)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:35,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:50,38-46)
+ERROR: asSource() cannot be resolved for type StaticCommandSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:53,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:59,41-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:61,12-20)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:71,52-65)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:74,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:78,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:82,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:86,32-40)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:19,26-34)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:26,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:91,48-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:91,75-83)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:60,3-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:74,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:78,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:82,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83d6497c/python-security-queries/queries/test-rule/TestRule.ql:86,22-31)
 Rule Content:
 /**
- * @name Dangerous Subprocess Use Audit
- * @description Detects subprocess functions without static strings that may be vulnerable to command injection
+ * @name Dangerous Subprocess Use
+ * @description Detects subprocess function calls without static command strings that may be vulnerable to command injection
  * @kind path-problem
  * @problem.severity error
+ * @precision high
  * @id python/dangerous-subprocess-use-audit
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
 import DataFlow::PathGraph
+import DataFlow::Call
+import TaintTracking::Configuration
 
-class SubprocessCall extends DataFlow::CallNode {
-  SubprocessCall() {
-    exists(Method method |
-      method.getAPackageName() = "subprocess" and
-      this.getTarget() = method and
-      method.getName() = ["call", "run", "Popen", "check_call", "check_output"]
-    )
-  }
-
-  Expr getCommand() { result = this.getArg(0) }
+predicate isShellCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asSource().asConstantStringLiteral().getLiteral() |
+    command.matches("%(sh|bash|ksh|csh|tcsh|zsh)%")
+  )
 }
 
-class DynamicShellSource extends DataFlow::Node {
-  DynamicShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this.asExpr() and
-      not (
-        this.asExpr() instanceof StringLiteral or
-        this.getStringValue() in ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
+predicate isPythonCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asSource().asConstantStringLiteral().getLiteral() |
+    command.matches("%(python)%")
+  )
+}
+
+class SubprocessCall extends DataFlow::Node {
+  SubprocessCall() {
+    exists(DataFlow::Call call |
+      call.getTarget().fromSource() and
+      exists(Function func |
+        func.getQualifiedName() = "subprocess." + func.getName() and
+        (
+          func.getName().matches("%call%") or
+          func.getName().matches("%run%") or
+          func.getName().matches("%Popen%")
+        ) and
+        this = call.getArgument(0)
       )
     )
   }
 }
 
-class PythonShellSource extends DataFlow::Node {
-  PythonShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this.asExpr() and
-      this.getStringValue() = "python"
+class StaticCommandSanitizer extends DataFlow::Node {
+  StaticCommandSanitizer() {
+    exists(string value |
+      this.asSource().asConstantStringLiteral().getLiteral() = value and
+      not value.matches("%(sh|bash|ksh|csh|tcsh|zsh|python)%")
     )
   }
 }
 
-class ShellSink extends DataFlow::Node {
-  ShellSink() {
-    exists(SubprocessCall call | call.getCommand() = this.asExpr())
-  }
-}
-
-class ShlexSanitizer extends DataFlow::Node {
-  ShlexSanitizer() {
-    exists(Method method, CallNode call |
-      method.getAPackageName() = "shlex" and
-      method.getName() = "escape" and
-      call.getTarget() = method and
-      call.getResult() = this.asExpr()
+class SafeSubprocessConstructor extends DataFlow::BarrierGuard {
+  SafeSubprocessConstructor() {
+    exists(DataFlow::Call call |
+      call.getTarget().fromSource() and
+      (
+        call.getTarget().getName() = "CalledProcessError" or
+        call.getTarget().getName() = "SubprocessError"
+      )
     )
   }
 }
 
-class DangerousSubprocessConfig extends TaintTracking::Configuration {
-  DangerousSubprocessConfig() { this = "DangerousSubprocessConfig" }
+class DangerousSubprocessFlowConfiguration extends TaintTracking::Configuration {
+  DangerousSubprocessFlowConfiguration() { this = "DangerousSubprocessFlowConfiguration" }
 
   override predicate isSource(DataFlow::Node source) {
-    source instanceof DynamicShellSource or
-    source instanceof PythonShellSource
+    isShellCommand(source) or isPythonCommand(source)
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    sink instanceof ShellSink
+    sink instanceof SubprocessCall
   }
 
   override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer instanceof ShlexSanitizer
+    sanitizer instanceof StaticCommandSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof SafeSubprocessConstructor
   }
 }
 
-from DangerousSubprocessConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+from DangerousSubprocessFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink.getNode(), "Detected subprocess function without static string that may be vulnerable to command injection",
-  source.getNode(), "Potential dangerous shell command $@",
-  sink.getNode(), "command injection"
+select sink.getNode(), 
+  "Detected subprocess function call without a static string. If this data can be controlled by a malicious actor, " +
+  "it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an " +
+  "external resource. You may consider using 'shlex.escape()'.", 
+  source.getNode(), sink.getNode(),
+  "Potential command injection vulnerability"
 ================================================================================
-Timestamp: 2025-10-28 18:05:01
+Timestamp: 2025-10-28 21:28:58
 Attempt: 3
 IR Content:
 ```yaml
@@ -434,202 +446,203 @@ rule:
   kind: taint
   severity: ERROR
   message: "Detected subprocess function '$FUNC' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  metadata:
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+    references:
+      - https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess
+      - https://docs.python.org/3/library/subprocess.html
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+    category: security
+    technology: [python]
+    confidence: LOW
+    impact: HIGH
+
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, csh, tcsh, ksh, zsh] }
+
 sources:
-  - id: DYNAMIC_SHELL_COMMAND
+  - id: SHELL_COMMAND
     match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
-      where:
-        - op: not
-          condition:
-            op: or
-            conditions:
-              - op: regex
-                left: arg[0].value
-                right: "^[\"'].*[\"']$"
-              - op: in
-                left: arg[0].value
-                right: ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
-  - id: PYTHON_SHELL_COMMAND
-    match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
+      node: LITERAL
       where:
         - op: regex
-          left: arg[0].value
-          right: "^(python)$"
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh)/"
+  
+  - id: PYTHON_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "=~/(python)/"
+
 sinks:
-  - id: SHELL_EXEC
+  - id: SUBPROCESS_CALL
     match:
       node: CALL
       api: { package: subprocess, method: "$FUNC" }
       arg_index: 0
+
 sanitizers:
-  - id: SHLEX_ESCAPE
+  - id: STATIC_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: neq
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh|python)/"
+    effect: neutralize
+
+barriers:
+  - id: SAFE_CONSTRUCTOR
     match:
       node: CALL
-      api: { package: shlex, method: escape }
-    effect: neutralize
-    scope: { sinks: [SHELL_EXEC] }
+      api: { package: subprocess, method: "CalledProcessError|SubprocessError" }
+    effect: stop
+
 propagations:
-  - id: ARG_TO_ARG
-    edge: arg->arg
+  - id: ARG_TO_PARAM
+    edge: arg->param
     kind: taint
+
 flows:
-  - source: DYNAMIC_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+  - source: SHELL_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
-          - pattern: "CALL(subprocess.CalledProcessError)"
-          - pattern: "CALL(subprocess.SubprocessError)"
-  - source: PYTHON_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+  
+  - source: PYTHON_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+
 report:
-  message: "Detected subprocess function without static string that may be vulnerable to command injection"
+  message: "Detected potentially unsafe subprocess call with dynamic shell command"
   locations: ["source", "sink"]
   evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "subprocess.call(user_input)"
-    - "subprocess.run([shell_input, '-c', dynamic_command])"
-  negative:
-    - "subprocess.call(['ls'])"
-    - "subprocess.run([shlex.escape(user_input)])"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.dataflow.remote.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:10,8-51)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:15,30-38)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:17,10-19)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:18,10-19)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:21,3-11)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:25,34-42)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:31,15-21)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:32,15-21)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:38,33-41)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:42,12-18)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:43,12-18)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:49,25-33)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:56,30-38)
-ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:60,18-27)
-ERROR: getResult() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:61,18-27)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:67,41-54)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:70,31-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:75,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:79,34-42)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:85,37-45)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:85,64-72)
-WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:30,34-37)
-WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:31,35-38)
-WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:42,32-35)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:70,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:75,22-28)
-WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e1b586f/python-security-queries/queries/test-rule/TestRule.ql:79,22-33)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.dataflow.new.PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:16,8-44)
+ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:51,37-45)
+ERROR: could not resolve type DataFlow::BarrierGuard (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:57,41-63)
+ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:69,52-80)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:21,45-53)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:28,45-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:89,48-66)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:89,75-93)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:58,3-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:72,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:76,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:80,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d4918fe/python-security-queries/queries/test-rule/TestRule.ql:84,22-31)
 Rule Content:
 /**
- * @name Dangerous Subprocess Use Audit
- * @description Detects subprocess functions without static strings that may be vulnerable to command injection
+ * @name Dangerous Subprocess Use
+ * @description Detects subprocess function calls without static command strings that may be vulnerable to command injection
  * @kind path-problem
- * @problem.severity error 
+ * @problem.severity error
+ * @precision high
  * @id python/dangerous-subprocess-use-audit
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
  */
 
 import python
-import semmle.python.dataflow.remote.TaintTracking
-import semmle.python.Concepts
-import DataFlow::PathGraph
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.new.PathGraph
+import semmle.python.dataflow.new.TaintTracking
 
-// Define subprocess calls
-class SubprocessCall extends DataFlow::CallNode {
-  SubprocessCall() {
-    this.getTarget().(Function).getQualifiedName().matches("subprocess.%") and
-    this.getTarget().getName() in ["call", "run", "Popen", "check_call", "check_output"]
-  }
-
-  DataFlow::Node getCommand() { result = this.getArgument(0) }
+predicate isShellCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getValue() |
+    command.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh)")
+  )
 }
 
-// Sources - unsafe shell commands (dynamic or python interpreter)
-class DynamicShellSource extends DataFlow::SourceNode {
-  DynamicShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      not (
-        this.asExpr() instanceof Str or
-        (this.asExpr() instanceof Str and 
-         this.asExpr().getValue() in ["sh", "bash", "ksh", "csh", "tcsh", "zsh"])
+predicate isPythonCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getValue() |
+    command.regexpMatch("(python)")
+  )
+}
+
+class SubprocessCall extends DataFlow::Node {
+  SubprocessCall() {
+    exists(FunctionCall call, Function func |
+      call.getTarget() = func and
+      func.getQualifiedName().matches("subprocess.%") and
+      (
+        func.getName().matches("%call%") or
+        func.getName().matches("%run%") or
+        func.getName().matches("%Popen%")
+      ) and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+class StaticCommandSanitizer extends DataFlow::Node {
+  StaticCommandSanitizer() {
+    exists(string value |
+      this.asExpr().(StringLiteral).getValue() = value and
+      not value.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh|python)")
+    )
+  }
+}
+
+class SafeSubprocessConstructor extends DataFlow::BarrierGuard {
+  SafeSubprocessConstructor() {
+    exists(FunctionCall call, Function func |
+      call.getTarget() = func and
+      (
+        func.getName() = "CalledProcessError" or
+        func.getName() = "SubprocessError"
       )
     )
   }
 }
 
-class PythonShellSource extends DataFlow::SourceNode {
-  PythonShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      this.asExpr() instanceof Str and
-      this.asExpr().getValue() = "python"
-    )
+class DangerousSubprocessFlowConfiguration extends TaintTracking::Configuration {
+  DangerousSubprocessFlowConfiguration() { this = "DangerousSubprocessFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isShellCommand(source) or isPythonCommand(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SubprocessCall
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof StaticCommandSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    exists(SafeSubprocessConstructor ssc | ssc.isBarrier(node))
   }
 }
 
-// Sink - subprocess command execution
-class ShellSink extends DataFlow::SinkNode {
-  ShellSink() {
-    exists(SubprocessCall call | call.getCommand() = this)
-  }
-}
-
-// Sanitizer - shlex.escape()
-class ShlexSanitizer extends DataFlow::SanitizerNode {
-  ShlexSanitizer() {
-    exists(Function esc, Call escapeCall |
-      esc.getQualifiedName() = "shlex.escape" and
-      escapeCall.getTarget() = esc and
-      escapeCall.getResult() = this
-    )
-  }
-}
-
-// Configure data flow
-class DangerousSubprocessConfig extends TaintTracking::Configuration {
-  DangerousSubprocessConfig() { this = "DangerousSubprocessConfig" }
-
-  override predicate isSource(DataFlow::SourceNode source) {
-    source instanceof DynamicShellSource or
-    source instanceof PythonShellSource
-  }
-
-  override predicate isSink(DataFlow::SinkNode sink) {
-    sink instanceof ShellSink
-  }
-
-  override predicate isSanitizer(DataFlow::SanitizerNode sanitizer) {
-    sanitizer instanceof ShlexSanitizer
-  }
-}
-
-// Query - find flows from sources to sinks
-from DangerousSubprocessConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+from DangerousSubprocessFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "Detected subprocess function without static string that may be vulnerable to command injection",
-  source, "Potential dangerous shell command $@",
-  sink, "command injection"
+select sink.getNode(), 
+  "Detected subprocess function call without a static string. If this data can be controlled by a malicious actor, " +
+  "it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an " +
+  "external resource. You may consider using 'shlex.escape()'.", 
+  source.getNode(), sink.getNode(),
+  "Potential command injection vulnerability"
 ================================================================================
-Timestamp: 2025-10-28 18:07:24
+Timestamp: 2025-10-28 21:31:56
 Attempt: 4
 IR Content:
 ```yaml
@@ -639,187 +652,206 @@ rule:
   kind: taint
   severity: ERROR
   message: "Detected subprocess function '$FUNC' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  metadata:
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+    references:
+      - https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess
+      - https://docs.python.org/3/library/subprocess.html
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+    category: security
+    technology: [python]
+    confidence: LOW
+    impact: HIGH
+
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, csh, tcsh, ksh, zsh] }
+
 sources:
-  - id: DYNAMIC_SHELL_COMMAND
+  - id: SHELL_COMMAND
     match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
-      where:
-        - op: not
-          condition:
-            op: or
-            conditions:
-              - op: regex
-                left: arg[0].value
-                right: "^[\"'].*[\"']$"
-              - op: in
-                left: arg[0].value
-                right: ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
-  - id: PYTHON_SHELL_COMMAND
-    match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
+      node: LITERAL
       where:
         - op: regex
-          left: arg[0].value
-          right: "^(python)$"
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh)/"
+  
+  - id: PYTHON_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "=~/(python)/"
+
 sinks:
-  - id: SHELL_EXEC
+  - id: SUBPROCESS_CALL
     match:
       node: CALL
       api: { package: subprocess, method: "$FUNC" }
       arg_index: 0
+
 sanitizers:
-  - id: SHLEX_ESCAPE
+  - id: STATIC_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: neq
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh|python)/"
+    effect: neutralize
+
+barriers:
+  - id: SAFE_CONSTRUCTOR
     match:
       node: CALL
-      api: { package: shlex, method: escape }
-    effect: neutralize
-    scope: { sinks: [SHELL_EXEC] }
+      api: { package: subprocess, method: "CalledProcessError|SubprocessError" }
+    effect: stop
+
 propagations:
-  - id: ARG_TO_ARG
-    edge: arg->arg
+  - id: ARG_TO_PARAM
+    edge: arg->param
     kind: taint
+
 flows:
-  - source: DYNAMIC_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+  - source: SHELL_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
-          - pattern: "CALL(subprocess.CalledProcessError)"
-          - pattern: "CALL(subprocess.SubprocessError)"
-  - source: PYTHON_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+  
+  - source: PYTHON_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+
 report:
-  message: "Detected subprocess function without static string that may be vulnerable to command injection"
+  message: "Detected potentially unsafe subprocess call with dynamic shell command"
   locations: ["source", "sink"]
   evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "subprocess.call(user_input)"
-    - "subprocess.run([shell_input, '-c', dynamic_command])"
-  negative:
-    - "subprocess.call(['ls'])"
-    - "subprocess.run([shlex.escape(user_input)])"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.dataflow.internal.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:12,8-48)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:14,30-48)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:17,10-19)
-ERROR: could not resolve type DataFlow::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:23,34-54)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:28,14-20)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:29,15-21)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:30,15-21)
-ERROR: could not resolve type DataFlow::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:36,33-53)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:40,12-18)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
-ERROR: could not resolve type DataFlow::SinkNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:46,25-43)
-ERROR: could not resolve type DataFlow::SanitizerNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:52,30-53)
-ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:56,18-27)
-ERROR: getResult() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:57,18-27)
-ERROR: could not resolve type DataFlow::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:65,31-51)
-ERROR: could not resolve type DataFlow::SinkNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:70,29-47)
-ERROR: could not resolve type DataFlow::SanitizerNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:74,34-57)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:79,37-55)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_af047682/python-security-queries/queries/test-rule/TestRule.ql:79,64-82)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input '_' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:59,12-13)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:17,8-21)
+ERROR: could not resolve type DataFlow::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:35,12-26)
+ERROR: getUnquotedValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:51,37-53)
+ERROR: could not resolve type BarrierGuard (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:57,41-53)
+ERROR: could not resolve type DataFlow::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:60,12-26)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:70,52-65)
+ERROR: getUnquotedValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:21,45-61)
+ERROR: getUnquotedValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:28,45-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:90,48-66)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:90,75-93)
+ERROR: could not resolve variable barrier (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:86,5-12)
+WARNING: unused variable 'node' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:85,47-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:73,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:77,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:81,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2466daa6/python-security-queries/queries/test-rule/TestRule.ql:85,22-31)
 Rule Content:
 /**
- * @name Dangerous Subprocess Use Audit
- * @description Detects subprocess functions without static strings that may be vulnerable to command injection
+ * @name Dangerous Subprocess Use
+ * @description Detects subprocess function calls without static command strings that may be vulnerable to command injection
  * @kind path-problem
  * @problem.severity error
+ * @precision high
  * @id python/dangerous-subprocess-use-audit
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
-import semmle.python.dataflow.internal.DataFlow
+import semmle.python.ApiGraphs
+import DataFlow
+import TaintTracking
 
-class SubprocessCall extends DataFlow::CallNode {
-  SubprocessCall() {
-    this.getTarget().(Function).getQualifiedName().matches("subprocess.%") and
-    this.getTarget().getName() in ["call", "run", "Popen", "check_call", "check_output"]
-  }
-
-  DataFlow::Node getCommand() { result = this.getArgument(0) }
+predicate isShellCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getUnquotedValue() |
+    command.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh)")
+  )
 }
 
-class DynamicShellSource extends DataFlow::SourceNode {
-  DynamicShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      not (
-        this.asExpr() instanceof StringLiteral or
-        (this.asExpr() instanceof StringLiteral and
-         this.asExpr().getValue() in ["sh", "bash", "ksh", "csh", "tcsh", "zsh"])
+predicate isPythonCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getUnquotedValue() |
+    command.regexpMatch("(python)")
+  )
+}
+
+class SubprocessCall extends DataFlow::Node {
+  SubprocessCall() {
+    exists(DataFlow::Call call, Function func |
+      call.getTarget() = func and
+      func.getQualifiedName().matches("subprocess.%") and
+      (
+        func.getName().matches("%call%") or
+        func.getName().matches("%run%") or
+        func.getName().matches("%Popen%")
+      ) and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+class StaticCommandSanitizer extends DataFlow::Node {
+  StaticCommandSanitizer() {
+    exists(string value |
+      this.asExpr().(StringLiteral).getUnquotedValue() = value and
+      not value.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh|python)")
+    )
+  }
+}
+
+class SafeSubprocessConstructor extends BarrierGuard {
+  SafeSubprocessConstructor() {
+    this = _ and
+    exists(DataFlow::Call call, Function func |
+      call.getTarget() = func and
+      (
+        func.getName() = "CalledProcessError" or
+        func.getName() = "SubprocessError"
       )
     )
   }
 }
 
-class PythonShellSource extends DataFlow::SourceNode {
-  PythonShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      this.asExpr() instanceof StringLiteral and
-      this.asExpr().getValue() = "python"
-    )
+class DangerousSubprocessFlowConfiguration extends TaintTracking::Configuration {
+  DangerousSubprocessFlowConfiguration() { this = "DangerousSubprocessFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isShellCommand(source) or isPythonCommand(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SubprocessCall
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof StaticCommandSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node node) {
+    barrier instanceof SafeSubprocessConstructor
   }
 }
 
-class ShellSink extends DataFlow::SinkNode {
-  ShellSink() {
-    exists(SubprocessCall call | call.getCommand() = this)
-  }
-}
-
-class ShlexSanitizer extends DataFlow::SanitizerNode {
-  ShlexSanitizer() {
-    exists(Function esc, Call escapeCall |
-      esc.getQualifiedName() = "shlex.escape" and
-      escapeCall.getCallee() = esc and
-      escapeCall.getResult() = this
-    )
-  }
-}
-
-class DangerousSubprocessConfig extends TaintTracking::Configuration {
-  DangerousSubprocessConfig() { this = "DangerousSubprocessConfig" }
-
-  override predicate isSource(DataFlow::SourceNode source) {
-    source instanceof DynamicShellSource or
-    source instanceof PythonShellSource
-  }
-
-  override predicate isSink(DataFlow::SinkNode sink) {
-    sink instanceof ShellSink
-  }
-
-  override predicate isSanitizer(DataFlow::SanitizerNode sanitizer) {
-    sanitizer instanceof ShlexSanitizer
-  }
-}
-
-from DangerousSubprocessConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+from DangerousSubprocessFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "Detected subprocess function without static string that may be vulnerable to command injection",
-  source, "Potential dangerous shell command $@",
-  sink, "command injection"
+select sink.getNode(), 
+  "Detected subprocess function call without a static string. If this data can be controlled by a malicious actor, " +
+  "it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an " +
+  "external resource. You may consider using 'shlex.escape()'.", 
+  source.getNode(), sink.getNode(),
+  "Potential command injection vulnerability"
 ================================================================================
-Timestamp: 2025-10-28 18:09:20
+Timestamp: 2025-10-28 21:34:46
 Attempt: 5
 IR Content:
 ```yaml
@@ -829,183 +861,200 @@ rule:
   kind: taint
   severity: ERROR
   message: "Detected subprocess function '$FUNC' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  metadata:
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"]
+    references:
+      - https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess
+      - https://docs.python.org/3/library/subprocess.html
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+    category: security
+    technology: [python]
+    confidence: LOW
+    impact: HIGH
+
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, csh, tcsh, ksh, zsh] }
+
 sources:
-  - id: DYNAMIC_SHELL_COMMAND
+  - id: SHELL_COMMAND
     match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
-      where:
-        - op: not
-          condition:
-            op: or
-            conditions:
-              - op: regex
-                left: arg[0].value
-                right: "^[\"'].*[\"']$"
-              - op: in
-                left: arg[0].value
-                right: ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
-  - id: PYTHON_SHELL_COMMAND
-    match:
-      node: CALL
-      api: { package: subprocess, method: "$FUNC" }
+      node: LITERAL
       where:
         - op: regex
-          left: arg[0].value
-          right: "^(python)$"
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh)/"
+  
+  - id: PYTHON_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "=~/(python)/"
+
 sinks:
-  - id: SHELL_EXEC
+  - id: SUBPROCESS_CALL
     match:
       node: CALL
       api: { package: subprocess, method: "$FUNC" }
       arg_index: 0
+
 sanitizers:
-  - id: SHLEX_ESCAPE
+  - id: STATIC_COMMAND
+    match:
+      node: LITERAL
+      where:
+        - op: neq
+          left: value
+          right: "=~/(sh|bash|ksh|csh|tcsh|zsh|python)/"
+    effect: neutralize
+
+barriers:
+  - id: SAFE_CONSTRUCTOR
     match:
       node: CALL
-      api: { package: shlex, method: escape }
-    effect: neutralize
-    scope: { sinks: [SHELL_EXEC] }
+      api: { package: subprocess, method: "CalledProcessError|SubprocessError" }
+    effect: stop
+
 propagations:
-  - id: ARG_TO_ARG
-    edge: arg->arg
+  - id: ARG_TO_PARAM
+    edge: arg->param
     kind: taint
+
 flows:
-  - source: DYNAMIC_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+  - source: SHELL_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
-          - pattern: "CALL(subprocess.CalledProcessError)"
-          - pattern: "CALL(subprocess.SubprocessError)"
-  - source: PYTHON_SHELL_COMMAND
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+  
+  - source: PYTHON_COMMAND
+    sink: SUBPROCESS_CALL
     constraints:
       path:
-        must_not:
-          - pattern: "CALL(shlex.escape)"
+        must_not: [ { pattern: "STATIC_COMMAND" } ]
+
 report:
-  message: "Detected subprocess function without static string that may be vulnerable to command injection"
+  message: "Detected potentially unsafe subprocess call with dynamic shell command"
   locations: ["source", "sink"]
   evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "subprocess.call(user_input)"
-    - "subprocess.run([shell_input, '-c', dynamic_command])"
-  negative:
-    - "subprocess.call(['ls'])"
-    - "subprocess.run([shlex.escape(user_input)])"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:12,8-27)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:14,30-48)
-ERROR: getTarget() cannot be resolved for type SubprocessCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
-ERROR: could not resolve type TaintTracking::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:26,34-59)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:31,14-20)
-ERROR: asExpr() cannot be resolved for type DynamicShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:32,14-20)
-ERROR: could not resolve type TaintTracking::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:38,33-58)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:42,12-18)
-ERROR: asExpr() cannot be resolved for type PythonShellSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:43,12-18)
-ERROR: could not resolve type TaintTracking::SinkNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:48,25-48)
-ERROR: could not resolve type TaintTracking::SanitizerNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:54,30-58)
-ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:58,9-18)
-ERROR: getResult() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:59,9-18)
-ERROR: could not resolve type TaintTracking::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:67,31-56)
-ERROR: could not resolve type TaintTracking::SinkNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:72,29-52)
-ERROR: could not resolve type TaintTracking::SanitizerNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:76,34-62)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:81,37-55)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_476c9165/python-security-queries/queries/test-rule/TestRule.ql:81,64-82)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:17,8-53)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:35,12-30)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:51,37-45)
+ERROR: could not resolve type DataFlow::BarrierGuard (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:57,41-63)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:60,12-30)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:70,52-65)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:21,45-53)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:28,45-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:90,48-66)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:90,75-93)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:59,12-18)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:73,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:77,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:81,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7505e83c/python-security-queries/queries/test-rule/TestRule.ql:85,22-31)
 Rule Content:
 /**
- * @name Dangerous Subprocess Use Audit
- * @description Detects subprocess functions without static strings that may be vulnerable to command injection
+ * @name Dangerous Subprocess Use
+ * @description Detects subprocess function calls without static command strings that may be vulnerable to command injection
  * @kind path-problem
  * @problem.severity error
+ * @precision high
  * @id python/dangerous-subprocess-use-audit
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
-import DataFlow::PathGraph
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.security.dataflow.TaintTracking
 
-class SubprocessCall extends DataFlow::CallNode {
-  SubprocessCall() {
-    exists(Function f |
-      f.getQualifiedName().matches("subprocess.%") and
-      this.getTarget() = f and
-      f.getName() in ["call", "run", "Popen", "check_call", "check_output"]
-    )
-  }
-
-  DataFlow::Node getCommand() { result = this.getArgument(0) }
+predicate isShellCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getValue().getUnquoted() |
+    command.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh)")
+  )
 }
 
-class DynamicShellSource extends TaintTracking::SourceNode {
-  DynamicShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      not (
-        this.asExpr() instanceof StringLiteral and
-        this.asExpr().getValue() in ["sh", "bash", "ksh", "csh", "tcsh", "zsh"]
+predicate isPythonCommand(DataFlow::Node node) {
+  exists(string command |
+    command = node.asExpr().(StringLiteral).getValue().getUnquoted() |
+    command.regexpMatch("(python)")
+  )
+}
+
+class SubprocessCall extends DataFlow::Node {
+  SubprocessCall() {
+    exists(DataFlow::CallNode call, Function func |
+      call.getTarget() = func and
+      func.getQualifiedName().matches("subprocess.%") and
+      (
+        func.getName().matches("%call%") or
+        func.getName().matches("%run%") or
+        func.getName().matches("%Popen%")
+      ) and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+class StaticCommandSanitizer extends DataFlow::Node {
+  StaticCommandSanitizer() {
+    exists(string value |
+      this.asExpr().(StringLiteral).getValue().getUnquoted() = value and
+      not value.regexpMatch("(sh|bash|ksh|csh|tcsh|zsh|python)")
+    )
+  }
+}
+
+class SafeSubprocessConstructor extends DataFlow::BarrierGuard {
+  SafeSubprocessConstructor() {
+    this = result and
+    exists(DataFlow::CallNode call, Function func |
+      call.getTarget() = func and
+      (
+        func.getName() = "CalledProcessError" or
+        func.getName() = "SubprocessError"
       )
     )
   }
 }
 
-class PythonShellSource extends TaintTracking::SourceNode {
-  PythonShellSource() {
-    exists(SubprocessCall call |
-      call.getCommand() = this and
-      this.asExpr() instanceof StringLiteral and
-      this.asExpr().getValue() = "python"
-    )
+class DangerousSubprocessFlowConfiguration extends TaintTracking::Configuration {
+  DangerousSubprocessFlowConfiguration() { this = "DangerousSubprocessFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isShellCommand(source) or isPythonCommand(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SubprocessCall
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node instanceof StaticCommandSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof SafeSubprocessConstructor
   }
 }
 
-class ShellSink extends TaintTracking::SinkNode {
-  ShellSink() {
-    exists(SubprocessCall call | call.getCommand() = this)
-  }
-}
-
-class ShlexSanitizer extends TaintTracking::SanitizerNode {
-  ShlexSanitizer() {
-    exists(Function f, Call c |
-      f.getQualifiedName() = "shlex.escape" and
-      c.getTarget() = f and
-      c.getResult() = this
-    )
-  }
-}
-
-class DangerousSubprocessConfig extends TaintTracking::Configuration {
-  DangerousSubprocessConfig() { this = "DangerousSubprocessConfig" }
-
-  override predicate isSource(TaintTracking::SourceNode source) {
-    source instanceof DynamicShellSource or
-    source instanceof PythonShellSource
-  }
-
-  override predicate isSink(TaintTracking::SinkNode sink) {
-    sink instanceof ShellSink
-  }
-
-  override predicate isSanitizer(TaintTracking::SanitizerNode sanitizer) {
-    sanitizer instanceof ShlexSanitizer
-  }
-}
-
-from DangerousSubprocessConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+from DangerousSubprocessFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "Detected subprocess function '$@' without static string that may be vulnerable to command injection",
-  source, "Potential dangerous shell command",
-  sink, "Command injection"
+select sink.getNode(), 
+  "Detected subprocess function call without a static string. If this data can be controlled by a malicious actor, " +
+  "it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an " +
+  "external resource. You may consider using 'shlex.escape()'.", 
+  source.getNode(), sink.getNode(),
+  "Potential command injection vulnerability"
 ================================================================================

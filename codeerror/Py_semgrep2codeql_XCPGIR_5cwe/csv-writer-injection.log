@@ -1,4 +1,4 @@
-Timestamp: 2025-10-28 17:59:16
+Timestamp: 2025-10-28 21:24:23
 Attempt: 1
 IR Content:
 ```yaml
@@ -7,143 +7,169 @@ rule:
   id: csv-writer-injection
   kind: taint
   severity: ERROR
-  message: "Detected user input into a generated CSV file using the built-in `csv` module. This could lead to formula injection when the CSV is imported into a spreadsheet application."
+  message: "Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst, install malware on the user's computer."
 scope:
   languages: [python]
   frameworks: [flask]
 sources:
-  - id: USER_INPUT
+  - id: FLASK_USER_INPUT
     match:
       node: CALL
-      api:
-        type: flask.request
-        method: get
+      api: { package: flask, type: request, method: form|args|values|cookies|stream|headers|data|full_path|url|json|get_json|view_args }
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
       where:
-        - op: in
-          left: methodFullName
-          right: ["flask.request.form.get", "flask.request.form.__getitem__", "flask.request.args.get", "flask.request.args.__getitem__", "flask.request.values.get", "flask.request.values.__getitem__", "flask.request.cookies.get", "flask.request.cookies.__getitem__", "flask.request.headers.get", "flask.request.headers.__getitem__", "flask.request.view_args.get", "flask.request.view_args.__getitem__"]
-      or:
-        - node: PARAM
-          where:
-            - op: pattern-inside
-              left: code
-              right: "@$APP.route($ROUTE, ...)\ndef $FUNC(..., $ROUTEVAR, ...):"
+        - op: inside
+          left: METHOD
+          right: PATTERN("@APP.route(...) def $FUNC(..., $ROUTEVAR, ...)")
 sinks:
-  - id: CSV_WRITE
+  - id: CSV_WRITER
     match:
       node: CALL
-      api:
-        type: csv.writer
-        method: writerow|writerows|writeheader
+      api: { package: csv, method: writerow|writerows|writeheader }
+      arg_index: 0
 propagations:
-  - id: TO_CSV_WRITE
+  - id: ARG_TO_PARAM
     edge: arg->param
     kind: taint
 flows:
-  - source: USER_INPUT
-    sink: CSV_WRITE
-    through: [TO_CSV_WRITE*]
+  - source: FLASK_USER_INPUT
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
+  - source: ROUTE_PARAM
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
 report:
-  message: "User input reaches CSV write operation without sanitization, potential formula injection vulnerability."
+  message: "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead."
   locations: ["source", "sink"]
-  evidence:
-    capture:
-      - argument: 0
+  evidence: { capture: [{ argument: 0 }] }
 tests:
   positive:
-    - "writer.writerow([request.form.get('input')])"
+    - "@app.route('/') def index(param): csv.writerow(param)"
   negative:
-    - "writer.writerow(['safe_value'])"
+    - "@app.route('/') def index(): csv.writerow('safe')"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.security.dataflow.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:11,8-45)
-ERROR: could not resolve module semmle.python.security.dataflow.new.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:12,8-52)
-ERROR: could not resolve module semmle.python.Modules.csv_module.CSVWriter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:13,8-50)
-ERROR: could not resolve module RemoteFlowSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:15,27-43)
-ERROR: asExpr() cannot be resolved for type FlaskSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:22,12-18)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:22,27-35)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:24,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:25,15-23)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:27,37-45)
-ERROR: could not resolve type RoutePattern (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:32,12-24)
-ERROR: asParameter() cannot be resolved for type FlaskSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:33,12-23)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:38,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:40,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:41,27-35)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:41,65-73)
-ERROR: could not resolve module CSVWriter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:42,9-18)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:49,44-57)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:52,31-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:54,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:57,43-51)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:57,70-78)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:52,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_619dc07e/python-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:17,8-37)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+ERROR: getAValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:46,25-34)
+ERROR: getAParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:47,13-26)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:55,12-24)
+ERROR: could not resolve predicate localTaint/3 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:68,3-28)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:71,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:71,33-51)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:43,7-23)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:53,7-20)
+ERROR: RouteParamSource.extends is incompatible with Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85ac629d/python-security-queries/queries/test-rule/TestRule.ql:48,12-13)
 Rule Content:
 /**
- * @name CSV Writer Injection
- * @description Detects user input into a generated CSV file using the built-in `csv` module.
- *              This could lead to formula injection when the CSV is imported into a spreadsheet application.
+ * @id csv-writer-injection
  * @kind path-problem
+ * @severity error
  * @problem.severity error
- * @id python/csv-writer-injection
+ * @name CSV Injection Vulnerability
+ * @description Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate
+ *   the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a
+ *   spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst,
+ *   install malware on the user's computer.
+ * @tags security
+ *       external/cwe/cwe-1236
  */
 
 import python
-import semmle.python.security.dataflow.Flask
-import semmle.python.security.dataflow.new.DataFlow
-import semmle.python.Modules.csv_module.CSVWriter
+import semmle.python.security.TaintTracking
+import semmle.python.web.flask.Flask
+import DataFlow::PathGraph
 
-class FlaskSource extends RemoteFlowSource::Range {
-  FlaskSource() {
-    exists(string methodName |
-      methodName =
-        ["form.get", "form.__getitem__", "args.get", "args.__getitem__",
-         "values.get", "values.__getitem__", "cookies.get", "cookies.__getitem__",
-         "headers.get", "headers.__getitem__", "view_args.get", "view_args.__getitem__"] |
-      this.asExpr() = any(DataFlow::CallNode call |
-        call.getMethodName() = methodName and
-        call.getReceiver().(DataFlow::GetAttrNode).getReceiver() =
-          any(DataFlow::CallNode flaskReq |
-            flaskReq.getMethodName() = "request" and
-            flaskReq.getReceiver().(DataFlow::ModuleImportNode).getName().matches("%flask%")
-          )
-      ).getResult()
-    )
-    or
-    exists(RoutePattern route |
-      this.asParameter() = route.getParameter()
-    )
-  }
-}
-
-class CSVWriterSink extends DataFlow::Node {
-  CSVWriterSink() {
-    exists(DataFlow::CallNode call |
-      call.getReceiver().(DataFlow::GetAttrNode).getReceiver().(DataFlow::LocalVariableNode).getType() =
-        CSVWriter::writer().getType() and
-      ["writerow", "writerows", "writeheader"].indexOf(call.getMethodName()) >= 0 and
-      this = call.getArgument(0)
+class FlaskUserInput extends DataFlow::Node {
+  FlaskUserInput() {
+    exists(MethodAccess ma |
+      ma.getMethod().(PythonFunctionValue).getQualifiedName().matches("flask.request.%") and
+      (
+        ma.getMethod().getName() = "form" or
+        ma.getMethod().getName() = "args" or
+        ma.getMethod().getName() = "values" or
+        ma.getMethod().getName() = "cookies" or
+        ma.getMethod().getName() = "stream" or
+        ma.getMethod().getName() = "headers" or
+        ma.getMethod().getName() = "data" or
+        ma.getMethod().getName() = "full_path" or
+        ma.getMethod().getName() = "url" or
+        ma.getMethod().getName() = "json" or
+        ma.getMethod().getName() = "get_json" or
+        ma.getMethod().getName() = "view_args"
+      ) and
+      this = ma.getAnArg()
     )
   }
 }
 
-class CSVWriterInjectionFlowConfig extends TaintTracking::Configuration {
-  CSVWriterInjectionFlowConfig() { this = "CSVWriterInjectionFlow" }
-
-  override predicate isSource(DataFlow::Node source) { source instanceof FlaskSource }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof CSVWriterSink }
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Function f, Parameter p |
+      f.getADecorator().getAValue().getQualifiedName().matches("flask.Flask.route") and
+      p = f.getAParameter() and
+      this = p
+    )
+  }
 }
 
-from CSVWriterInjectionFlowConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink.getNode(), source.getNode(),
-  "User input reaches CSV write operation without sanitization, potential formula injection vulnerability.",
-  source.getNode(), "Source of user input",
-  sink.getNode(), "Sink CSV write operation"
+class CsvWriterSink extends DataFlow::Node {
+  CsvWriterSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().(PythonFunctionValue).getQualifiedName().matches("csv.writer.%") and
+      (
+        ma.getMethod().getName() = "writerow" or
+        ma.getMethod().getName() = "writerows" or
+        ma.getMethod().getName() = "writeheader"
+      ) and
+      this = ma.getAnArg(0)
+    )
+  }
+}
+
+predicate isTaintedFlow(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaint(source, sink, _)
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, string sourceType
+where
+  (
+    exists(FlaskUserInput fli | source.asNode() = fli) or
+    exists(RouteParamSource rps | source.asNode() = rps)
+  ) and
+  exists(CsvWriterSink cws | sink.asNode() = cws) and
+  isTaintedFlow(source.asNode(), sink.asNode()) and
+  (
+    if exists(FlaskUserInput fli | source.asNode() = fli)
+    then sourceType = "Flask user input"
+    else if exists(RouteParamSource rps | source.asNode() = rps)
+    then sourceType = "Route parameter"
+    else sourceType = "Unknown"
+  )
+select sink, source, sink,
+  "Potential CSV injection vulnerability detected from " + sourceType + ". Consider using `defusedcsv` module instead.",
+  source.asNode(), "User input flows to CSV writer here"
 ================================================================================
-Timestamp: 2025-10-28 18:02:04
+Timestamp: 2025-10-28 21:26:49
 Attempt: 2
 IR Content:
 ```yaml
@@ -152,130 +178,205 @@ rule:
   id: csv-writer-injection
   kind: taint
   severity: ERROR
-  message: "Detected user input into a generated CSV file using the built-in `csv` module. This could lead to formula injection when the CSV is imported into a spreadsheet application."
+  message: "Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst, install malware on the user's computer."
 scope:
   languages: [python]
   frameworks: [flask]
 sources:
-  - id: USER_INPUT
+  - id: FLASK_USER_INPUT
     match:
       node: CALL
-      api:
-        type: flask.request
-        method: get
+      api: { package: flask, type: request, method: form|args|values|cookies|stream|headers|data|full_path|url|json|get_json|view_args }
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
       where:
-        - op: in
-          left: methodFullName
-          right: ["flask.request.form.get", "flask.request.form.__getitem__", "flask.request.args.get", "flask.request.args.__getitem__", "flask.request.values.get", "flask.request.values.__getitem__", "flask.request.cookies.get", "flask.request.cookies.__getitem__", "flask.request.headers.get", "flask.request.headers.__getitem__", "flask.request.view_args.get", "flask.request.view_args.__getitem__"]
-      or:
-        - node: PARAM
-          where:
-            - op: pattern-inside
-              left: code
-              right: "@$APP.route($ROUTE, ...)\ndef $FUNC(..., $ROUTEVAR, ...):"
+        - op: inside
+          left: METHOD
+          right: PATTERN("@APP.route(...) def $FUNC(..., $ROUTEVAR, ...)")
 sinks:
-  - id: CSV_WRITE
+  - id: CSV_WRITER
     match:
       node: CALL
-      api:
-        type: csv.writer
-        method: writerow|writerows|writeheader
+      api: { package: csv, method: writerow|writerows|writeheader }
+      arg_index: 0
 propagations:
-  - id: TO_CSV_WRITE
+  - id: ARG_TO_PARAM
     edge: arg->param
     kind: taint
 flows:
-  - source: USER_INPUT
-    sink: CSV_WRITE
-    through: [TO_CSV_WRITE*]
+  - source: FLASK_USER_INPUT
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
+  - source: ROUTE_PARAM
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
 report:
-  message: "User input reaches CSV write operation without sanitization, potential formula injection vulnerability."
+  message: "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead."
   locations: ["source", "sink"]
-  evidence:
-    capture:
-      - argument: 0
+  evidence: { capture: [{ argument: 0 }] }
 tests:
   positive:
-    - "writer.writerow([request.form.get('input')])"
+    - "@app.route('/') def index(param): csv.writerow(param)"
   negative:
-    - "writer.writerow(['safe_value'])"
+    - "@app.route('/') def index(): csv.writerow('safe')"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:11,8-16)
-ERROR: could not resolve module semmle.python.web.flask.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:12,8-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:14,27-35)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:16,12-20)
-ERROR: could not resolve type FunctionParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:26,12-29)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:35,12-20)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:45,39-52)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:48,31-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:50,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:53,38-46)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:53,65-73)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:48,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_381e38f6/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:17,8-20)
+ERROR: could not resolve module semmle.code.cpp.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:18,8-41)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:23,10-19)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:25,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:26,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:29,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:30,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:31,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:32,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:33,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:34,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:35,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:36,12-21)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:43,12-23)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:45,12-23)
+ERROR: getDecorator() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:52,9-21)
+ERROR: getParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:53,13-25)
+ERROR: could not resolve predicate parameterNode/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:54,14-37)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:59,12-23)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:61,12-23)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:68,10-19)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:70,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:71,12-21)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:72,12-21)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:79,12-23)
+ERROR: could not resolve module ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:81,12-23)
+ERROR: could not resolve predicate localTaintStep/3 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:86,3-32)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:20,7-21)
+ERROR: predicate 'asCfgNode' has result type predicate, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:42,22-31)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:43,30-43)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:45,31-39)
+ERROR: predicate 'asVariable' has result type predicate, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:46,22-32)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:49,7-23)
+ERROR: predicate 'asCfgNode' has result type predicate, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:58,22-31)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:59,30-43)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:61,31-39)
+ERROR: predicate 'asVariable' has result type predicate, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:62,22-32)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:65,7-20)
+ERROR: predicate 'asCfgNode' has result type predicate, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:78,22-31)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:79,30-43)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:81,31-39)
+ERROR: predicate 'asVariable' has result type predicate, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:82,22-32)
+ERROR: FlaskUserInput.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:38,12-13)
+ERROR: CsvWriterSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6ebfd50b/python-security-queries/queries/test-rule/TestRule.ql:74,12-13)
 Rule Content:
 /**
- * @name CSV Writer Injection
- * @description Detects user input into a generated CSV file using the built-in `csv` module.
- *              This could lead to formula injection when the CSV is imported into a spreadsheet application.
+ * @id csv-writer-injection
  * @kind path-problem
+ * @severity error
  * @problem.severity error
- * @id python/csv-writer-injection
+ * @name CSV Injection Vulnerability
+ * @description Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate
+ *   the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a
+ *   spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst,
+ *   install malware on the user's computer.
+ * @tags security
+ *       external/cwe/cwe-1236
  */
 
 import python
-import DataFlow::PathGraph
-import semmle.python.web.flask.Flask
+import semmle.python.security.TaintTracking
+import python.flask
+import semmle.code.cpp.dataflow.DataFlow
 
-class FlaskSource extends DataFlow::Node {
-  FlaskSource() {
-    exists(DataFlow::CallNode call |
-      call.getTarget().getName() in [
-        "form.get", "form.__getitem__", "args.get", "args.__getitem__",
-        "values.get", "values.__getitem__", "cookies.get", "cookies.__getitem__",
-        "headers.get", "headers.__getitem__", "view_args.get", "view_args.__getitem__"
-      ] and
-      call.getImportedModule().getName() = "flask.request" and
-      this = call.getResult()
-    )
-    or
-    exists(FunctionParameter param |
-      param.getFunction().getDecoratorName() = "route" and
-      this = param.getAnAccess()
-    )
-  }
-}
-
-class CSVWriterSink extends DataFlow::Node {
-  CSVWriterSink() {
-    exists(DataFlow::CallNode call |
-      call.getTarget().getName().matches("%writerow%") or
-      call.getTarget().getName().matches("%writerows%") or
-      call.getTarget().getName().matches("%writeheader%") and
-      call.getImportedModule().getName() = "csv" and
-      this = call.getAnArgument()
+class FlaskUserInput extends DataFlow::Node {
+  FlaskUserInput() {
+    exists(Call ma |
+      ma.getTarget().getQualifiedName().matches("flask.request.%") and
+      (
+        ma.getTarget().getName() = "form" or
+        ma.getTarget().getName() = "args" or
+        ma.getTarget().getName() = "values" or
+        ma.getTarget().getName() = "cookies" or
+        ma.getTarget().getName() = "stream" or
+        ma.getTarget().getName() = "headers" or
+        ma.getTarget().getName() = "data" or
+        ma.getTarget().getName() = "full_path" or
+        ma.getTarget().getName() = "url" or
+        ma.getTarget().getName() = "json" or
+        ma.getTarget().getName() = "get_json" or
+        ma.getTarget().getName() = "view_args"
+      ) and
+      this = ma.getArg(0)
     )
   }
+
+  override predicate asCfgNode() { none() }
+  override ControlFlow::Node getBasicBlock() { none() }
+  override string toString() { result = "FlaskUserInput" }
+  override ControlFlow::Scope getScope() { none() }
+  override predicate asVariable() { none() }
 }
 
-class CSVWriterTrackingConfig extends TaintTracking::Configuration {
-  CSVWriterTrackingConfig() { this = "CSVWriterTrackingConfig" }
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Function f, Parameter p |
+      f.getDecorator().getValue().getQualifiedName().matches("flask.Flask.route") and
+      p = f.getParameter() and
+      this = DataFlow::parameterNode(p)
+    )
+  }
 
-  override predicate isSource(DataFlow::Node source) { source instanceof FlaskSource }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof CSVWriterSink }
+  override predicate asCfgNode() { none() }
+  override ControlFlow::Node getBasicBlock() { none() }
+  override string toString() { result = "RouteParamSource" }
+  override ControlFlow::Scope getScope() { none() }
+  override predicate asVariable() { none() }
 }
 
-from CSVWriterTrackingConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink.getNode(), source.getNode(),
-  "User input reaches CSV write operation without sanitization, potential formula injection vulnerability.",
-  source.getNode(), "Source of user input",
-  sink.getNode(), "Sink CSV write operation"
+class CsvWriterSink extends DataFlow::Node {
+  CsvWriterSink() {
+    exists(Call ma |
+      ma.getTarget().getQualifiedName().matches("csv.writer.%") and
+      (
+        ma.getTarget().getName() = "writerow" or
+        ma.getTarget().getName() = "writerows" or
+        ma.getTarget().getName() = "writeheader"
+      ) and
+      this = ma.getArg(0)
+    )
+  }
+
+  override predicate asCfgNode() { none() }
+  override ControlFlow::Node getBasicBlock() { none() }
+  override string toString() { result = "CsvWriterSink" }
+  override ControlFlow::Scope getScope() { none() }
+  override predicate asVariable() { none() }
+}
+
+predicate isTaintedFlow(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaintStep(source, sink, _)
+}
+
+from DataFlow::Node source, DataFlow::Node sink, string sourceType
+where
+  (
+    exists(FlaskUserInput fli | source = fli) or
+    exists(RouteParamSource rps | source = rps)
+  ) and
+  exists(CsvWriterSink cws | sink = cws) and
+  isTaintedFlow(source, sink) and
+  (
+    if exists(FlaskUserInput fli | source = fli)
+    then sourceType = "Flask user input"
+    else if exists(RouteParamSource rps | source = rps)
+    then sourceType = "Route parameter"
+    else sourceType = "Unknown"
+  )
+select sink, source, sink,
+  "Potential CSV injection vulnerability detected from " + sourceType + ". Consider using `defusedcsv` module instead.",
+  source, "User input flows to CSV writer here"
 ================================================================================
-Timestamp: 2025-10-28 18:04:05
+Timestamp: 2025-10-28 21:29:20
 Attempt: 3
 IR Content:
 ```yaml
@@ -284,125 +385,210 @@ rule:
   id: csv-writer-injection
   kind: taint
   severity: ERROR
-  message: "Detected user input into a generated CSV file using the built-in `csv` module. This could lead to formula injection when the CSV is imported into a spreadsheet application."
+  message: "Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst, install malware on the user's computer."
 scope:
   languages: [python]
   frameworks: [flask]
 sources:
-  - id: USER_INPUT
+  - id: FLASK_USER_INPUT
     match:
       node: CALL
-      api:
-        type: flask.request
-        method: get
+      api: { package: flask, type: request, method: form|args|values|cookies|stream|headers|data|full_path|url|json|get_json|view_args }
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
       where:
-        - op: in
-          left: methodFullName
-          right: ["flask.request.form.get", "flask.request.form.__getitem__", "flask.request.args.get", "flask.request.args.__getitem__", "flask.request.values.get", "flask.request.values.__getitem__", "flask.request.cookies.get", "flask.request.cookies.__getitem__", "flask.request.headers.get", "flask.request.headers.__getitem__", "flask.request.view_args.get", "flask.request.view_args.__getitem__"]
-      or:
-        - node: PARAM
-          where:
-            - op: pattern-inside
-              left: code
-              right: "@$APP.route($ROUTE, ...)\ndef $FUNC(..., $ROUTEVAR, ...):"
+        - op: inside
+          left: METHOD
+          right: PATTERN("@APP.route(...) def $FUNC(..., $ROUTEVAR, ...)")
 sinks:
-  - id: CSV_WRITE
+  - id: CSV_WRITER
     match:
       node: CALL
-      api:
-        type: csv.writer
-        method: writerow|writerows|writeheader
+      api: { package: csv, method: writerow|writerows|writeheader }
+      arg_index: 0
 propagations:
-  - id: TO_CSV_WRITE
+  - id: ARG_TO_PARAM
     edge: arg->param
     kind: taint
 flows:
-  - source: USER_INPUT
-    sink: CSV_WRITE
-    through: [TO_CSV_WRITE*]
+  - source: FLASK_USER_INPUT
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
+  - source: ROUTE_PARAM
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
 report:
-  message: "User input reaches CSV write operation without sanitization, potential formula injection vulnerability."
+  message: "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead."
   locations: ["source", "sink"]
-  evidence:
-    capture:
-      - argument: 0
+  evidence: { capture: [{ argument: 0 }] }
 tests:
   positive:
-    - "writer.writerow([request.form.get('input')])"
+    - "@app.route('/') def index(param): csv.writerow(param)"
   negative:
-    - "writer.writerow(['safe_value'])"
+    - "@app.route('/') def index(): csv.writerow('safe')"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:12,8-39)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:16,12-30)
-ERROR: could not resolve module Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:26,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:35,12-30)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:45,39-52)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:53,38-56)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:53,65-83)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:48,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_83232b60/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:17,8-24)
+ERROR: could not resolve module semmle.python.ControlFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:19,8-33)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:29,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:30,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:31,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:32,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:33,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:34,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:35,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:36,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:37,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:38,12-21)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:40,17-28)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:45,12-32)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:48,12-27)
+ERROR: could not resolve type DataFlow::Variable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:49,12-30)
+ERROR: getDecoratorValue() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:55,9-26)
+ERROR: getAParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:56,13-26)
+ERROR: could not resolve predicate parameterNode/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:57,14-37)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:62,12-32)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:65,12-27)
+ERROR: could not resolve type DataFlow::Variable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:66,12-30)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:72,10-19)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:74,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:75,12-21)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:76,12-21)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:78,17-28)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:83,12-32)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:86,12-27)
+ERROR: could not resolve type DataFlow::Variable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:87,12-30)
+ERROR: could not resolve predicate localTaint/3 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:91,3-28)
+ERROR: predicate 'asCfgNode' has result type TaintTracking::DataFlow::Node, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:44,27-36)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:45,33-46)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:48,28-36)
+ERROR: predicate 'asVariable' has result type null, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:49,31-41)
+ERROR: predicate 'asCfgNode' has result type TaintTracking::DataFlow::Node, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:61,27-36)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:62,33-46)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:65,28-36)
+ERROR: predicate 'asVariable' has result type null, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:66,31-41)
+ERROR: predicate 'asCfgNode' has result type TaintTracking::DataFlow::Node, not matching the overridden predicate's Flow::ControlFlowNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:82,27-36)
+ERROR: predicate 'getBasicBlock' has result type null, not matching the overridden predicate's Flow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:83,33-46)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:86,28-36)
+ERROR: predicate 'asVariable' has result type null, not matching the overridden predicate's Essa::EssaVariable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_541165d8/python-security-queries/queries/test-rule/TestRule.ql:87,31-41)
 Rule Content:
 /**
- * @name CSV Writer Injection
- * @description Detects user input into a generated CSV file using the built-in `csv` module.
- *              This could lead to formula injection when the CSV is imported into a spreadsheet application.
+ * @id csv-writer-injection
  * @kind path-problem
+ * @severity error
  * @problem.severity error
- * @id python/csv-writer-injection
+ * @name CSV Injection Vulnerability
+ * @description Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate
+ *   the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a
+ *   spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst,
+ *   install malware on the user's computer.
+ * @tags security
+ *       external/cwe/cwe-1236
  */
 
 import python
-import semmle.python.dataflow.new.DataFlow
-import semmle.python.web.flask.Request
+import semmle.python.security.TaintTracking
+import python.web.flask
+import semmle.python.dataflow.DataFlow
+import semmle.python.ControlFlow
+import semmle.python.Concepts
 
-class FlaskSource extends DataFlow::Node {
-  FlaskSource() {
-    exists(DataFlow::CallNode call |
-      call.getTarget().getName() in [
-        "form.get", "form.__getitem__", "args.get", "args.__getitem__",
-        "values.get", "values.__getitem__", "cookies.get", "cookies.__getitem__",
-        "headers.get", "headers.__getitem__", "view_args.get", "view_args.__getitem__"
-      ] and
-      call.getImportedModule().getName() = "flask.request" and
-      this = call.getValue()
-    )
-    or
-    exists(Function::Parameter param |
-      param.getFunction().getADecorator().getName() = "route" and
-      this = param.getAnAccess()
-    )
-  }
-}
-
-class CSVWriterSink extends DataFlow::Node {
-  CSVWriterSink() {
-    exists(DataFlow::CallNode call |
-      (call.getTarget().getName() = "writerow" or
-       call.getTarget().getName() = "writerows" or
-       call.getTarget().getName() = "writeheader") and
-      call.getImportedModule().getName().matches("%csv%") and
-      this = call.getAnArgument()
+class FlaskUserInput extends DataFlow::Node {
+  FlaskUserInput() {
+    exists(Call ma |
+      ma.getCallee().getQualifiedName().matches("flask.request.%") and
+      (
+        ma.getCallee().getName() = "form" or
+        ma.getCallee().getName() = "args" or
+        ma.getCallee().getName() = "values" or
+        ma.getCallee().getName() = "cookies" or
+        ma.getCallee().getName() = "stream" or
+        ma.getCallee().getName() = "headers" or
+        ma.getCallee().getName() = "data" or
+        ma.getCallee().getName() = "full_path" or
+        ma.getCallee().getName() = "url" or
+        ma.getCallee().getName() = "json" or
+        ma.getCallee().getName() = "get_json" or
+        ma.getCallee().getName() = "view_args"
+      ) and
+      this = ma.getArgument(0)
     )
   }
+
+  override DataFlow::Node asCfgNode() { result = this }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.getBasicBlock() }
+  override string toString() { result = "FlaskUserInput" }
+  override Location getLocation() { result = this.getLocation() }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { result = this.asVariable() }
 }
 
-class CSVWriterTrackingConfig extends TaintTracking::Configuration {
-  CSVWriterTrackingConfig() { this = "CSVWriterTrackingConfig" }
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Function f, Parameter p |
+      f.getDecoratorValue().getQualifiedName().matches("flask.Flask.route") and
+      p = f.getAParameter() and
+      this = DataFlow::parameterNode(p, _)
+    )
+  }
 
-  override predicate isSource(DataFlow::Node source) { source instanceof FlaskSource }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof CSVWriterSink }
+  override DataFlow::Node asCfgNode() { result = this }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.getBasicBlock() }
+  override string toString() { result = "RouteParamSource" }
+  override Location getLocation() { result = this.getLocation() }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { result = this.asVariable() }
 }
 
-from CSVWriterTrackingConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink, source,
-  "User input reaches CSV write operation without sanitization, potential formula injection vulnerability.",
-  source.getNode(), "Source of user input",
-  sink.getNode(), "Sink CSV write operation"
+class CsvWriterSink extends DataFlow::Node {
+  CsvWriterSink() {
+    exists(Call ma |
+      ma.getCallee().getQualifiedName().matches("csv.writer.%") and
+      (
+        ma.getCallee().getName() = "writerow" or
+        ma.getCallee().getName() = "writerows" or
+        ma.getCallee().getName() = "writeheader"
+      ) and
+      this = ma.getArgument(0)
+    )
+  }
+
+  override DataFlow::Node asCfgNode() { result = this }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.getBasicBlock() }
+  override string toString() { result = "CsvWriterSink" }
+  override Location getLocation() { result = this.getLocation() }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { result = this.asVariable() }
+}
+
+predicate isTaintedFlow(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaint(source, sink, _)
+}
+
+from DataFlow::Node source, DataFlow::Node sink, string sourceType
+where
+  (
+    exists(FlaskUserInput fli | source = fli) or
+    exists(RouteParamSource rps | source = rps)
+  ) and
+  exists(CsvWriterSink cws | sink = cws) and
+  isTaintedFlow(source, sink) and
+  (
+    if exists(FlaskUserInput fli | source = fli)
+    then sourceType = "Flask user input"
+    else if exists(RouteParamSource rps | source = rps)
+    then sourceType = "Route parameter"
+    else sourceType = "Unknown"
+  )
+select sink, source, sink,
+  "Potential CSV injection vulnerability detected from " + sourceType + ". Consider using `defusedcsv` module instead.",
+  source, "User input flows to CSV writer here"
 ================================================================================
-Timestamp: 2025-10-28 18:06:06
+Timestamp: 2025-10-28 21:32:00
 Attempt: 4
 IR Content:
 ```yaml
@@ -411,140 +597,174 @@ rule:
   id: csv-writer-injection
   kind: taint
   severity: ERROR
-  message: "Detected user input into a generated CSV file using the built-in `csv` module. This could lead to formula injection when the CSV is imported into a spreadsheet application."
+  message: "Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst, install malware on the user's computer."
 scope:
   languages: [python]
   frameworks: [flask]
 sources:
-  - id: USER_INPUT
+  - id: FLASK_USER_INPUT
     match:
       node: CALL
-      api:
-        type: flask.request
-        method: get
+      api: { package: flask, type: request, method: form|args|values|cookies|stream|headers|data|full_path|url|json|get_json|view_args }
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
       where:
-        - op: in
-          left: methodFullName
-          right: ["flask.request.form.get", "flask.request.form.__getitem__", "flask.request.args.get", "flask.request.args.__getitem__", "flask.request.values.get", "flask.request.values.__getitem__", "flask.request.cookies.get", "flask.request.cookies.__getitem__", "flask.request.headers.get", "flask.request.headers.__getitem__", "flask.request.view_args.get", "flask.request.view_args.__getitem__"]
-      or:
-        - node: PARAM
-          where:
-            - op: pattern-inside
-              left: code
-              right: "@$APP.route($ROUTE, ...)\ndef $FUNC(..., $ROUTEVAR, ...):"
+        - op: inside
+          left: METHOD
+          right: PATTERN("@APP.route(...) def $FUNC(..., $ROUTEVAR, ...)")
 sinks:
-  - id: CSV_WRITE
+  - id: CSV_WRITER
     match:
       node: CALL
-      api:
-        type: csv.writer
-        method: writerow|writerows|writeheader
+      api: { package: csv, method: writerow|writerows|writeheader }
+      arg_index: 0
 propagations:
-  - id: TO_CSV_WRITE
+  - id: ARG_TO_PARAM
     edge: arg->param
     kind: taint
 flows:
-  - source: USER_INPUT
-    sink: CSV_WRITE
-    through: [TO_CSV_WRITE*]
+  - source: FLASK_USER_INPUT
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
+  - source: ROUTE_PARAM
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
 report:
-  message: "User input reaches CSV write operation without sanitization, potential formula injection vulnerability."
+  message: "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead."
   locations: ["source", "sink"]
-  evidence:
-    capture:
-      - argument: 0
+  evidence: { capture: [{ argument: 0 }] }
 tests:
   positive:
-    - "writer.writerow([request.form.get('input')])"
+    - "@app.route('/') def index(param): csv.writerow(param)"
   negative:
-    - "writer.writerow(['safe_value'])"
+    - "@app.route('/') def index(): csv.writerow('safe')"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:12,8-39)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:17,12-22)
-ERROR: asExpr() cannot be resolved for type FlaskDataSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:24,12-18)
-ERROR: could not resolve type FunctionParam (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:27,12-25)
-ERROR: asExpr() cannot be resolved for type FlaskDataSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:29,12-18)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:36,12-22)
-ERROR: asExpr() cannot be resolved for type CSVWriterSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:54,40-58)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:54,67-85)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: FlaskDataSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:15,7-22)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: CSVWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:34,7-20)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9533ac2/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:17,8-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: getValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:50,25-33)
+ERROR: getAParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:51,13-26)
+ERROR: could not resolve predicate parameterNode/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:52,14-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:61,12-24)
+ERROR: hasFlow(Node, Node) cannot be resolved for type Config (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:89,11-18)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: predicate 'isSource' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:44,3-67)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:47,7-23)
+ERROR: predicate 'isSource' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:56,3-69)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:59,7-20)
+ERROR: predicate 'isSink' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:72,3-64)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:78,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98034c96/python-security-queries/queries/test-rule/TestRule.ql:83,22-28)
 Rule Content:
 /**
- * @name CSV Writer Injection
- * @description Detects user input into a generated CSV file using the built-in `csv` module.
- *              This could lead to formula injection when the CSV is imported into a spreadsheet application.
+ * @id csv-writer-injection
  * @kind path-problem
+ * @severity error
  * @problem.severity error
- * @id python/csv-writer-injection
+ * @name CSV Injection Vulnerability
+ * @description Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate
+ *   the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a
+ *   spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst,
+ *   install malware on the user's computer.
+ * @tags security
+ *       external/cwe/cwe-1236
  */
 
 import python
+import semmle.python.security.TaintTracking
+import semmle.python.web.flask
 import semmle.python.dataflow.DataFlow
-import semmle.python.web.flask.Request
+import semmle.python.dataflow.TaintTracking
 import semmle.python.Concepts
 
-class FlaskDataSource extends DataFlow::Node {
-  FlaskDataSource() {
-    exists(MethodCall call |
-      call.getMethodName() in [
-        "form.get", "form.__getitem__", "args.get", "args.__getitem__",
-        "values.get", "values.__getitem__", "cookies.get", "cookies.__getitem__",
-        "headers.get", "headers.__getitem__", "view_args.get", "view_args.__getitem__"
-      ] and
-      call.getQualifier().getType().getName() = "flask.request" and
-      this.asExpr() = call
+class FlaskUserInput extends DataFlow::Node {
+  FlaskUserInput() {
+    exists(MethodAccess ma |
+      ma.getMethod().getQualifiedName().matches("flask.request.%") and
+      (
+        ma.getMethod().getName() = "form" or
+        ma.getMethod().getName() = "args" or
+        ma.getMethod().getName() = "values" or
+        ma.getMethod().getName() = "cookies" or
+        ma.getMethod().getName() = "stream" or
+        ma.getMethod().getName() = "headers" or
+        ma.getMethod().getName() = "data" or
+        ma.getMethod().getName() = "full_path" or
+        ma.getMethod().getName() = "url" or
+        ma.getMethod().getName() = "json" or
+        ma.getMethod().getName() = "get_json" or
+        ma.getMethod().getName() = "view_args"
+      ) and
+      this = ma.getAnArg()
     )
-    or
-    exists(FunctionParam param |
-      param.getFunction().getADecorator().toString() = "route" and
-      this.asExpr() = param
+  }
+
+  override predicate isSource() { this instanceof FlaskUserInput }
+}
+
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Function f, Parameter p |
+      f.getADecorator().getValue().getQualifiedName().matches("flask.Flask.route") and
+      p = f.getAParameter() and
+      this = DataFlow::parameterNode(p)
     )
+  }
+
+  override predicate isSource() { this instanceof RouteParamSource }
+}
+
+class CsvWriterSink extends DataFlow::Node {
+  CsvWriterSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getQualifiedName().matches("csv.writer.%") and
+      (
+        ma.getMethod().getName() = "writerow" or
+        ma.getMethod().getName() = "writerows" or
+        ma.getMethod().getName() = "writeheader"
+      ) and
+      this = ma.getAnArg(0)
+    )
+  }
+
+  override predicate isSink() { this instanceof CsvWriterSink }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "CSV Injection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FlaskUserInput or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CsvWriterSink
   }
 }
 
-class CSVWriterSink extends DataFlow::Node {
-  CSVWriterSink() {
-    exists(MethodCall call |
-      (call.getMethodName() = "writerow" or
-       call.getMethodName() = "writerows" or
-       call.getMethodName() = "writeheader") and
-      call.getQualifier().getType().toString().matches("%csv%") and
-      this.asExpr() = call.getAnArgument()
-    )
-  }
-}
-
-class CSVInjectionConfiguration extends TaintTracking::Configuration {
-  CSVInjectionConfiguration() { this = "CSV injection configuration" }
-
-  override predicate isSource(DataFlow::Node source) { source instanceof FlaskDataSource }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof CSVWriterSink }
-}
-
-from CSVInjectionConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink, source,
-  "User input reaches CSV write operation without sanitization, potential formula injection vulnerability.",
-  source.getNode(), "Source of user input",
-  sink.getNode(), "Sink CSV write operation"
+from Config cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead.",
+  source, "User input flows to CSV writer here"
 ================================================================================
-Timestamp: 2025-10-28 18:08:01
+Timestamp: 2025-10-28 21:35:07
 Attempt: 5
 IR Content:
 ```yaml
@@ -553,123 +773,175 @@ rule:
   id: csv-writer-injection
   kind: taint
   severity: ERROR
-  message: "Detected user input into a generated CSV file using the built-in `csv` module. This could lead to formula injection when the CSV is imported into a spreadsheet application."
+  message: "Detected user input into a generated CSV file using the built-in `csv` module. If user data is used to generate the data in this file, it is possible that an attacker could inject a formula when the CSV is imported into a spreadsheet application that runs an attacker script, which could steal data from the importing user or, at worst, install malware on the user's computer."
 scope:
   languages: [python]
   frameworks: [flask]
 sources:
-  - id: USER_INPUT
+  - id: FLASK_USER_INPUT
     match:
       node: CALL
-      api:
-        type: flask.request
-        method: get
+      api: { package: flask, type: request, method: form|args|values|cookies|stream|headers|data|full_path|url|json|get_json|view_args }
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
       where:
-        - op: in
-          left: methodFullName
-          right: ["flask.request.form.get", "flask.request.form.__getitem__", "flask.request.args.get", "flask.request.args.__getitem__", "flask.request.values.get", "flask.request.values.__getitem__", "flask.request.cookies.get", "flask.request.cookies.__getitem__", "flask.request.headers.get", "flask.request.headers.__getitem__", "flask.request.view_args.get", "flask.request.view_args.__getitem__"]
-      or:
-        - node: PARAM
-          where:
-            - op: pattern-inside
-              left: code
-              right: "@$APP.route($ROUTE, ...)\ndef $FUNC(..., $ROUTEVAR, ...):"
+        - op: inside
+          left: METHOD
+          right: PATTERN("@APP.route(...) def $FUNC(..., $ROUTEVAR, ...)")
 sinks:
-  - id: CSV_WRITE
+  - id: CSV_WRITER
     match:
       node: CALL
-      api:
-        type: csv.writer
-        method: writerow|writerows|writeheader
+      api: { package: csv, method: writerow|writerows|writeheader }
+      arg_index: 0
 propagations:
-  - id: TO_CSV_WRITE
+  - id: ARG_TO_PARAM
     edge: arg->param
     kind: taint
 flows:
-  - source: USER_INPUT
-    sink: CSV_WRITE
-    through: [TO_CSV_WRITE*]
+  - source: FLASK_USER_INPUT
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
+  - source: ROUTE_PARAM
+    sink: CSV_WRITER
+    through: [ARG_TO_PARAM*]
 report:
-  message: "User input reaches CSV write operation without sanitization, potential formula injection vulnerability."
+  message: "Potential CSV injection vulnerability detected. Consider using `defusedcsv` module instead."
   locations: ["source", "sink"]
-  evidence:
-    capture:
-      - argument: 0
+  evidence: { capture: [{ argument: 0 }] }
 tests:
   positive:
-    - "writer.writerow([request.form.get('input')])"
+    - "@app.route('/') def index(param): csv.writerow(param)"
   negative:
-    - "writer.writerow(['safe_value'])"
+    - "@app.route('/') def index(): csv.writerow('safe')"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.flask.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:12,8-37)
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:13,8-27)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:17,12-30)
-ERROR: could not resolve module Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:27,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:36,12-30)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:46,39-52)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:54,38-56)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:54,65-83)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6fe88848/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:14,8-31)
+ERROR: getQualifiedName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:21,22-38)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:23,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:24,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:25,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:26,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:27,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:28,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:29,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:30,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:31,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:32,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:33,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:34,24-31)
+ERROR: getValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:44,25-33)
+ERROR: getParameter(_) cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:45,13-25)
+ERROR: could not resolve predicate parameterNode/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:46,14-37)
+ERROR: getQualifiedName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:54,22-38)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:56,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:57,24-31)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:58,24-31)
+ERROR: hasFlow(Node, Node) cannot be resolved for type CsvInjectionConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:79,14-21)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:18,15-29)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: CsvWriterSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:51,15-28)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:68,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+ERROR: FlaskUserInput.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:36,12-13)
+ERROR: CsvWriterSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3250108e/python-security-queries/queries/test-rule/TestRule.ql:60,12-13)
 Rule Content:
-/**
- * @name CSV Writer Injection
- * @description Detects user input into a generated CSV file using the built-in `csv` module.
- *              This could lead to formula injection when the CSV is imported into a spreadsheet application.
- * @kind path-problem
+/*
+ * @name CSV Injection Vulnerability
+ * @description Detection rule for CSV injection vulnerabilities
+ * @kind path-problem  
+ * @id csv-writer-injection
+ * @tags security
+ * @precision high
+ * @severity error
  * @problem.severity error
- * @id python/csv-writer-injection
  */
 
 import python
-import semmle.python.dataflow.new.DataFlow
-import semmle.python.web.flask.Flask
-import DataFlow::PathGraph
+import semmle.python.security.TaintTracking
+import semmle.python.web.Flask
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
 
-class FlaskSource extends DataFlow::Node {
-  FlaskSource() {
-    exists(DataFlow::CallNode call |
-      call.getTarget().getName() in [
-        "form.get", "form.__getitem__", "args.get", "args.__getitem__",
-        "values.get", "values.__getitem__", "cookies.get", "cookies.__getitem__",
-        "headers.get", "headers.__getitem__", "view_args.get", "view_args.__getitem__"
-      ] and
-      call.getImportedModule().getName() = "flask.request" and
-      this = call.getValue()
-    )
-    or
-    exists(Function::Parameter param |
-      param.getFunction().getADecorator().getName() = "route" and
-      this = param.getAnAccess()
-    )
-  }
-}
-
-class CSVWriterSink extends DataFlow::Node {
-  CSVWriterSink() {
-    exists(DataFlow::CallNode call |
-      (call.getTarget().getName() = "writerow" or
-       call.getTarget().getName() = "writerows" or
-       call.getTarget().getName() = "writeheader") and
-      call.getImportedModule().getName().matches("%csv%") and
-      this = call.getAnArgument()
+private class FlaskUserInput extends DataFlow::Node {
+  FlaskUserInput() {
+    exists(Call call |
+      call.getFunc().getQualifiedName().matches("flask.request.%") and
+      (
+        call.getFunc().getName() = "form" or
+        call.getFunc().getName() = "args" or
+        call.getFunc().getName() = "values" or
+        call.getFunc().getName() = "cookies" or
+        call.getFunc().getName() = "stream" or
+        call.getFunc().getName() = "headers" or
+        call.getFunc().getName() = "data" or
+        call.getFunc().getName() = "full_path" or
+        call.getFunc().getName() = "url" or
+        call.getFunc().getName() = "json" or
+        call.getFunc().getName() = "get_json" or
+        call.getFunc().getName() = "view_args"
+      ) and
+      this = call.getArg(0)
     )
   }
 }
 
-class CSVWriterTrackingConfig extends TaintTracking::Configuration {
-  CSVWriterTrackingConfig() { this = "CSVWriterTrackingConfig" }
-
-  override predicate isSource(DataFlow::Node source) { source instanceof FlaskSource }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof CSVWriterSink }
+private class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() { 
+    exists(Function f, Parameter p |
+      f.getADecorator().getValue().toString() = "route" and
+      p = f.getParameter(_) and
+      this = DataFlow::parameterNode(p)
+    )
+  }
 }
 
-from CSVWriterTrackingConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink.getNode(), source.getNode(),
-  "User input reaches CSV write operation without sanitization, potential formula injection vulnerability.",
-  source.getNode(), "Source of user input",
-  sink.getNode(), "Sink CSV write operation"
+private class CsvWriterSink extends DataFlow::Node {
+  CsvWriterSink() {
+    exists(Call call |
+      call.getFunc().getQualifiedName().matches("csv.writer.%") and
+      (
+        call.getFunc().getName() = "writerow" or
+        call.getFunc().getName() = "writerows" or  
+        call.getFunc().getName() = "writeheader"
+      ) and
+      this = call.getArg(0)
+    )
+  }
+}
+
+private class CsvInjectionConfig extends TaintTracking::Configuration {
+  CsvInjectionConfig() { this = "CSV Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof FlaskUserInput or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof CsvWriterSink
+  }
+}
+
+from CsvInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential CSV injection vulnerability from user input to CSV writer. Consider using 'defusedcsv' module.",
+  source, "User input source",
+  sink, "CSV writer sink"
 ================================================================================

@@ -3,7 +3,7 @@ import os
 import re
 import time
 from datetime import datetime
-from sast_tools.codeql import validate_codeql_rule
+from sast_tools.muticodeql import validate_codeql_rule
 from agent.llm_client import LLM
 from agent.prompt.codeql import IRPrompt,IRTransformPrompt, RepairPrompt,AbstractPrompt
 def get_rule_from_llm(response: str) -> str:
@@ -96,10 +96,9 @@ def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast
     os.makedirs(IR_dir, exist_ok=True)
     print(f"提取IR")
     IR_content = llm.ExtIR(prompt=IR_prompt, max_tokens=3000)
-    
+    prompt = IRTransformPrompt().format(IR=IR_content, language="java", sast=sast,example=example)
     for attempt in range(1, max_retries + 1):
         print(f"\n🔄 第 {attempt} 次尝试生成规则...")
-        prompt = IRTransformPrompt().format(IR=IR_content, language="java", sast=sast,example=example)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
         print(f"[📜] LLM 响应内容：\n{response}")
         rule_content = get_rule_from_llm(response)
@@ -108,7 +107,7 @@ def migrate_rule(input_file: str,IR_dir:str, output_dir: str, log_dir: str, sast
             prompt += " 请确保包含 markdown 格式的 yaml 代码块（```ql ... ```）"
             continue
 
-        result = validate_codeql_rule(rule_content)
+        result = validate_codeql_rule(rule_content, language="java")
         if result["valid"]:
             print("[✅] 规则验证通过！")
             save_IR(IR_content, IR_dir,base_name=input_filename)
@@ -166,11 +165,11 @@ def process_multiple_files(directory: str,IR:str, output_dir: str, log_dir: str)
         migrate_rule(file_path, IR,output_dir, log_dir)
   
 if __name__ == "__main__":
-    input_directory = "/Users/djoker/Desktop/CTGA/demo/input/semgrep/java"  
-    IR_directory = "/Users/djoker/Desktop/CTGA/demo/IR_V3/" 
-    output_directory = "/Users/djoker/Desktop/CTGA/demo/output/semgrep2codeql_IR_v3"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/java"  
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/IR_V4/" 
+    output_directory = "/home/cbb/SAST-Rule-Migrate/output/semgrep2codeql_IR_v4"
 
-    log_directory = "/Users/djoker/Desktop/CTGA/demo/codeerror/semgrep2codeql_IR"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/semgrep2codeql_IRv4"
     for directory in [input_directory, output_directory, log_directory]:
         if not os.path.exists(directory):
             os.makedirs(directory)

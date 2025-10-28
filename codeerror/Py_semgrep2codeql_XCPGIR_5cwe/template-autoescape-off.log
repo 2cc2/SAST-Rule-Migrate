@@ -1,4 +1,4 @@
-Timestamp: 2025-10-28 18:23:30
+Timestamp: 2025-10-28 21:53:13
 Attempt: 1
 IR Content:
 ```yaml
@@ -10,69 +10,82 @@ rule:
   message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability, or turn autoescape on."
 scope:
   languages: [python]
-  frameworks: ["flask"]
-  env: { os: ["*"], shell: ["*"] }
-sources: []
-sinks:
+  frameworks: [flask]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
   - id: AUTOESCAPE_OFF
     match:
       node: LITERAL
       where:
         - op: regex
           left: value
-          right: "{%\\s*autoescape\\s+false\\s*%}"
+          right: '\{%\s*autoescape\s+false\s*%\}'
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
 sanitizers: []
 barriers: []
 propagations: []
 flows:
-  - source: ""
-    sink: AUTOESCAPE_OFF
+  - source: AUTOESCAPE_OFF
+    sink: XSS_SINK
     constraints:
       path:
-        must: []
-        must_not: []
+        must: [ { pattern: "CALL(flask.templating.render_template)" } ]
 report:
-  message: "Autoescaping disabled in Flask template - potential XSS risk"
-  locations: ["sink"]
-  evidence: { capture: [{ node: "ALL" }] }
+  message: "Autoescaping is disabled in Flask template, which may lead to XSS vulnerability"
+  locations: ["source"]
+  evidence: { capture: [{ node: "AUTOESCAPE_OFF" }] }
 tests:
   positive:
     - "{% autoescape false %}"
   negative:
     - "{% autoescape true %}"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_651510c9/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: getValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_651510c9/python-security-queries/queries/test-rule/TestRule.ql:19,9-17)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.XSS (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:14,8-34)
+ERROR: could not resolve module semmle.python.web.flask.Templating (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: getText() cannot be resolved for type AutoescapeOff.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:19,10-17)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:23,43-51)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:23,70-78)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:26,14-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7516fbf6/python-security-queries/queries/test-rule/TestRule.ql:27,3-11)
 Rule Content:
 /**
- * @name Template Autoescape Off
- * @id template-autoescape-off
- * @description Detected a segment of a Flask template where autoescaping is explicitly
- *   disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this
- *   segment. Ensure no user data is rendered here, otherwise this is a cross-site
- *   scripting (XSS) vulnerability, or turn autoescape on.
- * @kind problem
+ * @name Flask template autoescape off
+ * @description Detects Flask templates where autoescaping is explicitly disabled,
+ *              which may lead to XSS vulnerabilities.
+ * @kind path-problem
  * @problem.severity warning
+ * @precision high
+ * @id python/flask/autoescape-off
  * @tags security
- *       external/cwe/cwe-079
+ *       external/cwe/cwe-79
  */
 
 import python
+import semmle.python.security.XSS
+import semmle.python.web.flask.Templating
 
-predicate isAutoescapeOffCall(Expr arg) {
-  exists(string regex |
-    regex = "{%\\s*autoescape\\s+false\\s*%}" and
-    arg.getValue().regexpMatch(regex)
-  )
+class AutoescapeOff extends Expr {
+  AutoescapeOff() {
+    this.getText().regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
+  }
 }
 
-from Call call, Expr arg
+from Expr autoescapeOff, Call renderCall, DataFlow::PathNode source, DataFlow::PathNode sink
 where
-  isAutoescapeOffCall(arg) and
-  call.getArg(0) = arg
-select call, "Autoescaping disabled in Flask template - potential XSS risk"
+  autoescapeOff instanceof AutoescapeOff and
+  renderCall.getTarget().hasQualifiedName("flask.templating", "render_template") and
+  DataFlow::localFlow(source, sink) and
+  source.asExpr() = autoescapeOff and
+  sink.asExpr() = renderCall
+select sink, "Autoescaping is disabled in Flask template (" + autoescapeOff.getLocation() + 
+             "), which may lead to XSS vulnerability", source, autoescapeOff.toString()
 ================================================================================
-Timestamp: 2025-10-28 18:24:52
+Timestamp: 2025-10-28 21:55:12
 Attempt: 2
 IR Content:
 ```yaml
@@ -84,69 +97,83 @@ rule:
   message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability, or turn autoescape on."
 scope:
   languages: [python]
-  frameworks: ["flask"]
-  env: { os: ["*"], shell: ["*"] }
-sources: []
-sinks:
+  frameworks: [flask]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
   - id: AUTOESCAPE_OFF
     match:
       node: LITERAL
       where:
         - op: regex
           left: value
-          right: "{%\\s*autoescape\\s+false\\s*%}"
+          right: '\{%\s*autoescape\s+false\s*%\}'
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
 sanitizers: []
 barriers: []
 propagations: []
 flows:
-  - source: ""
-    sink: AUTOESCAPE_OFF
+  - source: AUTOESCAPE_OFF
+    sink: XSS_SINK
     constraints:
       path:
-        must: []
-        must_not: []
+        must: [ { pattern: "CALL(flask.templating.render_template)" } ]
 report:
-  message: "Autoescaping disabled in Flask template - potential XSS risk"
-  locations: ["sink"]
-  evidence: { capture: [{ node: "ALL" }] }
+  message: "Autoescaping is disabled in Flask template, which may lead to XSS vulnerability"
+  locations: ["source"]
+  evidence: { capture: [{ node: "AUTOESCAPE_OFF" }] }
 tests:
   positive:
     - "{% autoescape false %}"
   negative:
     - "{% autoescape true %}"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4df80fb8/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: Invalid regular expression: Illegal repetition near index 1
-{%\s*autoescape\s+false\s*%}
- ^ (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4df80fb8/python-security-queries/queries/test-rule/TestRule.ql:17,31-64)
-ERROR: 'templateContent' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4df80fb8/python-security-queries/queries/test-rule/TestRule.ql:16,38-53)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.Security.Xss (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: could not resolve module python.web.flask.Templating (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:15,8-35)
+ERROR: could not resolve type StrLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:18,29-39)
+ERROR: getValue() cannot be resolved for type AutoescapeOff.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:20,10-18)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:24,52-70)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:24,79-97)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:26,14-23)
+ERROR: could not resolve predicate localFlowPath/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e363eb05/python-security-queries/queries/test-rule/TestRule.ql:27,3-26)
 Rule Content:
 /**
- * @name Template Autoescape Off
- * @id template-autoescape-off
- * @description Detected a segment of a Flask template where autoescaping is explicitly
- *   disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this
- *   segment. Ensure no user data is rendered here, otherwise this is a cross-site
- *   scripting (XSS) vulnerability, or turn autoescape on.
- * @kind problem
+ * @name Flask template autoescape off
+ * @description Detects Flask templates where autoescaping is explicitly disabled,
+ *              which may lead to XSS vulnerabilities.
+ * @kind path-problem
  * @problem.severity warning
+ * @precision high
+ * @id python/flask/autoescape-off
  * @tags security
- *       external/cwe/cwe-079
+ *       external/cwe/cwe-79
  */
 
 import python
+import python.Security.Xss
+import python.web.flask.Templating
+import semmle.python.dataflow.new.DataFlow
 
-predicate isAutoescapeOffCall(string templateContent) {
-  templateContent.regexpMatch("{%\\s*autoescape\\s+false\\s*%}")
+class AutoescapeOff extends StrLiteral {
+  AutoescapeOff() {
+    this.getValue().regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
+  }
 }
 
-from string templateContent
-where 
-  isAutoescapeOffCall(templateContent)
-select templateContent, "Autoescaping disabled in Flask template - potential XSS risk",
-  "This template segment disables autoescaping which may lead to XSS vulnerabilities"
+from AutoescapeOff autoescapeOff, Call renderCall, DataFlow::PathNode source, DataFlow::PathNode sink
+where
+  renderCall.getCallee().hasQualifiedName("flask.templating", "render_template") and
+  DataFlow::localFlowPath(source, sink) and
+  source.asExpr() = autoescapeOff and
+  sink.asExpr() = renderCall
+select sink, "Autoescaping is disabled in Flask template (" + autoescapeOff.getLocation() + 
+             "), which may lead to XSS vulnerability", source, autoescapeOff.toString()
 ================================================================================
-Timestamp: 2025-10-28 18:26:19
+Timestamp: 2025-10-28 21:57:20
 Attempt: 3
 IR Content:
 ```yaml
@@ -158,65 +185,98 @@ rule:
   message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability, or turn autoescape on."
 scope:
   languages: [python]
-  frameworks: ["flask"]
-  env: { os: ["*"], shell: ["*"] }
-sources: []
-sinks:
+  frameworks: [flask]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
   - id: AUTOESCAPE_OFF
     match:
       node: LITERAL
       where:
         - op: regex
           left: value
-          right: "{%\\s*autoescape\\s+false\\s*%}"
+          right: '\{%\s*autoescape\s+false\s*%\}'
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
 sanitizers: []
 barriers: []
 propagations: []
 flows:
-  - source: ""
-    sink: AUTOESCAPE_OFF
+  - source: AUTOESCAPE_OFF
+    sink: XSS_SINK
     constraints:
       path:
-        must: []
-        must_not: []
+        must: [ { pattern: "CALL(flask.templating.render_template)" } ]
 report:
-  message: "Autoescaping disabled in Flask template - potential XSS risk"
-  locations: ["sink"]
-  evidence: { capture: [{ node: "ALL" }] }
+  message: "Autoescaping is disabled in Flask template, which may lead to XSS vulnerability"
+  locations: ["source"]
+  evidence: { capture: [{ node: "AUTOESCAPE_OFF" }] }
 tests:
   positive:
     - "{% autoescape false %}"
   negative:
     - "{% autoescape true %}"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b6c888e9/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.frameworks.flask.FlaskTemplates (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b6c888e9/python-security-queries/queries/test-rule/TestRule.ql:15,8-53)
-ERROR: could not resolve type TemplateBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b6c888e9/python-security-queries/queries/test-rule/TestRule.ql:17,6-19)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:14,8-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:23,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:26,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:30,29-37)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:32,12-25)
+ERROR: getImportedFrom(string) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:33,12-27)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:39,24-32)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:39,51-59)
+ERROR: The characteristic predicate for 'TestRule::AutoescapeOff' does not bind 'this' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:18,3-20,4)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:26,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_287fad89/python-security-queries/queries/test-rule/TestRule.ql:30,22-28)
 Rule Content:
 /**
- * @name Template Autoescape Off
- * @id template-autoescape-off
- * @description Detected a segment of a Flask template where autoescaping is explicitly
- *   disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this
- *   segment. Ensure no user data is rendered here, otherwise this is a cross-site
- *   scripting (XSS) vulnerability, or turn autoescape on.
- * @kind problem
+ * @name Flask template autoescape off
+ * @description Detects Flask templates where autoescaping is explicitly disabled,
+ *              which may lead to XSS vulnerabilities.
+ * @kind path-problem
  * @problem.severity warning
+ * @precision high
+ * @id python/flask/autoescape-off
  * @tags security
- *       external/cwe/cwe-079
+ *       external/cwe/cwe-79
  */
 
 import python
-import semmle.python.frameworks.flask.FlaskTemplates
+import python.web.flask
+import DataFlow::PathGraph
 
-from TemplateBlock block
-where 
-  block.getName() = "autoescape" and
-  block.getContent().regexpMatch("(?i)false")
-select block, "Autoescaping disabled in Flask template - potential XSS risk",
-  "This template segment disables autoescaping which may lead to XSS vulnerabilities"
+class AutoescapeOff extends string {
+  AutoescapeOff() {
+    this.regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
+  }
+}
+
+class XssConfig extends DataFlow::Configuration {
+  XssConfig() { this = "XSS configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof AutoescapeOff
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCalleeName() = "render_template" and
+      call.getImportedFrom("flask") and
+      sink.asExpr() = call
+    )
+  }
+}
+
+from XssConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Autoescaping is disabled in Flask template (" + source.getLocation() +
+             "), which may lead to XSS vulnerability", source, source.toString()
 ================================================================================
-Timestamp: 2025-10-28 18:27:47
+Timestamp: 2025-10-28 21:59:35
 Attempt: 4
 IR Content:
 ```yaml
@@ -228,69 +288,96 @@ rule:
   message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability, or turn autoescape on."
 scope:
   languages: [python]
-  frameworks: ["flask"]
-  env: { os: ["*"], shell: ["*"] }
-sources: []
-sinks:
+  frameworks: [flask]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
   - id: AUTOESCAPE_OFF
     match:
       node: LITERAL
       where:
         - op: regex
           left: value
-          right: "{%\\s*autoescape\\s+false\\s*%}"
+          right: '\{%\s*autoescape\s+false\s*%\}'
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
 sanitizers: []
 barriers: []
 propagations: []
 flows:
-  - source: ""
-    sink: AUTOESCAPE_OFF
+  - source: AUTOESCAPE_OFF
+    sink: XSS_SINK
     constraints:
       path:
-        must: []
-        must_not: []
+        must: [ { pattern: "CALL(flask.templating.render_template)" } ]
 report:
-  message: "Autoescaping disabled in Flask template - potential XSS risk"
-  locations: ["sink"]
-  evidence: { capture: [{ node: "ALL" }] }
+  message: "Autoescaping is disabled in Flask template, which may lead to XSS vulnerability"
+  locations: ["source"]
+  evidence: { capture: [{ node: "AUTOESCAPE_OFF" }] }
 tests:
   positive:
     - "{% autoescape false %}"
   negative:
     - "{% autoescape true %}"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce829090/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce829090/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce829090/python-security-queries/queries/test-rule/TestRule.ql:17,6-14)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce829090/python-security-queries/queries/test-rule/TestRule.ql:17,33-41)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.Templating (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:14,8-42)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:16,8-27)
+ERROR: could not resolve type StrLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:18,29-39)
+ERROR: getValue() cannot be resolved for type AutoescapeOff.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:20,10-18)
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:24,25-48)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:33,12-21)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:39,24-42)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:39,51-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:27,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ca63d3e2/python-security-queries/queries/test-rule/TestRule.ql:31,22-28)
 Rule Content:
 /**
- * @name Template Autoescape Off
- * @id template-autoescape-off
- * @description Detected a segment of a Flask template where autoescaping is explicitly
- *   disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this
- *   segment. Ensure no user data is rendered here, otherwise this is a cross-site
- *   scripting (XSS) vulnerability, or turn autoescape on.
- * @kind problem
+ * @name Flask template autoescape off
+ * @description Detects Flask templates where autoescaping is explicitly disabled,
+ *              which may lead to XSS vulnerabilities.
+ * @kind path-problem
  * @problem.severity warning
+ * @precision high
+ * @id python/flask/autoescape-off
  * @tags security
- *       external/cwe/cwe-079
+ *       external/cwe/cwe-79
  */
 
 import python
+import semmle.python.web.flask.Templating
+import semmle.python.dataflow.new.DataFlow
 import DataFlow::PathGraph
 
-from DataFlow::PathNode source, DataFlow::PathNode sink
-where 
-  exists(string templateContent |
-    templateContent.regexpMatch("\\{\\%\\s*autoescape\\s+false\\s*\\%\\}") and
-    source.asExpr() = templateContent and
-    sink.asExpr() = templateContent
-  )
-select sink, "Autoescaping disabled in Flask template - potential XSS risk",
-  "This template segment disables autoescaping which may lead to XSS vulnerabilities"
+class AutoescapeOff extends StrLiteral {
+  AutoescapeOff() {
+    this.getValue().regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
+  }
+}
+
+class XssConfig extends DataFlow::Configuration {
+  XssConfig() { this = "XSS configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof AutoescapeOff
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCallee().hasQualifiedName("flask.templating", "render_template") and
+      sink.asExpr() = call
+    )
+  }
+}
+
+from XssConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Autoescaping is disabled in Flask template (" + source.getLocation() +
+             "), which may lead to XSS vulnerability", source, source.toString()
 ================================================================================
-Timestamp: 2025-10-28 18:29:08
+Timestamp: 2025-10-28 22:03:03
 Attempt: 5
 IR Content:
 ```yaml
@@ -302,60 +389,94 @@ rule:
   message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '{% autoescape off %}'. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability, or turn autoescape on."
 scope:
   languages: [python]
-  frameworks: ["flask"]
-  env: { os: ["*"], shell: ["*"] }
-sources: []
-sinks:
+  frameworks: [flask]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
   - id: AUTOESCAPE_OFF
     match:
       node: LITERAL
       where:
         - op: regex
           left: value
-          right: "{%\\s*autoescape\\s+false\\s*%}"
+          right: '\{%\s*autoescape\s+false\s*%\}'
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
 sanitizers: []
 barriers: []
 propagations: []
 flows:
-  - source: ""
-    sink: AUTOESCAPE_OFF
+  - source: AUTOESCAPE_OFF
+    sink: XSS_SINK
     constraints:
       path:
-        must: []
-        must_not: []
+        must: [ { pattern: "CALL(flask.templating.render_template)" } ]
 report:
-  message: "Autoescaping disabled in Flask template - potential XSS risk"
-  locations: ["sink"]
-  evidence: { capture: [{ node: "ALL" }] }
+  message: "Autoescaping is disabled in Flask template, which may lead to XSS vulnerability"
+  locations: ["source"]
+  evidence: { capture: [{ node: "AUTOESCAPE_OFF" }] }
 tests:
   positive:
     - "{% autoescape false %}"
   negative:
     - "{% autoescape true %}"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d727ad44/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.TemplateStrings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d727ad44/python-security-queries/queries/test-rule/TestRule.ql:15,8-41)
-ERROR: could not resolve type TemplateStringExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d727ad44/python-security-queries/queries/test-rule/TestRule.ql:17,6-24)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:14,8-24)
+ERROR: could not resolve module semmle.python.dataflow.new.Config (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:15,8-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:23,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:26,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:30,29-37)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:32,12-25)
+ERROR: getImportedFrom(string) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:33,12-27)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:39,24-32)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:39,51-59)
+ERROR: The characteristic predicate for 'TestRule::AutoescapeOff' does not bind 'this' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:18,3-20,4)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:26,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b80fb708/python-security-queries/queries/test-rule/TestRule.ql:30,22-28)
 Rule Content:
 /**
- * @name Template Autoescape Off
- * @id template-autoescape-off
- * @description Detected a segment of a Flask template where autoescaping is explicitly
- *   disabled with '{% autoescape false %}'. This allows rendering of raw HTML in this
- *   segment. Ensure no user data is rendered here, otherwise this is a cross-site
- *   scripting (XSS) vulnerability, or turn autoescape on.
- * @kind problem
+ * @name Flask template autoescape off
+ * @description Detects Flask templates where autoescaping is explicitly disabled,
+ *              which may lead to XSS vulnerabilities.
+ * @kind path-problem
  * @problem.severity warning
+ * @precision high
+ * @id python/flask/autoescape-off
  * @tags security
- *       external/cwe/cwe-079
+ *       external/cwe/cwe-79
  */
 
 import python
-import semmle.python.web.TemplateStrings
+import python.web.flask
+import semmle.python.dataflow.new.Config
 
-from TemplateStringExpr expr
-where 
-  expr.getStringValue().regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
-select expr, "Autoescaping disabled in Flask template - potential XSS risk",
-  "This template segment disables autoescaping which may lead to XSS vulnerabilities"
+class AutoescapeOff extends string {
+  AutoescapeOff() {
+    this.regexpMatch("\\{%\\s*autoescape\\s+false\\s*%\\}")
+  }
+}
+
+class XssConfig extends DataFlow::Configuration {
+  XssConfig() { this = "XSS configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof AutoescapeOff
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCalleeName() = "render_template" and
+      call.getImportedFrom("flask") and
+      sink.asExpr() = call
+    )
+  }
+}
+
+from XssConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Autoescaping is disabled in Flask template (" + source.getLocation() +
+             "), which may lead to XSS vulnerability", source, source.toString()
 ================================================================================

@@ -92,12 +92,13 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
     IR_prompt = IRPrompt().format(code=test_code)
     thread_print("⏳ 正在提取 IR ...")
     IR_content = llm.ExtIR(prompt=IR_prompt, max_tokens=3000)
-
+    prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast, example=example)
+        
     for attempt in range(1, max_retries + 1):
         thread_print(f"🔁 第 {attempt} 次尝试生成规则...")
-        prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast, example=example)
+        thread_print(prompt)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
-
+        thread_print(response)
         rule_content = get_rule_from_llm(response)
         if not rule_content:
             thread_print("⚠️ 未找到规则内容，尝试调整提示词重试...")
@@ -126,15 +127,14 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
             # 生成修复建议
             prompt = AbstractPrompt().format(code=rule_content, error=result['error'], language="python", sast=sast)
             advise = llm.Transform(prompt=prompt, max_tokens=3000)
-            repair_prompt = RepairPrompt().format(code=rule_content, language="python", error=result['error'], sast=sast, advise=advise)
-            llm.Transform(prompt=repair_prompt, max_tokens=3000)
+            prompt = RepairPrompt().format(code=rule_content, language="python", error=result['error'], sast=sast, advise=advise)
             time.sleep(2)
 
     thread_print("🚫 多次尝试仍未成功，请人工干预。")
     llm.clear_context()
 
 
-def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir: str, max_workers: int = 3):
+def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir: str, max_workers: int = 1):
     output_files = os.listdir(output_dir)
     print(f"[📂] 输出目录已有 {len(output_files)} 个文件")
 

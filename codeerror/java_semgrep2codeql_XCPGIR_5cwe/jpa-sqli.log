@@ -1,0 +1,934 @@
+Timestamp: 2025-10-28 21:55:08
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [jpa]
+
+sources:
+  - id: UNSAFE_SQL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.value
+          right: ".*SQL.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+    effect: neutralize
+
+barriers:
+  - id: SAFE_STRING_CONCAT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^'\w+'$"
+    effect: stop
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_CONSTRUCTION
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+  - source: STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM users WHERE name = \" + userInput; em.createQuery(sql);"
+  negative:
+    - "em.createQuery(\"SELECT * FROM users WHERE name = :name\").setParameter(\"name\", userInput);"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jpa.JPA (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:12,8-43)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:16,12-24)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:26,12-26)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:57,44-72)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:60,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:65,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:69,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34267ce3/java-security-queries/queries/test-rule/TestRule.ql:73,22-43)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @kind problem
+ * @id java/jpa-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. Could lead to SQL injection
+ *              if variables are not properly sanitized. Use prepared statements instead.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jpa.JPA
+
+class UnsafeSqlConstruction extends DataFlow::Node {
+  UnsafeSqlConstruction() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.lang.String" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcat extends DataFlow::Node {
+  StringConcat() {
+    exists(AssignmentExpr ae |
+      ae.getLeft().toString().matches("%SQL%") and
+      ae.getRight().toString().matches("%\\+%") and
+      ae.getRight() = this.asExpr()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "createQuery" or
+        ma.getMethod().getName() = "createNativeQuery"
+      ) and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "javax.persistence.EntityManager" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("prepareStatement") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.sql.Connection" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class JpaSqlInjectionConfiguration extends TaintTracking::Configuration {
+  JpaSqlInjectionConfiguration() { this = "JpaSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnsafeSqlConstruction or
+    source instanceof StringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dest) {
+    TaintTracking::localTaintStep(src, dest)
+  }
+}
+
+from JpaSqlInjectionConfiguration cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential SQL injection vulnerability in JPA query", source,
+  "SQL query constructed from $@ which may contain user input", source, "user input"
+================================================================================
+Timestamp: 2025-10-28 21:57:49
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [jpa]
+
+sources:
+  - id: UNSAFE_SQL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.value
+          right: ".*SQL.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+    effect: neutralize
+
+barriers:
+  - id: SAFE_STRING_CONCAT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^'\w+'$"
+    effect: stop
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_CONSTRUCTION
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+  - source: STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM users WHERE name = \" + userInput; em.createQuery(sql);"
+  negative:
+    - "em.createQuery(\"SELECT * FROM users WHERE name = :name\").setParameter(\"name\", userInput);"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type AssignStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:27,12-22)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:58,33-61)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:61,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:66,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:70,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_85a84f06/java-security-queries/queries/test-rule/TestRule.ql:74,22-43)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @kind problem
+ * @id java/jpa-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. Could lead to SQL injection
+ *              if variables are not properly sanitized. Use prepared statements instead.
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class UnsafeSqlConstruction extends DataFlow::Node {
+  UnsafeSqlConstruction() {
+    exists(Call call |
+      call.getCallee().hasName("format") and
+      call.getCallee().getDeclaringType().getQualifiedName() = "java.lang.String" and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcat extends DataFlow::Node {
+  StringConcat() {
+    exists(AssignStmt assign |
+      assign.getLeft().toString().matches("%SQL%") and
+      assign.getRight().toString().matches("%\\+%") and
+      assign.getRight() = this.asExpr()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Call call |
+      (
+        call.getCallee().getName() = "createQuery" or
+        call.getCallee().getName() = "createNativeQuery"
+      ) and
+      call.getCallee().getDeclaringType().getQualifiedName() = "javax.persistence.EntityManager" and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(Call call |
+      call.getCallee().hasName("prepareStatement") and
+      call.getCallee().getDeclaringType().getQualifiedName() = "java.sql.Connection" and
+      this.asExpr() = call
+    )
+  }
+}
+
+class JpaSqlTaintConfig extends TaintTracking::Configuration {
+  JpaSqlTaintConfig() { this = "JpaSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnsafeSqlConstruction or
+    source instanceof StringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dest) {
+    TaintTracking::localTaintStep(src, dest)
+  }
+}
+
+from JpaSqlTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential JPA SQL injection vulnerability due to unsafe string construction in $@",
+  source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 22:01:42
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [jpa]
+
+sources:
+  - id: UNSAFE_SQL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.value
+          right: ".*SQL.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+    effect: neutralize
+
+barriers:
+  - id: SAFE_STRING_CONCAT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^'\w+'$"
+    effect: stop
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_CONSTRUCTION
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+  - source: STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM users WHERE name = \" + userInput; em.createQuery(sql);"
+  negative:
+    - "em.createQuery(\"SELECT * FROM users WHERE name = :name\").setParameter(\"name\", userInput);"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:16,12-24)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:26,12-26)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:49,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:66,44-72)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:74,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:78,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:82,22-31)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_be55b9e1/java-security-queries/queries/test-rule/TestRule.ql:86,22-43)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @kind problem
+ * @id java/jpa-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. Could lead to SQL injection
+ *              if variables are not properly sanitized. Use prepared statements instead.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class UnsafeSqlConstruction extends DataFlow::Node {
+  UnsafeSqlConstruction() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.lang.String" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcat extends DataFlow::Node {
+  StringConcat() {
+    exists(AssignmentExpr ae |
+      ae.getLeft().toString().matches("%SQL%") and
+      ae.getRight().toString().matches("%\\+%") and
+      ae.getRight() = this.asExpr()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "createQuery" or
+        ma.getMethod().getName() = "createNativeQuery"
+      ) and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "javax.persistence.EntityManager" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("prepareStatement") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.sql.Connection" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SafeStringLiterals extends DataFlow::Node {
+  SafeStringLiterals() {
+    exists(StringLiteral sl |
+      sl.toString().matches("^'\\w+'$") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class JpaSqlInjectionConfiguration extends TaintTracking::Configuration {
+  JpaSqlInjectionConfiguration() { this = "JpaSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnsafeSqlConstruction or
+    source instanceof StringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof SafeStringLiterals
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dest) {
+    TaintTracking::localTaintStep(src, dest)
+  }
+}
+
+from JpaSqlInjectionConfiguration cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential SQL injection vulnerability in JPA query", source,
+  "SQL query constructed from $@ which may contain user input", source, "user input"
+================================================================================
+Timestamp: 2025-10-28 22:05:10
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [jpa]
+
+sources:
+  - id: UNSAFE_SQL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.value
+          right: ".*SQL.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+    effect: neutralize
+
+barriers:
+  - id: SAFE_STRING_CONCAT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^'\w+'$"
+    effect: stop
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_CONSTRUCTION
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+  - source: STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM users WHERE name = \" + userInput; em.createQuery(sql);"
+  negative:
+    - "em.createQuery(\"SELECT * FROM users WHERE name = :name\").setParameter(\"name\", userInput);"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.Methods (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:14,8-32)
+ERROR: could not resolve module semmle.code.java.expressions.Assignments (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:15,8-48)
+ERROR: getLeft() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:30,10-17)
+ERROR: getRight() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:31,10-18)
+ERROR: getRight() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:32,10-18)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:69,33-61)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:72,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:77,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:81,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:85,22-31)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_84f41841/java-security-queries/queries/test-rule/TestRule.ql:89,22-43)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @kind problem
+ * @id java/jpa-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized. Use a prepared
+ *              statements (java.sql.PreparedStatement) instead.
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.Methods
+import semmle.code.java.expressions.Assignments
+
+class UnsafeSqlConstruction extends DataFlow::Node {
+  UnsafeSqlConstruction() {
+    exists(Call call |
+      call.getCallee().hasName("format") and
+      call.getCallee().getDeclaringType().getQualifiedName() = "java.lang.String" and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcat extends DataFlow::Node {
+  StringConcat() {
+    exists(AssignExpr ae |
+      ae.getLeft().toString().matches(".*SQL.*") and
+      ae.getRight().toString().matches(".*\\+.*") and
+      ae.getRight() = this.asExpr()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Call call |
+      (
+        call.getCallee().getName() = "createQuery" or
+        call.getCallee().getName() = "createNativeQuery"
+      ) and
+      call.getCallee().getDeclaringType().getQualifiedName() = "javax.persistence.EntityManager" and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(Call call |
+      call.getCallee().hasName("prepareStatement") and
+      call.getCallee().getDeclaringType().getQualifiedName() = "java.sql.Connection" and
+      this.asExpr() = call
+    )
+  }
+}
+
+class SafeStringLiterals extends DataFlow::Node {
+  SafeStringLiterals() {
+    exists(StringLiteral sl |
+      sl.toString().matches("^'\\w+'$") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class JpaSqlTaintConfig extends TaintTracking::Configuration {
+  JpaSqlTaintConfig() { this = "JpaSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnsafeSqlConstruction or
+    source instanceof StringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof SafeStringLiterals
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dest) {
+    TaintTracking::localTaintStep(src, dest)
+  }
+}
+
+from JpaSqlTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential JPA SQL injection vulnerability detected. $@",
+  source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 22:08:55
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jpa-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [jpa]
+
+sources:
+  - id: UNSAFE_SQL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.value
+          right: ".*SQL.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: javax.persistence.EntityManager, method: createNativeQuery }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match:
+      node: CALL
+      api: { type: java.sql.Connection, method: prepareStatement }
+    effect: neutralize
+
+barriers:
+  - id: SAFE_STRING_CONCAT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^'\w+'$"
+    effect: stop
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_CONSTRUCTION
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+  - source: STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [METHOD_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+
+report:
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "em.createQuery(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM users WHERE name = \" + userInput; em.createQuery(sql);"
+  negative:
+    - "em.createQuery(\"SELECT * FROM users WHERE name = :name\").setParameter(\"name\", userInput);"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:15,12-24)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:25,12-26)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:65,44-72)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:68,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:77,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:81,22-31)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_011dfa83/java-security-queries/queries/test-rule/TestRule.ql:85,22-43)
+Rule Content:
+/**
+ * @name JPA SQL Injection
+ * @kind problem
+ * @id java/jpa-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. Could lead to SQL injection
+ *              if variables are not properly sanitized. Use prepared statements instead.
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class UnsafeSqlConstruction extends DataFlow::Node {
+  UnsafeSqlConstruction() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("format") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.lang.String" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class StringConcat extends DataFlow::Node {
+  StringConcat() {
+    exists(AssignmentExpr ae |
+      ae.getLeft().toString().matches("%SQL%") and
+      ae.getRight().toString().matches("%\\+%") and
+      ae.getRight() = this.asExpr()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getName() = "createQuery" or
+        ma.getMethod().getName() = "createNativeQuery"
+      ) and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "javax.persistence.EntityManager" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::Node {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("prepareStatement") and
+      ma.getMethod().getDeclaringType().getQualifiedName() = "java.sql.Connection" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SafeStringLiterals extends DataFlow::Node {
+  SafeStringLiterals() {
+    exists(StringLiteral sl |
+      sl.toString().matches("^'\\w+'$") and
+      this.asExpr() = sl
+    )
+  }
+}
+
+class JpaSqlInjectionConfiguration extends TaintTracking::Configuration {
+  JpaSqlInjectionConfiguration() { this = "JpaSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UnsafeSqlConstruction or
+    source instanceof StringConcat
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof SafeStringLiterals
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node dest) {
+    TaintTracking::localTaintStep(src, dest)
+  }
+}
+
+from JpaSqlInjectionConfiguration cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Potential SQL injection vulnerability in JPA query", source,
+  "SQL query constructed from $@ which may contain user input", source, "user input"
+================================================================================

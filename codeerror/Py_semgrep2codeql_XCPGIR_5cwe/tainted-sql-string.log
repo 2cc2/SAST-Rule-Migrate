@@ -1,823 +1,733 @@
-Timestamp: 2025-10-28 18:17:58
+Timestamp: 2025-10-28 21:45:35
 Attempt: 1
 IR Content:
 ```yaml
 xcpgir_version: "1.0"
 rule:
-  id: python.tainted-sql-string
+  id: tainted-sql-string
   kind: taint
   severity: ERROR
-  message: "Detected user input used to manually construct a SQL string. This could result in SQL injection."
-  scope:
-    languages: [python]
-    frameworks: [flask, sqlalchemy]
-    env: { os: [linux, windows], shell: [bash, sh] }
-
+  message: "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection."
+scope:
+  languages: [python]
+  frameworks: [flask, sqlalchemy]
 sources:
   - id: USER_INPUT
     match:
       node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+    match:
+      node: PARAM
       where:
-        - op: regex
-          left: methodFullName
-          right: "flask\.request\..*"
-      # OR route parameter patterns would need complex matching not fully expressible here
+        - op: inside
+          left: $PATH
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
 
 sinks:
-  - id: SQL_STRING_CONCAT
+  - id: SQL_CONCAT
     match:
-      node: CALL | LITERAL
+      node: LITERAL
       where:
         - op: regex
-          left: code
-          right: "(\"\\$SQLSTR\" \\+)|(\"\\$SQLSTR\" %)|(\"\\$SQLSTR\"\.format)|(f\"\\$SQLSTR\{)"
+          left: value
+          right: "\s*(?i)(select|delete|insert|create|update|alter|drop)\b.*"
+        - op: or
+          conditions:
+            - op: has-parent
+              left: "$SQLSTR" + ...
+            - op: has-parent
+              left: "$SQLSTR" % ...
+            - op: has-parent
+              left: "$SQLSTR".format(...)
+            - op: has-parent
+              left: f"$SQLSTR{...}..."
 
 propagations:
-  - id: STRING_CONCAT
+  - id: STRING_OPERATION
     edge: arg->param
     kind: taint
 
-barriers:
-  - id: RETURN_STOP
-    match: { node: RETURN }
-    effect: stop
-
 flows:
   - source: USER_INPUT
-    sink: SQL_STRING_CONCAT
-    through: [STRING_CONCAT*]
-    
-report:
-  message: "User input reaches SQL string construction without parameterization"
-  locations: ["source", "sink"]
-  evidence: { capture: [{ node: "sink" }] }
+    sink: SQL_CONCAT
+    through: [STRING_OPERATION*]
 
-tests:
-  positive:
-    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
-  negative:
-    - "query = \"SELECT * FROM users WHERE name = ?\""
+report:
+  message: "User input reaches SQL string construction without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: token recognition error at: '"flask\.' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:18,49-56)
-ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:18,64-65)
-ERROR: unexpected input '..' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:18,65-67)
-ERROR: token recognition error at: '") and\n' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:18,68-74)
-ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:32,32-39)
-ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:36,1-2)
-ERROR: could not resolve module semmle.python.web.flask.FlaskRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:12,8-44)
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:13,8-27)
-ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:17,12-24)
-ERROR: asExpr() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:19,17-23)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:27,18-24)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:31,12-22)
-ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: could not resolve variable request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:18,57-64)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22df4c1a/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: token recognition error at: '"@.*\.' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:26,67-72)
+ERROR: token recognition error at: '") and\n' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:26,78-84)
+ERROR: unexpected input 'p' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:27,7-8)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:31,1-2)
+ERROR: could not resolve module semmle.python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:15,8-31)
+ERROR: could not resolve module semmle.python.web.HttpRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:16,8-37)
+ERROR: could not resolve module Dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:18,30-38)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: getLocation() cannot be resolved for type ObjectAPI::FunctionValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:26,13-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:19,3-17)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:23,7-13)
+WARNING: unused variable 'p' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:25,43-44)
+WARNING: unused class 'FlaskUserInput' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:18,7-21)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:12,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4272df8c/python-security-queries/queries/test-rule/TestRule.ql:14,1-31)
 Rule Content:
 /**
- * @name Tainted SQL string construction
- * @description Detected user input used to manually construct a SQL string. This could result in SQL injection.
+ * @name Tainted SQL String Construction
+ * @description Detects user input used to manually construct a SQL string, which could potentially lead to SQL injection.
  * @kind path-problem
  * @problem.severity error
- * @precision high
  * @id python/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
  */
 
 import python
 import semmle.python.dataflow.TaintTracking
-import semmle.python.web.flask.FlaskRequest
-import DataFlow::PathGraph
+import semmle.python.Concepts
+import semmle.python.ApiGraphs
+import semmle.python.web.flask
+import semmle.python.web.HttpRequest
 
-class FlaskUserInput extends DataFlow::Node {
+class FlaskUserInput extends Dataflow::Node {
   FlaskUserInput() {
-    exists(MethodAccess ma |
-      ma.getMethod().getQualifiedName().matches("flask\.request\..*") and
-      ma = this.asExpr()
+    exists(MethodAccess ma | 
+      ma.getMethod().getAPIName() = "request" and
+      ma.getReceiver().getType().getName() = "flask" and
+      result = ma.getAnArgument()
+    ) or
+    exists(FunctionValue route, Parameter p |
+      route.getLocation().getFile().getRelativePath().regexpMatch("@.*\.route") and
+      p = route.getAParameter() and
+      result.asParameter() = p
     )
   }
 }
 
-class SqlStringConcatSink extends DataFlow::Node {
-  SqlStringConcatSink() {
-    exists(string str |
-      str = this.asExpr().(StringLiteral).getText() and
-      str.matches(".*(\\$SQLSTR\\+)|(\\$SQLSTR%)|(\\$SQLSTR\\.format)|(f\\$SQLSTR\\{).*")
-    )
-    or
-    exists(MethodCall mc |
-      mc.getMethod().getName() matches "format" and
-      this.asExpr() = mc.getQualifier()
+class StringOperation extends Dataflow::Node {
+  StringOperation() {
+    exists(Dataflow::Node base, Dataflow::Node arg |
+      exists(AdditionExpr add | add.getLeftOperand() = base and add.getRightOperand() = arg and result = add) or
+      exists(ModuloExpr mod | mod.getLeftOperand() = base and mod.getRightOperand() = arg and result = mod) or
+      exists(MethodCall format | 
+        format.getMethod().getName() = "format" and 
+        format.getQualifier() = base and 
+        arg = format.getAnArgument() and
+        result = format
+      ) or
+      exists(FormatString fs | 
+        fs.getBaseString() = base and
+        arg = fs.getAnInsertion() and
+        result = fs
+      )
     )
   }
 }
 
-class Config extends TaintTracking::Configuration {
-  Config() { this = "TaintedSqlStringConfig" }
-
-  override predicate isSource(DataFlow::Node source) {
-    source instanceof FlaskUserInput
-  }
-
-  override predicate isSink(DataFlow::Node sink) {
-    sink instanceof SqlStringConcatSink
-  }
-
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer.asExpr() instanceof Return
+class SqlStringConstruction extends Dataflow::Node {
+  SqlStringConstruction() {
+    exists(LiteralNode lit |
+      lit.getStringValue().regexpMatch("(?i)\\b(select|delete|insert|create|update|alter|drop)\\b") and
+      exists(Dataflow::Node parentNode | 
+        parentNode = lit.getParent() and
+        parentNode instanceof StringOperation and
+        result = parentNode
+      )
+    )
   }
 }
 
-from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+class TaintedSqlStringConfiguration extends TaintTracking::Configuration {
+  TaintedSqlStringConfiguration() { this = "TaintedSQLString" }
+
+  override predicate isSource(Dataflow::Node source) { source instanceof FlaskUserInput }
+
+  override predicate isSink(Dataflow::Node sink) { sink instanceof SqlStringConstruction }
+
+  override predicate isAdditionalTaintStep(Dataflow::Node pred, Dataflow::Node succ) {
+    exists(StringOperation strOp |
+      pred = strOp.getAOperand() and succ = strOp
+    )
+  }
+}
+
+from TaintedSqlStringConfiguration cfg, Dataflow::PathNode source, Dataflow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "User input reaches SQL string construction without parameterization", source, sink,
-  "User-provided value from $@ flows into SQL string construction.", source, "here"
+select sink, 
+  "User input reaches SQL string construction without sanitization, which could lead to SQL injection.",
+  source.getNode(), "User input from here", sink.getNode(), "Used in SQL string construction here"
 ================================================================================
-Timestamp: 2025-10-28 18:21:14
+Timestamp: 2025-10-28 21:48:19
 Attempt: 2
 IR Content:
 ```yaml
 xcpgir_version: "1.0"
 rule:
-  id: python.tainted-sql-string
+  id: tainted-sql-string
   kind: taint
   severity: ERROR
-  message: "Detected user input used to manually construct a SQL string. This could result in SQL injection."
-  scope:
-    languages: [python]
-    frameworks: [flask, sqlalchemy]
-    env: { os: [linux, windows], shell: [bash, sh] }
-
+  message: "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection."
+scope:
+  languages: [python]
+  frameworks: [flask, sqlalchemy]
 sources:
   - id: USER_INPUT
     match:
       node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+    match:
+      node: PARAM
       where:
-        - op: regex
-          left: methodFullName
-          right: "flask\.request\..*"
-      # OR route parameter patterns would need complex matching not fully expressible here
+        - op: inside
+          left: $PATH
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
 
 sinks:
-  - id: SQL_STRING_CONCAT
+  - id: SQL_CONCAT
     match:
-      node: CALL | LITERAL
+      node: LITERAL
       where:
         - op: regex
-          left: code
-          right: "(\"\\$SQLSTR\" \\+)|(\"\\$SQLSTR\" %)|(\"\\$SQLSTR\"\.format)|(f\"\\$SQLSTR\{)"
+          left: value
+          right: "\s*(?i)(select|delete|insert|create|update|alter|drop)\b.*"
+        - op: or
+          conditions:
+            - op: has-parent
+              left: "$SQLSTR" + ...
+            - op: has-parent
+              left: "$SQLSTR" % ...
+            - op: has-parent
+              left: "$SQLSTR".format(...)
+            - op: has-parent
+              left: f"$SQLSTR{...}..."
 
 propagations:
-  - id: STRING_CONCAT
+  - id: STRING_OPERATION
     edge: arg->param
     kind: taint
 
-barriers:
-  - id: RETURN_STOP
-    match: { node: RETURN }
-    effect: stop
-
 flows:
   - source: USER_INPUT
-    sink: SQL_STRING_CONCAT
-    through: [STRING_CONCAT*]
-    
-report:
-  message: "User input reaches SQL string construction without parameterization"
-  locations: ["source", "sink"]
-  evidence: { capture: [{ node: "sink" }] }
+    sink: SQL_CONCAT
+    through: [STRING_OPERATION*]
 
-tests:
-  positive:
-    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
-  negative:
-    - "query = \"SELECT * FROM users WHERE name = ?\""
+report:
+  message: "User input reaches SQL string construction without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: token recognition error at: '"flask\.' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,51-58)
-ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,66-67)
-ERROR: unexpected input '..' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,67-69)
-ERROR: token recognition error at: '") and\n' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,70-76)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:10,8-16)
-ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:11,8-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:13,30-38)
-ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,12-21)
-ERROR: asExpr() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:17,12-18)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:22,35-43)
-ERROR: getOperator() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:26,11-22)
-ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:27,21-35)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:28,12-18)
-ERROR: getOperator() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:33,11-22)
-ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:34,21-35)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:35,12-18)
-ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:40,12-21)
-ERROR: getQualifier() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:41,12-24)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:42,12-18)
-ERROR: getQualifier() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:42,28-40)
-ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:46,12-30)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:48,12-18)
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:53,38-51)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:56,31-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:58,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:60,34-42)
-ERROR: could not resolve type ReturnStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:61,12-22)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:65,34-42)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:65,61-69)
-ERROR: could not resolve variable request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:16,59-66)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:56,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:58,22-28)
-WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b855f539/python-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: extraneous input '(' expecting one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:65,78-79)
+ERROR: extraneous input ')' expecting one of: '}' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:66,5-6)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: could not resolve module python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:13,8-24)
+ERROR: could not resolve module python.web.HttpRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:14,8-30)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:16,30-38)
+ERROR: could not resolve module CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:19,12-20)
+ERROR: getReceiver() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:20,10-21)
+ERROR: getAnArgument() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:21,17-30)
+ERROR: getAParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:25,17-30)
+ERROR: asParameter() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:26,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:31,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:33,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:33,33-41)
+ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:34,14-29)
+ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:40,14-29)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:46,14-24)
+ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:52,14-32)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:61,37-45)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:64,11-19)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:65,45-53)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:70,49-62)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:75,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:77,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:79,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:79,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:86,45-53)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:86,72-80)
+ERROR: could not resolve variable strOp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:65,92-97)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:77,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4f92629a/python-security-queries/queries/test-rule/TestRule.ql:79,22-43)
 Rule Content:
 /**
- * @name Tainted SQL string construction
- * @description Detected user input used to manually construct a SQL string. This could result in SQL injection.
+ * @name Tainted SQL String Construction
+ * @description Detects user input used to manually construct a SQL string, which could potentially lead to SQL injection.
  * @kind path-problem
  * @problem.severity error
  * @id python/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
  */
 
 import python
 import DataFlow::PathGraph
-import semmle.python.web.flask.Request
+import python.web.flask
+import python.web.HttpRequest
 
 class FlaskUserInput extends DataFlow::Node {
   FlaskUserInput() {
-    exists(CallNode call |
-      call.getTarget().getQualifiedName().matches("flask\.request\..*") and
-      this.asExpr() = call
+    exists(CallNode ma | 
+      ma = CallNode::named("request") and
+      ma.getReceiver().getType().getName() = "flask" and
+      this = ma.getAnArgument()
+    ) or
+    exists(Function route, Parameter p |
+      route.getLocation().getFile().getRelativePath().regexpMatch("@.*\\.route") and
+      p = route.getAParameter() and
+      this.asParameter() = p
     )
   }
 }
 
-class SqlStringConcatSink extends DataFlow::Node {
-  SqlStringConcatSink() {
-    // Match string concatenation with +
-    exists(BinaryExpr bin |
-      bin.getOperator() = "+" and
-      bin.getLeft().getStringValue().regexpMatch(".*SQLSTR.*") and
-      this.asExpr() = bin
-    )
-    or
-    // Match string formatting with %
-    exists(BinaryExpr bin |
-      bin.getOperator() = "%" and
-      bin.getLeft().getStringValue().regexpMatch(".*SQLSTR.*") and
-      this.asExpr() = bin
-    )
-    or
-    // Match string formatting with .format()
-    exists(CallNode call |
-      call.getTarget().getName() = "format" and
-      call.getQualifier().getStringValue().regexpMatch(".*SQLSTR.*") and
-      this.asExpr() = call.getQualifier()
-    )
-    or
-    // Match f-strings
-    exists(InterpolatedString str |
-      str.getStringValue().regexpMatch(".*SQLSTR.*") and
-      this.asExpr() = str
+class StringOperation extends DataFlow::Node {
+  StringOperation() {
+    exists(DataFlow::Node base, DataFlow::Node arg |
+      exists(BinaryOperation add | 
+        add.getKind() = "+" and 
+        add.getLeftOperand() = base and 
+        add.getRightOperand() = arg and 
+        this = add
+      ) or
+      exists(BinaryOperation mod | 
+        mod.getKind() = "%" and 
+        mod.getLeftOperand() = base and 
+        mod.getRightOperand() = arg and 
+        this = mod
+      ) or
+      exists(MethodCall format | 
+        format.getMethodName() = "format" and 
+        format.getQualifier() = base and 
+        arg = format.getAnArgument() and
+        this = format
+      ) or
+      exists(InterpolatedString fs | 
+        fs.getBaseOperand() = base and
+        arg = fs.getAnInterpolation() and
+        this = fs
+      )
     )
   }
 }
 
-class TaintedSQLStringConfig extends TaintTracking::Configuration {
-  TaintedSQLStringConfig() { this = "TaintedSQLStringConfig" }
+class SqlStringConstruction extends DataFlow::Node {
+  SqlStringConstruction() {
+    exists(StringLiteral lit |
+      lit.getValue().regexpMatch("(?i)\\b(select|delete|insert|create|update|alter|drop)\\b") and
+      exists(StringOperation strOp | strOp.(DataFlow::Node) = lit.getParent()() and this = strOp)
+    )
+  }
+}
+
+class TaintedSqlStringFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlStringFlowConfiguration() { 
+    this = "Tainted SQL Injection Check" 
+  }
 
   override predicate isSource(DataFlow::Node source) { source instanceof FlaskUserInput }
 
-  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConcatSink }
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstruction }
 
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    exists(ReturnStmt ret | sanitizer.asExpr() = ret)
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(StringOperation strOp |
+      pred = strOp.getADefinition() and succ = strOp
+    )
   }
 }
 
-from TaintedSQLStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+from TaintedSqlStringFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "User input reaches SQL string construction without parameterization", source, sink,
-  "User-provided value from $@ flows into SQL string construction.", source, "here"
+select sink, 
+  "User input reaches SQL string construction without sanitization, which could lead to SQL injection.",
+  source, source.toString(), sink, sink.toString()
 ================================================================================
-Timestamp: 2025-10-28 18:23:11
+Timestamp: 2025-10-28 21:51:45
 Attempt: 3
 IR Content:
 ```yaml
 xcpgir_version: "1.0"
 rule:
-  id: python.tainted-sql-string
+  id: tainted-sql-string
   kind: taint
   severity: ERROR
-  message: "Detected user input used to manually construct a SQL string. This could result in SQL injection."
-  scope:
-    languages: [python]
-    frameworks: [flask, sqlalchemy]
-    env: { os: [linux, windows], shell: [bash, sh] }
-
+  message: "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection."
+scope:
+  languages: [python]
+  frameworks: [flask, sqlalchemy]
 sources:
   - id: USER_INPUT
     match:
       node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+    match:
+      node: PARAM
       where:
-        - op: regex
-          left: methodFullName
-          right: "flask\.request\..*"
-      # OR route parameter patterns would need complex matching not fully expressible here
+        - op: inside
+          left: $PATH
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
 
 sinks:
-  - id: SQL_STRING_CONCAT
+  - id: SQL_CONCAT
     match:
-      node: CALL | LITERAL
+      node: LITERAL
       where:
         - op: regex
-          left: code
-          right: "(\"\\$SQLSTR\" \\+)|(\"\\$SQLSTR\" %)|(\"\\$SQLSTR\"\.format)|(f\"\\$SQLSTR\{)"
+          left: value
+          right: "\s*(?i)(select|delete|insert|create|update|alter|drop)\b.*"
+        - op: or
+          conditions:
+            - op: has-parent
+              left: "$SQLSTR" + ...
+            - op: has-parent
+              left: "$SQLSTR" % ...
+            - op: has-parent
+              left: "$SQLSTR".format(...)
+            - op: has-parent
+              left: f"$SQLSTR{...}..."
 
 propagations:
-  - id: STRING_CONCAT
+  - id: STRING_OPERATION
     edge: arg->param
     kind: taint
 
-barriers:
-  - id: RETURN_STOP
-    match: { node: RETURN }
-    effect: stop
-
 flows:
   - source: USER_INPUT
-    sink: SQL_STRING_CONCAT
-    through: [STRING_CONCAT*]
-    
-report:
-  message: "User input reaches SQL string construction without parameterization"
-  locations: ["source", "sink"]
-  evidence: { capture: [{ node: "sink" }] }
+    sink: SQL_CONCAT
+    through: [STRING_OPERATION*]
 
-tests:
-  positive:
-    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
-  negative:
-    - "query = \"SELECT * FROM users WHERE name = ?\""
+report:
+  message: "User input reaches SQL string construction without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:12,8-31)
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:13,8-27)
-ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:17,12-24)
-ERROR: asExpr() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:19,12-18)
-ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:27,12-27)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:30,12-18)
-ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:34,12-27)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:37,12-18)
-ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:41,12-24)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:44,12-18)
-ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:48,12-30)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:50,12-18)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:67,15-21)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:71,34-52)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:71,61-79)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:58,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:62,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8302b1e4/python-security-queries/queries/test-rule/TestRule.ql:66,22-33)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: could not resolve module semmle.python.web.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:13,8-31)
+ERROR: could not resolve module semmle.python.web.HttpRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:14,8-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:17,30-38)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:20,10-19)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:21,10-21)
+ERROR: could not resolve type Decorator (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:25,14-23)
+ERROR: getAParameter() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:29,17-30)
+ERROR: asExpr() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:30,16-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:35,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:37,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:37,33-41)
+ERROR: getOperator() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:39,13-24)
+ERROR: getLeftOperand() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:40,13-27)
+ERROR: getRightOperand() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:41,13-28)
+ERROR: getOperator() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:45,13-24)
+ERROR: getLeftOperand() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:46,13-27)
+ERROR: getRightOperand() cannot be resolved for type Operations::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:47,13-28)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:50,14-24)
+ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:56,14-32)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:65,37-45)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:67,12-19)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:74,49-62)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:79,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:81,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:83,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:83,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:90,45-53)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:90,72-80)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:81,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1bb1ed22/python-security-queries/queries/test-rule/TestRule.ql:83,22-43)
 Rule Content:
 /**
- * @name Tainted SQL string construction
- * @description Detected user input used to manually construct a SQL string. This could result in SQL injection.
+ * @name Tainted SQL String Construction
+ * @description Detects user input used to manually construct a SQL string, which could potentially lead to SQL injection.
  * @kind path-problem
- * @problem.severity error 
- * @precision high
+ * @problem.severity error
  * @id python/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.web.Flask
 import DataFlow::PathGraph
+import semmle.python.web.Flask
+import semmle.python.web.HttpRequest
+import DataFlow::TaintTracking
 
 class FlaskUserInput extends DataFlow::Node {
   FlaskUserInput() {
-    exists(FunctionCall call |
-      call.getTarget().toString().matches("flask.request%") and
-      this.asExpr() = call
+    exists(Call ma | 
+      ma.getTarget().getName() = "request" and
+      ma.getReceiver().getType().getName() = "flask" and
+      this = ma.getAnArg()
+    ) or
+    exists(Function route, Parameter p |
+      exists(Decorator d | 
+        d.getTarget().getName().matches("@.*\\.route") and
+        d.getCall().getFunc() = route
+      ) and
+      p = route.getAParameter() and
+      this = p.asExpr()
     )
   }
 }
 
-class SqlStringConcatSink extends DataFlow::Node {
-  SqlStringConcatSink() {
-    // String concatenation with + 
-    exists(BinaryOperation bin |
-      bin.getOperator() = "+" and
-      bin.getLeftOperand().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = bin
-    )
-    or
-    // String formatting with %
-    exists(BinaryOperation bin |
-      bin.getOperator() = "%" and
-      bin.getLeftOperand().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = bin
-    )
-    or
-    // String .format()
-    exists(FunctionCall call |
-      call.getTarget().getName() = "format" and
-      call.getQualifier().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = call.getQualifier()
-    )
-    or
-    // F-strings
-    exists(InterpolatedString str |
-      str.getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = str
+class StringOperation extends DataFlow::Node {
+  StringOperation() {
+    exists(DataFlow::Node base, DataFlow::Node arg |
+      exists(BinaryExpr add | 
+        add.getOperator() = "+" and 
+        add.getLeftOperand() = base and 
+        add.getRightOperand() = arg and 
+        this = add
+      ) or
+      exists(BinaryExpr mod | 
+        mod.getOperator() = "%" and 
+        mod.getLeftOperand() = base and 
+        mod.getRightOperand() = arg and 
+        this = mod
+      ) or
+      exists(MethodCall format | 
+        format.getMethodName() = "format" and 
+        format.getQualifier() = base and 
+        exists(format.getAnArg(arg)) and
+        this = format
+      ) or
+      exists(InterpolatedString fs | 
+        fs.getBaseString() = base and
+        exists(fs.getAnInterpolation(arg)) and
+        this = fs
+      )
     )
   }
 }
 
-class TaintedSQLStringConfig extends TaintTracking::Configuration {
-  TaintedSQLStringConfig() { this = "TaintedSQLStringConfig" }
-
-  override predicate isSource(DataFlow::Node source) {
-    source instanceof FlaskUserInput
-  }
-
-  override predicate isSink(DataFlow::Node sink) {
-    sink instanceof SqlStringConcatSink
-  }
-
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer.asExpr() instanceof Return
+class SqlStringConstruction extends DataFlow::Node {
+  SqlStringConstruction() {
+    exists(Literal lit |
+      lit.getStringValue().regexpMatch("(?i)\\b(select|delete|insert|create|update|alter|drop)\\b") and
+      exists(StringOperation strOp | strOp.asExpr() = lit.getParent() and this = strOp)
+    )
   }
 }
 
-from TaintedSQLStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+class TaintedSqlStringFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlStringFlowConfiguration() { 
+    this = "Tainted SQL Injection Check" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof FlaskUserInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstruction }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(StringOperation strOp |
+      pred = strOp.getAnOperand() and succ = strOp
+    )
+  }
+}
+
+from TaintedSqlStringFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "User input reaches SQL string construction without parameterization", source, sink,
-  "User-provided value from $@ flows into SQL string construction.", source, "here"
+select sink, 
+  "User input reaches SQL string construction without sanitization, which could lead to SQL injection.",
+  source, "User input from here", sink, "Used in SQL string construction here"
 ================================================================================
-Timestamp: 2025-10-28 18:25:17
+Timestamp: 2025-10-28 21:54:13
 Attempt: 4
 IR Content:
 ```yaml
 xcpgir_version: "1.0"
 rule:
-  id: python.tainted-sql-string
+  id: tainted-sql-string
   kind: taint
   severity: ERROR
-  message: "Detected user input used to manually construct a SQL string. This could result in SQL injection."
-  scope:
-    languages: [python]
-    frameworks: [flask, sqlalchemy]
-    env: { os: [linux, windows], shell: [bash, sh] }
-
+  message: "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection."
+scope:
+  languages: [python]
+  frameworks: [flask, sqlalchemy]
 sources:
   - id: USER_INPUT
     match:
       node: CALL
+      api: { type: flask.request, method: $ANYTHING }
+    match:
+      node: PARAM
       where:
-        - op: regex
-          left: methodFullName
-          right: "flask\.request\..*"
-      # OR route parameter patterns would need complex matching not fully expressible here
+        - op: inside
+          left: $PATH
+          right: |
+            @$APP.route(...)
+            def $FUNC(..., $ROUTEVAR, ...):
+              ...
 
 sinks:
-  - id: SQL_STRING_CONCAT
+  - id: SQL_CONCAT
     match:
-      node: CALL | LITERAL
+      node: LITERAL
       where:
         - op: regex
-          left: code
-          right: "(\"\\$SQLSTR\" \\+)|(\"\\$SQLSTR\" %)|(\"\\$SQLSTR\"\.format)|(f\"\\$SQLSTR\{)"
+          left: value
+          right: "\s*(?i)(select|delete|insert|create|update|alter|drop)\b.*"
+        - op: or
+          conditions:
+            - op: has-parent
+              left: "$SQLSTR" + ...
+            - op: has-parent
+              left: "$SQLSTR" % ...
+            - op: has-parent
+              left: "$SQLSTR".format(...)
+            - op: has-parent
+              left: f"$SQLSTR{...}..."
 
 propagations:
-  - id: STRING_CONCAT
+  - id: STRING_OPERATION
     edge: arg->param
     kind: taint
 
-barriers:
-  - id: RETURN_STOP
-    match: { node: RETURN }
-    effect: stop
-
 flows:
   - source: USER_INPUT
-    sink: SQL_STRING_CONCAT
-    through: [STRING_CONCAT*]
-    
-report:
-  message: "User input reaches SQL string construction without parameterization"
-  locations: ["source", "sink"]
-  evidence: { capture: [{ node: "sink" }] }
+    sink: SQL_CONCAT
+    through: [STRING_OPERATION*]
 
-tests:
-  positive:
-    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
-  negative:
-    - "query = \"SELECT * FROM users WHERE name = ?\""
+report:
+  message: "User input reaches SQL string construction without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 0 }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:12,8-39)
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:13,8-27)
-ERROR: asExpr() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:19,12-18)
-ERROR: getLeft() cannot be resolved for type Operations::Add (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:28,11-18)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:29,12-18)
-ERROR: could not resolve type BinOp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:33,12-17)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:36,12-18)
-ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:41,28-35)
-ERROR: getQualifier() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:42,28-40)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:43,12-18)
-ERROR: getQualifier() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:43,44-56)
-ERROR: could not resolve type FString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:47,12-19)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:49,12-18)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:66,15-21)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:70,34-52)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:70,61-79)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: FlaskUserInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:15,7-21)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: SqlStringConcatSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:24,7-26)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:57,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:61,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e0982fb7/python-security-queries/queries/test-rule/TestRule.ql:65,22-33)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: could not resolve module python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:13,8-24)
+ERROR: could not resolve module HttpRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:14,8-19)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:15,8-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:17,30-38)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:19,12-20)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:20,23-31)
+ERROR: could not resolve type Decorator (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:25,14-23)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:26,22-30)
+ERROR: getAParameter() cannot be resolved for type Function::FunctionDef (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:29,17-30)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:35,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:37,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:37,33-41)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:50,14-22)
+ERROR: could not resolve type MemberExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:51,27-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:65,37-45)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:68,11-19)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:74,49-62)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:79,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:81,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:83,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:83,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:90,45-53)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:90,72-80)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:67,12-15)
+ERROR: Operations::Operator is incompatible with string (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:39,21-22)
+ERROR: Operations::Operator is incompatible with string (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:45,21-22)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:81,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_96d23e51/python-security-queries/queries/test-rule/TestRule.ql:83,22-43)
 Rule Content:
 /**
- * @name Tainted SQL string construction
- * @description Detected user input used to manually construct a SQL string. This could result in SQL injection.
+ * @name Tainted SQL String Construction
+ * @description Detects user input used to manually construct a SQL string, which could potentially lead to SQL injection.
  * @kind path-problem
  * @problem.severity error
- * @precision high
  * @id python/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.web.flask.Request
 import DataFlow::PathGraph
+import python.web.flask
+import HttpRequest::Request
+import TaintTracking::TaintTracking
 
 class FlaskUserInput extends DataFlow::Node {
   FlaskUserInput() {
-    exists(Call call |
-      call.getFunc().toString().matches("flask.request%") and
-      this.asExpr() = call
+    exists(CallExpr call |
+      call.getFunc().(NameExpr).getId() = "request" and
+      call.getFunc().getReceiverType().getName() = "Flask" and
+      this = call.getArg()
+    ) or
+    exists(FunctionDef route, Parameter p |
+      exists(Decorator d |
+        d.getExpr().(NameExpr).getId().matches("@.*\\.route") and
+        d.getParent() = route
+      ) and
+      p = route.getAParameter() and
+      this = p
     )
   }
 }
 
-class SqlStringConcatSink extends DataFlow::Node {
-  SqlStringConcatSink() {
-    // String concatenation with +
-    exists(Add add |
-      add.getLeft().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = add
-    )
-    or
-    // String formatting with %
-    exists(BinOp mod |
-      mod.getOp() = "%" and
-      mod.getLeft().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = mod
-    )
-    or
-    // String .format()
-    exists(Call formatCall |
-      formatCall.getFunc().getName() = "format" and
-      formatCall.getFunc().getQualifier().getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = formatCall.getFunc().getQualifier()
-    )
-    or
-    // F-strings
-    exists(FString fstr |
-      fstr.getStringValue().matches("%SQLSTR%") and
-      this.asExpr() = fstr
+class StringOperation extends DataFlow::Node {
+  StringOperation() {
+    exists(DataFlow::Node base, DataFlow::Node arg |
+      exists(BinaryExpr add |
+        add.getOp() = "+" and
+        add.getLeft() = base and
+        add.getRight() = arg and
+        this = add
+      ) or
+      exists(BinaryExpr mod |
+        mod.getOp() = "%" and
+        mod.getLeft() = base and
+        mod.getRight() = arg and
+        this = mod
+      ) or
+      exists(CallExpr format |
+        format.getFunc().(MemberExpr).getMemberName() = "format" and
+        format.getFunc().getReceiver() = base and
+        arg = format.getArg() and
+        this = format
+      ) or
+      exists(FormattedValue fv |
+        fv.getParent() = base and
+        arg = fv.getValue() and
+        this = fv.getParent()
+      )
     )
   }
 }
 
-class TaintedSQLStringConfig extends TaintTracking::Configuration {
-  TaintedSQLStringConfig() { this = "TaintedSQLStringConfig" }
-
-  override predicate isSource(DataFlow::Node source) {
-    source instanceof FlaskUserInput
-  }
-
-  override predicate isSink(DataFlow::Node sink) {
-    sink instanceof SqlStringConcatSink
-  }
-
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer.asExpr() instanceof Return
+class SqlStringConstruction extends DataFlow::Node {
+  SqlStringConstruction() {
+    exists(Str lit |
+      lit.getValue().regexpMatch("(?i)\\b(select|delete|insert|create|update|alter|drop)\\b") and
+      exists(StringOperation strOp | strOp.asExpr() = lit.getParent() and this = strOp)
+    )
   }
 }
 
-from TaintedSQLStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+class TaintedSqlStringFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlStringFlowConfiguration() { 
+    this = "Tainted SQL Injection Check" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof FlaskUserInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstruction }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(StringOperation strOp |
+      pred = strOp.getAnOperand() and succ = strOp
+    )
+  }
+}
+
+from TaintedSqlStringFlowConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
 where cfg.hasFlowPath(source, sink)
-select sink, "User input reaches SQL string construction without parameterization", source, sink,
-  "User-provided value from $@ flows into SQL string construction.", source, "here"
-================================================================================
-Timestamp: 2025-10-28 18:27:26
-Attempt: 5
-IR Content:
-```yaml
-xcpgir_version: "1.0"
-rule:
-  id: python.tainted-sql-string
-  kind: taint
-  severity: ERROR
-  message: "Detected user input used to manually construct a SQL string. This could result in SQL injection."
-  scope:
-    languages: [python]
-    frameworks: [flask, sqlalchemy]
-    env: { os: [linux, windows], shell: [bash, sh] }
-
-sources:
-  - id: USER_INPUT
-    match:
-      node: CALL
-      where:
-        - op: regex
-          left: methodFullName
-          right: "flask\.request\..*"
-      # OR route parameter patterns would need complex matching not fully expressible here
-
-sinks:
-  - id: SQL_STRING_CONCAT
-    match:
-      node: CALL | LITERAL
-      where:
-        - op: regex
-          left: code
-          right: "(\"\\$SQLSTR\" \\+)|(\"\\$SQLSTR\" %)|(\"\\$SQLSTR\"\.format)|(f\"\\$SQLSTR\{)"
-
-propagations:
-  - id: STRING_CONCAT
-    edge: arg->param
-    kind: taint
-
-barriers:
-  - id: RETURN_STOP
-    match: { node: RETURN }
-    effect: stop
-
-flows:
-  - source: USER_INPUT
-    sink: SQL_STRING_CONCAT
-    through: [STRING_CONCAT*]
-    
-report:
-  message: "User input reaches SQL string construction without parameterization"
-  locations: ["source", "sink"]
-  evidence: { capture: [{ node: "sink" }] }
-
-tests:
-  positive:
-    - "query = \"SELECT * FROM users WHERE name = '\" + request.args.get('name') + \"'\""
-  negative:
-    - "query = \"SELECT * FROM users WHERE name = ?\""
-```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:12,8-27)
-ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:16,12-24)
-ERROR: asExpr() cannot be resolved for type FlaskSourceCandidate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:18,12-18)
-ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:25,12-27)
-ERROR: asExpr() cannot be resolved for type StringConcatCandidate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:28,12-18)
-ERROR: could not resolve type BinaryOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:31,12-27)
-ERROR: asExpr() cannot be resolved for type StringConcatCandidate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:34,12-18)
-ERROR: could not resolve type FunctionCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:37,12-24)
-ERROR: asExpr() cannot be resolved for type StringConcatCandidate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:40,12-18)
-ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:43,12-30)
-ERROR: asExpr() cannot be resolved for type StringConcatCandidate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
-ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:50,30-56)
-ERROR: asExpr() cannot be resolved for type FlaskUserInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:51,27-33)
-ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:56,35-59)
-ERROR: asExpr() cannot be resolved for type SqlStringConcatSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:57,32-38)
-ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:65,31-57)
-ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:69,29-53)
-ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:73,34-58)
-ERROR: could not resolve type ReturnStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:74,35-45)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:78,34-52)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:78,61-79)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: FlaskSourceCandidate must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:14,15-35)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-ERROR: StringConcatCandidate must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:23,15-36)
-WARNING: unused method 'getSourceType' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:53,19-32)
-WARNING: unused method 'getSinkType' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f0799ad8/python-security-queries/queries/test-rule/TestRule.ql:59,19-30)
-Rule Content:
-/**
- * @name Tainted SQL string construction
- * @description Detected user input used to manually construct a SQL string. This could result in SQL injection.
- * @kind path-problem
- * @problem.severity error
- * @precision high
- * @id python/tainted-sql-string
- */
-
-import python
-import semmle.python.dataflow.TaintTracking
-import DataFlow::PathGraph
-
-private class FlaskSourceCandidate extends DataFlow::Node {
-  FlaskSourceCandidate() {
-    exists(FunctionCall call |
-      call.getTarget().toString().matches("flask.request%") and
-      this.asExpr() = call
-    )
-  }
-}
-
-private class StringConcatCandidate extends DataFlow::Node {
-  StringConcatCandidate() {
-    exists(BinaryOperation bin |
-      bin.getOperator() = "+" and
-      bin.getLeftOperand().getStringValue().matches("SQLSTR") and
-      this.asExpr() = bin
-    )
-    or
-    exists(BinaryOperation bin |
-      bin.getOperator() = "%" and
-      bin.getLeftOperand().getStringValue().matches("SQLSTR") and
-      this.asExpr() = bin
-    )
-    or
-    exists(FunctionCall call |
-      call.getTarget().getName() = "format" and
-      call.getQualifier().getStringValue().matches("SQLSTR") and
-      this.asExpr() = call.getQualifier()
-    )
-    or
-    exists(InterpolatedString str |
-      str.getStringValue().matches("SQLSTR") and
-      this.asExpr() = str
-    )
-  }
-}
-
-class FlaskUserInput extends TaintTracking::TaintSource {
-  FlaskUserInput() { this.asExpr() instanceof FlaskSourceCandidate }
-  
-  override string getSourceType() { result = "Flask user input" }
-}
-
-class SqlStringConcatSink extends TaintTracking::TaintSink {
-  SqlStringConcatSink() { this.asExpr() instanceof StringConcatCandidate }
-  
-  override string getSinkType() { result = "SQL string concatenation" }
-}
-
-class TaintedSQLStringConfig extends TaintTracking::Configuration {
-  TaintedSQLStringConfig() { this = "TaintedSQLStringConfig" }
-
-  override predicate isSource(TaintTracking::TaintSource source) {
-    source instanceof FlaskUserInput
-  }
-
-  override predicate isSink(TaintTracking::TaintSink sink) {
-    sink instanceof SqlStringConcatSink
-  }
-
-  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
-    sanitizer.asExpr() instanceof ReturnStmt
-  }
-}
-
-from TaintedSQLStringConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
-where cfg.hasFlowPath(source, sink)
-select sink, "User input reaches SQL string construction without parameterization", source, sink,
-  "User-provided value from $@ flows into SQL string construction.", source, "here"
+select sink, 
+  "User input reaches SQL string construction without sanitization, which could lead to SQL injection.",
+  source, source.toString(), sink, sink.toString()
 ================================================================================

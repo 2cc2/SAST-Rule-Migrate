@@ -1,0 +1,549 @@
+Timestamp: 2025-10-28 21:41:48
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["servlets", "spring"]
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement|java.sql.PreparedStatement|java.sql.CallableStatement|org.springframework.jdbc.core.JdbcTemplate"
+        method: "(execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(request.getParameter(\"q\"));"
+  negative:
+    - "stmt.executeQuery(ESAPI.encoder().encodeForSQL(request.getParameter(\"q\")));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:10,8-42)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:11,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:15,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type Statement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:26,53-62)
+ERROR: could not resolve type PreparedStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:27,53-70)
+ERROR: could not resolve type CallableStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:28,53-70)
+ERROR: could not resolve type JdbcTemplate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:29,53-65)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:36,47-75)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:44,43-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:44,70-88)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a55e8115/java-security-queries/queries/test-rule/TestRule.ql:41,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-from-http-request
+ * @kind path-problem
+ * @severity Warning
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.frameworks.Spring
+import DataFlow::PathGraph
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType() instanceof HttpServletRequest and
+      ma.getMethod().getName().matches("getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType() instanceof Statement or
+       ma.getMethod().getDeclaringType() instanceof PreparedStatement or
+       ma.getMethod().getDeclaringType() instanceof CallableStatement or
+       ma.getMethod().getDeclaringType() instanceof JdbcTemplate) and
+      ma.getMethod().getName().matches("execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class TaintedSQLFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedSQLFromHttpRequestConfig() { this = "TaintedSQLFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+}
+
+from TaintedSQLFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows here from $@.", 
+  sink.getNode(), 
+  source.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:44:38
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["servlets", "spring"]
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement|java.sql.PreparedStatement|java.sql.CallableStatement|org.springframework.jdbc.core.JdbcTemplate"
+        method: "(execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(request.getParameter(\"q\"));"
+  negative:
+    - "stmt.executeQuery(ESAPI.encoder().encodeForSQL(request.getParameter(\"q\")));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.spring.SpringHelpers (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:10,8-56)
+ERROR: could not resolve module java.sql.Statement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:11,8-26)
+ERROR: could not resolve module java.sql.PreparedStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:12,8-34)
+ERROR: could not resolve module java.sql.CallableStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:13,8-34)
+ERROR: could not resolve module org.springframework.jdbc.core.JdbcTemplate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:14,8-50)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:22,25-33)
+ERROR: could not resolve type Statement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:30,40-49)
+ERROR: could not resolve type PreparedStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:31,40-57)
+ERROR: could not resolve type CallableStatement (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:32,40-57)
+ERROR: could not resolve type JdbcTemplate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:33,40-52)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:35,25-33)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:40,47-75)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:48,43-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:48,70-88)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:43,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_18007178/java-security-queries/queries/test-rule/TestRule.ql:45,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-from-http-request
+ * @kind path-problem
+ * @severity Warning
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.frameworks.spring.SpringHelpers
+import java.sql.Statement
+import java.sql.PreparedStatement
+import java.sql.CallableStatement
+import org.springframework.jdbc.core.JdbcTemplate
+import DataFlow
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() {
+    exists(Method m |
+      m.getDeclaringType() instanceof HttpServletRequest and
+      m.getName().matches("getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(Method m |
+      (m.getDeclaringType() instanceof Statement or
+       m.getDeclaringType() instanceof PreparedStatement or
+       m.getDeclaringType() instanceof CallableStatement or
+       m.getDeclaringType() instanceof JdbcTemplate) and
+      m.getName().matches("execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class TaintedSQLFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedSQLFromHttpRequestConfig() { this = "TaintedSQLFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+}
+
+from TaintedSQLFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows here from $@.", 
+  sink.getNode(), 
+  source.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:47:07
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["servlets", "spring"]
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement|java.sql.PreparedStatement|java.sql.CallableStatement|org.springframework.jdbc.core.JdbcTemplate"
+        method: "(execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(request.getParameter(\"q\"));"
+  negative:
+    - "stmt.executeQuery(ESAPI.encoder().encodeForSQL(request.getParameter(\"q\")));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:33,47-75)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:13,10-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:21,10-22)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:41,43-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:41,70-88)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:36,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8e935f0/java-security-queries/queries/test-rule/TestRule.ql:38,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-from-http-request
+ * @kind path-problem
+ * @severity Warning
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow
+
+predicate isHttpRequestSource(DataFlow::Node source) {
+  exists(MethodAccess ma |
+    ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+    ma.getMethod().getName().matches("getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString") and
+    source.asExpr() = ma
+  )
+}
+
+predicate isSqlSink(DataFlow::Node sink) {
+  exists(MethodAccess ma |
+    (
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate")
+    ) and
+    ma.getMethod().getName().matches("execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap") and
+    sink.asExpr() = ma
+  )
+}
+
+class TaintedSQLFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedSQLFromHttpRequestConfig() { this = "TaintedSQLFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { isHttpRequestSource(source) }
+
+  override predicate isSink(DataFlow::Node sink) { isSqlSink(sink) }
+}
+
+from TaintedSQLFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows here from $@.", 
+  sink.getNode(), 
+  source.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:49:59
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["servlets", "spring"]
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement|java.sql.PreparedStatement|java.sql.CallableStatement|org.springframework.jdbc.core.JdbcTemplate"
+        method: "(execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(request.getParameter(\"q\"));"
+  negative:
+    - "stmt.executeQuery(ESAPI.encoder().encodeForSQL(request.getParameter(\"q\")));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:10,8-42)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:11,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:34,47-75)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:17,27-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:30,25-37)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:42,43-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:42,70-88)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:37,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_efee895f/java-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-from-http-request
+ * @kind path-problem
+ * @severity Warning
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.frameworks.Spring
+import DataFlow::PathGraph
+
+predicate isHttpRequestSource(DataFlow::Node source) {
+  exists(Method m | 
+    m.getDeclaringType().getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+    m.getName().matches("getInputStream|getParameter%|getReader|getCookies|getHeader%|getPart%|getQueryString") and
+    source.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getQualifier()
+  )
+}
+
+predicate isSqlSink(DataFlow::Node sink) {
+  exists(Method m |
+    (
+      m.getDeclaringType().getASupertype*().hasQualifiedName("java.sql", "Statement") or
+      m.getDeclaringType().getASupertype*().hasQualifiedName("java.sql", "PreparedStatement") or
+      m.getDeclaringType().getASupertype*().hasQualifiedName("java.sql", "CallableStatement") or
+      m.getDeclaringType().getASupertype*().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate")
+    ) and
+    m.getName().matches("execute%|query%|batchUpdate|prepareStatement") and
+    sink.asExpr() = any(MethodAccess ma | ma.getMethod() = m).getAnArgument()
+  )
+}
+
+class TaintedSQLFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedSQLFromHttpRequestConfig() { this = "TaintedSQLFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { isHttpRequestSource(source) }
+
+  override predicate isSink(DataFlow::Node sink) { isSqlSink(sink) }
+}
+
+from TaintedSQLFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows here from $@.", 
+  sink.getNode(), 
+  source.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:52:43
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["servlets", "spring"]
+sources:
+  - id: HTTP_REQUEST_INPUT
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement|java.sql.PreparedStatement|java.sql.CallableStatement|org.springframework.jdbc.core.JdbcTemplate"
+        method: "(execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap)"
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+flows:
+  - source: HTTP_REQUEST_INPUT
+    sink: SQL_EXECUTION
+    through: [ARG_TO_PARAM*]
+report:
+  message: "User input reaches SQL execution without sanitization"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+tests:
+  positive:
+    - "stmt.executeQuery(request.getParameter(\"q\"));"
+  negative:
+    - "stmt.executeQuery(ESAPI.encoder().encodeForSQL(request.getParameter(\"q\")));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:34,47-75)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:14,10-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:22,10-22)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:42,43-61)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:42,70-88)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:37,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_529ad58b/java-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-from-http-request
+ * @kind path-problem
+ * @severity Warning
+ * @problem.severity warning
+ * @description Detected input from a HTTPServletRequest going into a SQL sink or statement. 
+ *              This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+predicate isHttpRequestSource(DataFlow::Node source) {
+  exists(MethodAccess ma |
+    ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+    ma.getMethod().getName().matches("getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString") and
+    source.asExpr() = ma
+  )
+}
+
+predicate isSqlSink(DataFlow::Node sink) {
+  exists(MethodAccess ma |
+    (
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate")
+    ) and
+    ma.getMethod().getName().matches("execute|query|executeUpdate|batchUpdate|prepareStatement|queryForObject|queryForMap") and
+    sink.asExpr() = ma
+  )
+}
+
+class TaintedSQLFromHttpRequestConfig extends TaintTracking::Configuration {
+  TaintedSQLFromHttpRequestConfig() { this = "TaintedSQLFromHttpRequestConfig" }
+
+  override predicate isSource(DataFlow::Node source) { isHttpRequestSource(source) }
+
+  override predicate isSink(DataFlow::Node sink) { isSqlSink(sink) }
+}
+
+from TaintedSQLFromHttpRequestConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows here from $@.", 
+  sink.getNode(), 
+  source.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================

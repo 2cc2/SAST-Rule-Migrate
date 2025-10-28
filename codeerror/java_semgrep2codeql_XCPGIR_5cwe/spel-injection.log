@@ -1,0 +1,562 @@
+Timestamp: 2025-10-28 21:23:39
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spel-injection
+  kind: taint
+  severity: WARNING
+  message: "A Spring expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_EXPRESSION
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "\"...\""
+sinks:
+  - id: SPRING_EXPRESSION_EVAL
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+sanitizers: []
+barriers: []
+flows:
+  - source: DYNAMIC_EXPRESSION
+    sink: SPRING_EXPRESSION_EVAL
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "LITERAL(string)"
+          - pattern: "ASSIGNMENT(LOCAL(string), LITERAL(string))"
+report:
+  message: "Potential Spring Expression Language (SpEL) injection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "parser.parseExpression(userInput)"
+  negative:
+    - "parser.parseExpression(\"safe\")"
+    - "String expr = \"safe\"; parser.parseExpression(expr)"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.Spring (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:13,8-42)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:15,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:42,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:42,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a027e807/java-security-queries/queries/test-rule/TestRule.ql:35,22-33)
+Rule Content:
+/**
+ * @name SpEL Injection
+ * @description Detects potential Spring Expression Language (SpEL) injection where
+ *              a dynamic value is used to build a Spring expression.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/spel-injection
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Spring
+
+class SpELInjectionConfig extends TaintTracking::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "parseExpression" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      not ma.getArgument(0).isStringLiteral() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "parseExpression" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType
+  }
+}
+
+from SpELInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Potential Spring Expression Language (SpEL) injection detected due to unverified input", 
+  source, sink,
+  "Expression is built from $@ which may contain untrusted input.", source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 21:26:36
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spel-injection
+  kind: taint
+  severity: WARNING
+  message: "A Spring expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_EXPRESSION
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "\"...\""
+sinks:
+  - id: SPRING_EXPRESSION_EVAL
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+sanitizers: []
+barriers: []
+flows:
+  - source: DYNAMIC_EXPRESSION
+    sink: SPRING_EXPRESSION_EVAL
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "LITERAL(string)"
+          - pattern: "ASSIGNMENT(LOCAL(string), LITERAL(string))"
+report:
+  message: "Potential Spring Expression Language (SpEL) injection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "parser.parseExpression(userInput)"
+  negative:
+    - "parser.parseExpression(\"safe\")"
+    - "String expr = \"safe\"; parser.parseExpression(expr)"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:14,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:18,22-34)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:28,22-34)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:43,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:43,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:17,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_107b55aa/java-security-queries/queries/test-rule/TestRule.ql:36,22-33)
+Rule Content:
+/**
+ * @name SpEL Injection
+ * @description Detects potential Spring Expression Language (SpEL) injection where
+ *              a dynamic value is used to build a Spring expression.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/spel-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SpELInjectionConfig extends TaintTracking::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("parseExpression") and
+      m.getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      ma.getMethod() = m and
+      not ma.getArgument(0).isStringLiteral() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m, MethodAccess ma |
+      m.hasName("parseExpression") and
+      m.getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType
+  }
+}
+
+from SpELInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "Potential Spring Expression Language (SpEL) injection detected due to unverified input",
+  source, sink,
+  "Expression is built from $@ which may contain untrusted input.", source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 21:29:15
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spel-injection
+  kind: taint
+  severity: WARNING
+  message: "A Spring expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_EXPRESSION
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "\"...\""
+sinks:
+  - id: SPRING_EXPRESSION_EVAL
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+sanitizers: []
+barriers: []
+flows:
+  - source: DYNAMIC_EXPRESSION
+    sink: SPRING_EXPRESSION_EVAL
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "LITERAL(string)"
+          - pattern: "ASSIGNMENT(LOCAL(string), LITERAL(string))"
+report:
+  message: "Potential Spring Expression Language (SpEL) injection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "parser.parseExpression(userInput)"
+  negative:
+    - "parser.parseExpression(\"safe\")"
+    - "String expr = \"safe\"; parser.parseExpression(expr)"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:15,35-63)
+ERROR: isStringLiteral() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:22,29-44)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:42,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:42,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c027ee8d/java-security-queries/queries/test-rule/TestRule.ql:35,22-33)
+Rule Content:
+/**
+ * @name SpEL Injection
+ * @description Detects potential Spring Expression Language (SpEL) injection where
+ *              a dynamic value is used to build a Spring expression.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/spel-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.Spring
+
+class SpELInjectionConfig extends TaintTracking::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      not ma.getArgument(0).isStringLiteral() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType
+  }
+}
+
+from SpELInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "Potential Spring Expression Language (SpEL) injection detected due to unverified input",
+  source, sink,
+  "Expression is built from $@ which may contain untrusted input.", source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 21:32:05
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spel-injection
+  kind: taint
+  severity: WARNING
+  message: "A Spring expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_EXPRESSION
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "\"...\""
+sinks:
+  - id: SPRING_EXPRESSION_EVAL
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+sanitizers: []
+barriers: []
+flows:
+  - source: DYNAMIC_EXPRESSION
+    sink: SPRING_EXPRESSION_EVAL
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "LITERAL(string)"
+          - pattern: "ASSIGNMENT(LOCAL(string), LITERAL(string))"
+report:
+  message: "Potential Spring Expression Language (SpEL) injection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "parser.parseExpression(userInput)"
+  negative:
+    - "parser.parseExpression(\"safe\")"
+    - "String expr = \"safe\"; parser.parseExpression(expr)"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:14,35-58)
+ERROR: isStringLiteral() cannot be resolved for type Expr::Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:21,39-54)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:41,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:41,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:17,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:26,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d6b3de9f/java-security-queries/queries/test-rule/TestRule.ql:34,22-33)
+Rule Content:
+/**
+ * @name SpEL Injection
+ * @description Detects potential Spring Expression Language (SpEL) injection where
+ *              a dynamic value is used to build a Spring expression.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/spel-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.spring.Spring
+
+class SpELInjectionConfig extends DataFlow::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      not ma.getArgument(0).(Literal).isStringLiteral() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType
+  }
+}
+
+from SpELInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "Potential Spring Expression Language (SpEL) injection detected due to unverified input",
+  source, sink,
+  "Expression is built from $@ which may contain untrusted input.", source, source.toString()
+================================================================================
+Timestamp: 2025-10-28 21:34:53
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: spel-injection
+  kind: taint
+  severity: WARNING
+  message: "A Spring expression is built with a dynamic value. The source of the value(s) should be verified to avoid that unfiltered values fall into this risky code evaluation."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: DYNAMIC_EXPRESSION
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: "\"...\""
+sinks:
+  - id: SPRING_EXPRESSION_EVAL
+    match:
+      node: CALL
+      api: { type: org.springframework.expression.ExpressionParser, method: parseExpression }
+      arg_index: 0
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+sanitizers: []
+barriers: []
+flows:
+  - source: DYNAMIC_EXPRESSION
+    sink: SPRING_EXPRESSION_EVAL
+    through: [ARG_TO_PARAM*]
+    constraints:
+      path:
+        must_not:
+          - pattern: "LITERAL(string)"
+          - pattern: "ASSIGNMENT(LOCAL(string), LITERAL(string))"
+report:
+  message: "Potential Spring Expression Language (SpEL) injection detected"
+  locations: ["source", "sink"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "parser.parseExpression(userInput)"
+  negative:
+    - "parser.parseExpression(\"safe\")"
+    - "String expr = \"safe\"; parser.parseExpression(expr)"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:15,35-63)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:42,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:42,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07dd67f0/java-security-queries/queries/test-rule/TestRule.ql:35,22-33)
+Rule Content:
+/**
+ * @name SpEL Injection
+ * @description Detects potential Spring Expression Language (SpEL) injection where
+ *              a dynamic value is used to build a Spring expression.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/spel-injection
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.Spring
+
+class SpELInjectionConfig extends TaintTracking::Configuration {
+  SpELInjectionConfig() { this = "SpELInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      not ma.getArgument(0).isCompileTimeConstant() and
+      source.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call ma |
+      ma.getCallee().hasName("parseExpression") and
+      ma.getCallee().getDeclaringType().hasQualifiedName("org.springframework.expression", "ExpressionParser") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    node.getType() instanceof PrimitiveType or
+    node.getType() instanceof BoxedType or
+    node.getType() instanceof NumberType
+  }
+}
+
+from SpELInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "Potential Spring Expression Language (SpEL) injection detected due to unverified input",
+  source, sink,
+  "Expression is built from $@ which may contain untrusted input.", source, source.toString()
+================================================================================

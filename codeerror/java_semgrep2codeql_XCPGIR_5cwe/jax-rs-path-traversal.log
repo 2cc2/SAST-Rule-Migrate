@@ -1,0 +1,693 @@
+Timestamp: 2025-10-28 21:24:23
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      type:
+        name: string
+sinks:
+  - id: FILE_CONSTRUCTOR
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+      arg_index: 1
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTOR
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+report:
+  message: "Detected a potential path traversal"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 1 }] }
+tests:
+  positive:
+    - "@PathParam(\"path\") String path; new File(basePath, path);"
+  negative:
+    - "@PathParam(\"path\") String path; new File(basePath, FilenameUtils.getName(path));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jaxrs.JaxRs (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:19,12-27)
+ERROR: could not resolve type DataFlow::BarrierGuardNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:36,38-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:46,35-63)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:62,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:62,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:53,22-28)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_df588ca3/java-security-queries/queries/test-rule/TestRule.ql:57,22-31)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the 
+ *              location of this file, to include going backwards in the directory with '../'.
+ *              To address this, ensure that user-controlled variables in file paths are sanitized.
+ *              You may also consider using a utility method such as 
+ *              org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.jaxrs.JaxRs
+
+class PathParameterSource extends DataFlow::Node {
+  PathParameterSource() {
+    exists(MethodParameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileConstructorSink extends DataFlow::Node {
+  FileConstructorSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      cc.getArgument(1) = this.asExpr()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::BarrierGuardNode {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getName" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileConstructorSink
+  }
+  
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected a potential path traversal", 
+  source.getNode(), 
+  "User-controlled parameter flows into file path without sanitization"
+================================================================================
+Timestamp: 2025-10-28 21:27:13
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      type:
+        name: string
+sinks:
+  - id: FILE_CONSTRUCTOR
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+      arg_index: 1
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTOR
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+report:
+  message: "Detected a potential path traversal"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 1 }] }
+tests:
+  positive:
+    - "@PathParam(\"path\") String path; new File(basePath, path);"
+  negative:
+    - "@PathParam(\"path\") String path; new File(basePath, FilenameUtils.getName(path));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::BarrierNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:36,38-59)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:45,35-63)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:37,3-25)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:52,22-28)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_39ae475d/java-security-queries/queries/test-rule/TestRule.ql:56,22-31)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the 
+ *              location of this file, to include going backwards in the directory with '../'.
+ *              To address this, ensure that user-controlled variables in file paths are sanitized.
+ *              You may also consider using a utility method such as 
+ *              org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class PathParameterSource extends DataFlow::Node {
+  PathParameterSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileConstructorSink extends DataFlow::Node {
+  FileConstructorSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(1)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::BarrierNode {
+  FilenameUtilsSanitizer() {
+    exists(Method m |
+      m.getName() = "getName" and
+      m.getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileConstructorSink
+  }
+  
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, 
+  "Detected a potential path traversal", 
+  source, 
+  "User-controlled parameter flows into file path without sanitization"
+================================================================================
+Timestamp: 2025-10-28 21:30:07
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      type:
+        name: string
+sinks:
+  - id: FILE_CONSTRUCTOR
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+      arg_index: 1
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTOR
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+report:
+  message: "Detected a potential path traversal"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 1 }] }
+tests:
+  positive:
+    - "@PathParam(\"path\") String path; new File(basePath, path);"
+  negative:
+    - "@PathParam(\"path\") String path; new File(basePath, FilenameUtils.getName(path));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql:46,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql:53,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4d5ec92c/java-security-queries/queries/test-rule/TestRule.ql:57,22-33)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the 
+ *              location of this file, to include going backwards in the directory with '../'.
+ *              To address this, ensure that user-controlled variables in file paths are sanitized.
+ *              You may also consider using a utility method such as 
+ *              org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class PathParameterSource extends DataFlow::Node {
+  PathParameterSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileConstructorSink extends DataFlow::Node {
+  FileConstructorSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(1)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getName" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileConstructorSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, 
+  "Detected a potential path traversal", 
+  source, 
+  "User-controlled parameter flows into file path without sanitization"
+================================================================================
+Timestamp: 2025-10-28 21:33:26
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      type:
+        name: string
+sinks:
+  - id: FILE_CONSTRUCTOR
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+      arg_index: 1
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTOR
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+report:
+  message: "Detected a potential path traversal"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 1 }] }
+tests:
+  positive:
+    - "@PathParam(\"path\") String path; new File(basePath, path);"
+  negative:
+    - "@PathParam(\"path\") String path; new File(basePath, FilenameUtils.getName(path));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.jaxrs.JaxRs (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:16,8-47)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:47,35-63)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:63,31-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:63,58-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:50,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fef0e4ef/java-security-queries/queries/test-rule/TestRule.ql:58,22-33)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the 
+ *              location of this file, to include going backwards in the directory with '../'.
+ *              To address this, ensure that user-controlled variables in file paths are sanitized.
+ *              You may also consider using a utility method such as 
+ *              org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.jaxrs.JaxRs
+
+class PathParameterSource extends DataFlow::Node {
+  PathParameterSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileConstructorSink extends DataFlow::Node {
+  FileConstructorSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(1)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getName" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileConstructorSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Detected a potential path traversal", 
+  source, 
+  "User-controlled parameter flows into file path without sanitization"
+================================================================================
+Timestamp: 2025-10-28 21:36:21
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+scope:
+  languages: [java]
+  frameworks: ["jax-rs"]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      api:
+        type: javax.ws.rs.PathParam
+      type:
+        name: string
+sinks:
+  - id: FILE_CONSTRUCTOR
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+      arg_index: 1
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+flows:
+  - source: PATH_PARAM
+    sink: FILE_CONSTRUCTOR
+    through: [PARAM_TO_ARG*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(org.apache.commons.io.FilenameUtils.getName)" } ]
+report:
+  message: "Detected a potential path traversal"
+  locations: ["source", "sink", "path"]
+  evidence: { capture: [{ argument: 1 }] }
+tests:
+  positive:
+    - "@PathParam(\"path\") String path; new File(basePath, path);"
+  negative:
+    - "@PathParam(\"path\") String path; new File(basePath, FilenameUtils.getName(path));"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:15,8-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:17,35-43)
+ERROR: asParameter() cannot be resolved for type PathParameterSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:22,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:27,35-43)
+ERROR: asExpr() cannot be resolved for type FileConstructorSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:31,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:36,38-46)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:41,25-33)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:46,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:49,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:53,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:57,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:62,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:62,29-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:53,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fcef80cc/java-security-queries/queries/test-rule/TestRule.ql:57,22-33)
+Rule Content:
+/**
+ * @name JAX-RS Path Traversal
+ * @description Detected a potential path traversal. A malicious actor could control the 
+ *              location of this file, to include going backwards in the directory with '../'.
+ *              To address this, ensure that user-controlled variables in file paths are sanitized.
+ *              You may also consider using a utility method such as 
+ *              org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jax-rs-path-traversal
+ */
+
+import java
+import DataFlow
+import TaintTracking
+
+class PathParameterSource extends DataFlow::Node {
+  PathParameterSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") and
+      p.getType().hasName("String") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileConstructorSink extends DataFlow::Node {
+  FileConstructorSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(1)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(Method m |
+      m.hasName("getName") and
+      m.getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof PathParameterSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileConstructorSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(PathTraversalConfig cfg).hasFlow(source, sink)
+select sink, 
+  "Detected a potential path traversal", 
+  source, 
+  "User-controlled parameter flows into file path without sanitization"
+================================================================================

@@ -1,4 +1,4 @@
-Timestamp: 2025-10-28 17:59:21
+Timestamp: 2025-10-28 21:24:15
 Attempt: 1
 IR Content:
 ```yaml
@@ -7,25 +7,27 @@ rule:
   id: dangerous-asyncio-exec-audit
   kind: taint
   severity: ERROR
-  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection."
+  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh] }
 
 sources:
-  - id: UNTRUSTED_INPUT
-    match:
-      node: PARAM | RETURN | FIELD
-      type: { name: "str", match: exact }
-  
-sinks:
-  - id: DANGEROUS_EXEC
+  - id: DYNAMIC_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
-      arg_index: [1, 2]
-  - id: SHELL_EXEC
+      where:
+        - op: neq
+          left: arg[1].value
+          right: "..."
+        - op: neq
+          left: arg[1].value
+          right: ["...", ...]
+
+sinks:
+  - id: SHELL_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
@@ -33,96 +35,67 @@ sinks:
         - op: regex
           left: arg[1].value
           right: "/(sh|bash|ksh|csh|tcsh|zsh)/"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
 
 sanitizers:
-  - id: STATIC_STRING
-    match:
-      node: LITERAL
-      where:
-        - op: eq
-          left: is_static
-          right: true
+  - id: SHLEX_ESCAPE
+    match: { node: CALL, api: { type: shlex, method: escape } }
     effect: neutralize
-
-barriers:
-  - id: SHELL_ESCAPE
-    match:
-      node: CALL
-      api: { type: shlex, method: escape }
-    effect: neutralize
-
-propagations:
-  - id: ARG_TO_ARG
-    edge: arg->param
-    kind: taint
 
 flows:
-  - source: UNTRUSTED_INPUT
-    sink: DANGEROUS_EXEC
-    through: [ARG_TO_ARG*]
+  - source: DYNAMIC_COMMAND
+    sink: SHELL_COMMAND
     constraints:
       path:
-        must_not: [ { pattern: "LITERAL(is_static=true)" } ]
-  - source: UNTRUSTED_INPUT
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "CALL(shlex.escape)" } ]
 
 report:
-  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
-  locations: ["source", "sink", "path"]
-  metadata:
-    owasp:
-      - "A01:2017 - Injection"
-      - "A03:2021 - Injection"
-    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
-    references:
-      - "https://docs.python.org/3/library/shlex.html"
+  message: "Detected potentially unsafe subprocess call with dynamic command"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 1 }] }
+
+metadata:
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"]
+  references:
+    - "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec"
+    - "https://docs.python.org/3/library/shlex.html"
+    - "https://semgrep.dev/docs/cheat-sheets/python-command-injection/"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: predicate isSanitizer/1 is already declared (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:51,22-33)
-ERROR: could not resolve module semmle.python.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:17,8-29)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
-ERROR: asParameter() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:23,33-44)
-ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:23,57-64)
-ERROR: could not resolve type ClassType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:23,68-77)
-ERROR: asParameter() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:24,14-25)
-ERROR: could not resolve type ReturnStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:26,12-22)
-ERROR: asReturn() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:26,34-42)
-ERROR: could not resolve type ClassType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:26,66-75)
-ERROR: asReturn() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:27,14-22)
-ERROR: could not resolve type Field (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:29,12-17)
-ERROR: asField() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:29,29-36)
-ERROR: could not resolve type ClassType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:29,60-69)
-ERROR: asField() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:30,14-21)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
-ERROR: could not resolve type ClassType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:36,36-45)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:39,12-22)
-ERROR: could not resolve type ClassType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:41,36-45)
-ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:43,11-19)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:47,34-42)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:58,44-52)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:58,65-73)
-ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:59,25-33)
-ERROR: asParameter() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:61,12-23)
-ERROR: getAnArg() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:62,13-21)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:66,45-53)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:66,45-63)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:66,72-80)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:66,72-90)
-ERROR: predicate 'isSource' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:22,22-30)
-ERROR: predicate 'isSink' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
-ERROR: predicate 'isSanitizer' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:47,22-33)
-ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:58,3-63,4)
-ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:15,1-31)
-ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69df3f13/python-security-queries/queries/test-rule/TestRule.ql:16,1-44)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.StringOperations (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:16,8-47)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:19,36-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:24,12-25)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:25,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:26,18-29)
+ERROR: could not resolve type ListExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:28,26-34)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:35,12-25)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:36,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:37,19-30)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:38,19-30)
+ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:39,12-26)
+ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:40,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:45,34-42)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:47,12-25)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:48,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:54,35-43)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:54,62-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:22,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5e2bf098/python-security-queries/queries/test-rule/TestRule.ql:45,22-33)
 Rule Content:
 /**
- * @name Dangerous Asyncio Exec Audit
- * @description Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection.
- * @kind taint-problem
+ * @name Dangerous asyncio subprocess_exec without static string
+ * @description Detected subprocess function without a static string. If this data can be controlled by
+ *              a malicious actor, it may be an instance of command injection. Audit the use of this call
+ *              to ensure it is not controllable by an external resource.
+ * @kind taint
  * @problem.severity error
- * @id python/dangerous-asyncio-exec-audit
+ * @id py/dangerous-asyncio-exec-audit
  * @tags security
  *       external/cwe/cwe-078
  *       external/owasp/a01:2017
@@ -130,66 +103,51 @@ Rule Content:
  */
 
 import python
+import semmle.python.security.StringOperations
 import semmle.python.Concepts
-import semmle.python.ApiGraphs
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Strings
 
-class DangerousAsyncioExecConfiguration extends TaintTracking::Configuration {
-  DangerousAsyncioExecConfiguration() { this = "DangerousAsyncioExecConfiguration" }
+class DangerousAsyncioExec extends TaintTracking::Configuration {
+  DangerousAsyncioExec() { this = "Dangerous asyncio subprocess_exec usage" }
 
   override predicate isSource(DataFlow::Node source) {
-    exists(Parameter p | source.asParameter() = p and p.getType().(ClassType).getName() = "str" |
-      source.asParameter() = p)
-    or
-    exists(ReturnStmt r | source.asReturn() = r and r.getType().(ClassType).getName() = "str" |
-      source.asReturn() = r)
-    or
-    exists(Field f | source.asField() = f and f.getType().(ClassType).getName() = "str" |
-      source.asField() = f)
+    exists(Call call, Expr arg |
+      call.getMethodName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg = call.getArgument(1) and
+      not arg instanceof StringLiteral and
+      not arg instanceof ListExpr and
+      source.asExpr() = arg
+    )
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    exists(MethodCall mc |
-      mc.getMethodName() = "subprocess_exec" and
-      mc.getQualifier().getType().(ClassType).getName() = "asyncio.loop" and
-      (sink.asExpr() = mc.getArgument(1) or sink.asExpr() = mc.getArgument(2)))
-    or
-    exists(MethodCall mc |
-      mc.getMethodName() = "subprocess_exec" and
-      mc.getQualifier().getType().(ClassType).getName() = "asyncio.loop" and
-      (exists(StringLiteral s | mc.getArgument(1).asExpr() = s |
-        s.getValue().regexpMatch("/(sh|bash|ksh|csh|tcsh|zsh)/") and
-        sink.asExpr() = mc.getArgument(1))))
+    exists(Call call, Expr arg1, Expr arg2 |
+      call.getMethodName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg1 = call.getArgument(1) and
+      arg2 = call.getArgument(2) and
+      arg1.getStringValue().regexpMatch("(sh|bash|ksh|csh|tcsh|zsh)") and
+      arg2.getStringValue() = "-c" and
+      sink.asExpr() = call
+    )
   }
 
   override predicate isSanitizer(DataFlow::Node sanitizer) {
-    exists(StringLiteral lit | sanitizer.asExpr() = lit)
-  }
-
-  override predicate isSanitizer(DataFlow::Node node) {
-    exists(MethodCall mc |
-      mc.getMethodName() = "escape" and
-      mc.getQualifier().getType().(ClassType).getName() = "shlex" and
-      node.asExpr() = mc.getArgument(0))
-  }
-
-  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
-    exists(Parameter p, Argument a |
-      pred.asExpr() = a.getExpr() and
-      succ.asParameter() = p and
-      a = p.getAnArg())
+    exists(Call call |
+      call.getMethodName() = "escape" and
+      call.getReceiver().getType().hasQualifiedName("shlex") and
+      sanitizer.asExpr() = call
+    )
   }
 }
 
-from DangerousAsyncioExecConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
-where cfg.hasFlowPath(source, sink)
+from DangerousAsyncioExec config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
 select sink.getNode(), source, sink,
-  "Detected subprocess function '$LOOP.subprocess_exec' without a static string. " +
-  "Audit the use of this call to ensure it is not controllable by an external resource. " +
-  "You may consider using 'shlex.escape()'."
+  "Detected potentially unsafe subprocess call with dynamic command. Audit the use of this call to" +
+  " ensure it is not controllable by an external resource. Consider using shlex.escape()."
 ================================================================================
-Timestamp: 2025-10-28 18:02:35
+Timestamp: 2025-10-28 21:26:27
 Attempt: 2
 IR Content:
 ```yaml
@@ -198,25 +156,27 @@ rule:
   id: dangerous-asyncio-exec-audit
   kind: taint
   severity: ERROR
-  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection."
+  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh] }
 
 sources:
-  - id: UNTRUSTED_INPUT
-    match:
-      node: PARAM | RETURN | FIELD
-      type: { name: "str", match: exact }
-  
-sinks:
-  - id: DANGEROUS_EXEC
+  - id: DYNAMIC_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
-      arg_index: [1, 2]
-  - id: SHELL_EXEC
+      where:
+        - op: neq
+          left: arg[1].value
+          right: "..."
+        - op: neq
+          left: arg[1].value
+          right: ["...", ...]
+
+sinks:
+  - id: SHELL_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
@@ -224,91 +184,69 @@ sinks:
         - op: regex
           left: arg[1].value
           right: "/(sh|bash|ksh|csh|tcsh|zsh)/"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
 
 sanitizers:
-  - id: STATIC_STRING
-    match:
-      node: LITERAL
-      where:
-        - op: eq
-          left: is_static
-          right: true
+  - id: SHLEX_ESCAPE
+    match: { node: CALL, api: { type: shlex, method: escape } }
     effect: neutralize
-
-barriers:
-  - id: SHELL_ESCAPE
-    match:
-      node: CALL
-      api: { type: shlex, method: escape }
-    effect: neutralize
-
-propagations:
-  - id: ARG_TO_ARG
-    edge: arg->param
-    kind: taint
 
 flows:
-  - source: UNTRUSTED_INPUT
-    sink: DANGEROUS_EXEC
-    through: [ARG_TO_ARG*]
+  - source: DYNAMIC_COMMAND
+    sink: SHELL_COMMAND
     constraints:
       path:
-        must_not: [ { pattern: "LITERAL(is_static=true)" } ]
-  - source: UNTRUSTED_INPUT
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "CALL(shlex.escape)" } ]
 
 report:
-  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
-  locations: ["source", "sink", "path"]
-  metadata:
-    owasp:
-      - "A01:2017 - Injection"
-      - "A03:2021 - Injection"
-    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
-    references:
-      - "https://docs.python.org/3/library/shlex.html"
+  message: "Detected potentially unsafe subprocess call with dynamic command"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 1 }] }
+
+metadata:
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"]
+  references:
+    - "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec"
+    - "https://docs.python.org/3/library/shlex.html"
+    - "https://semgrep.dev/docs/cheat-sheets/python-command-injection/"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:25,26-27)
-ERROR: unexpected input ')' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+', '|' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:29,5-6)
-ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:80,1-2)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:17,8-16)
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:17,8-27)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
-ERROR: asParameter() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:24,14-25)
-ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:25,16-23)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:42,29-37)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:43,12-18)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:43,27-35)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:43,27-45)
-ERROR: getCall() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:46,19-26)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:62,34-42)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:65,12-22)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:72,44-52)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:72,66-74)
-ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:73,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:73,12-30)
-ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:73,37-45)
-ERROR: asParameter() cannot be resolved for type DataFlowPublic::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:75,13-24)
-ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
-ERROR: predicate 'isSource' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:22,22-30)
-ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:42,3-11)
-ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:62,3-11)
-ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:72,3-11)
-WARNING: unused variable 'shell' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:50,30-35)
-WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:42,22-28)
-WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:62,22-33)
-WARNING: unused predicate 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:72,22-43)
-ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:15,1-31)
-ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0d8884bd/python-security-queries/queries/test-rule/TestRule.ql:16,1-44)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:27,11-30)
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:28,11-21)
+ERROR: could not resolve module semmle.code.python.security.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:16,8-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:17,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:19,36-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
+ERROR: getMethod() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:24,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:25,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:26,18-29)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: getMethod() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:35,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:36,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:37,19-30)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:38,19-30)
+ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:39,12-26)
+ERROR: getStringValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:40,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:45,34-42)
+ERROR: getMethod() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:47,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:48,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:54,35-43)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:54,62-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:22,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f280b4de/python-security-queries/queries/test-rule/TestRule.ql:45,22-33)
 Rule Content:
 /**
- * @name Dangerous Asyncio Exec Audit
- * @description Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection.
- * @kind taint-problem
+ * @name Dangerous asyncio subprocess_exec without static string
+ * @description Detected subprocess function without a static string. If this data can be controlled by
+ *              a malicious actor, it may be an instance of command injection. Audit the use of this call
+ *              to ensure it is not controllable by an external resource.
+ * @kind taint
  * @problem.severity error
- * @id python/dangerous-asyncio-exec-audit
+ * @id py/dangerous-asyncio-exec-audit
  * @tags security
  *       external/cwe/cwe-078
  *       external/owasp/a01:2017
@@ -316,82 +254,51 @@ Rule Content:
  */
 
 import python
-import semmle.python.Concepts
-import semmle.python.ApiGraphs
-import semmle.python.dataflow.TaintTracking
+import semmle.code.python.security.TaintTracking
 import DataFlow::PathGraph
 
-class DangerousAsyncioExecConfiguration extends TaintTracking::Configuration {
-  DangerousAsyncioExecConfiguration() { this = "DangerousAsyncioExecConfiguration" }
+class DangerousAsyncioExec extends TaintTracking::Configuration {
+  DangerousAsyncioExec() { this = "Dangerous asyncio subprocess_exec usage" }
 
   override predicate isSource(DataFlow::Node source) {
-    exists(Parameter p | 
-      source.asParameter() = p and 
-      exists(p.getType() | 
-        this = "str" and
-        not exists(StringLiteral lit | source.asExpr() = lit)
-      )
-    )
-    or
-    exists(FunctionReturn ret |
-      source = ret.getReturn() and
-      exists(ret.getType() | this = "str")
-    )
-    or
-    exists(Field f |
-      source.asField() = f and
-      exists(f.getType() | this = "str")
+    exists(Call call, Expr arg |
+      call.getMethod().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg = call.getArgument(1).getExpr() and
+      not arg.(StringLiteral) and
+      not arg.(List) and
+      source.asExpr() = arg
     )
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    exists(Method method, DataFlow::CallNode call |
-      method.hasName("subprocess_exec") and
-      method.getDeclaringType().hasQualifiedName("asyncio.loop") and
-      call = sink.getCall() and
-      (
-        call.getArgument(1) = sink.asExpr() or
-        call.getArgument(2) = sink.asExpr() or
-        exists(StringLiteral shell |
-          call.getArgument(1).getValueText().matches("%sh%") or
-          call.getArgument(1).getValueText().matches("%bash%") or
-          call.getArgument(1).getValueText().matches("%ksh%") or
-          call.getArgument(1).getValueText().matches("%csh%") or
-          call.getArgument(1).getValueText().matches("%tcsh%") or
-          call.getArgument(1).getValueText().matches("%zsh%") 
-        )
-      )
+    exists(Call call, Expr arg1, Expr arg2 |
+      call.getMethod().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg1 = call.getArgument(1).getExpr() and
+      arg2 = call.getArgument(2).getExpr() and
+      arg1.getStringValue().regexpMatch("(sh|bash|ksh|csh|tcsh|zsh)") and
+      arg2.getStringValue() = "-c" and
+      sink.asExpr() = call
     )
   }
 
   override predicate isSanitizer(DataFlow::Node sanitizer) {
-    exists(StringLiteral lit | sanitizer.asExpr() = lit)
-    or
-    exists(MethodCall mc |
-      mc.getMethod().hasName("escape") and
-      mc.getQualifier().getType().hasQualifiedName("shlex") and
-      sanitizer.asExpr() = mc.getAnArgument()
-    )
-  }
-
-  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
-    exists(DataFlow::CallNode call, Argument arg, Parameter param |
-      node1.asExpr() = call.getAnArgument() and
-      node2.asParameter() = param and
-      arg = call.getAnArgument() and
-      param = arg.getParameter()
+    exists(Call call |
+      call.getMethod().getName() = "escape" and
+      call.getReceiver().getType().hasQualifiedName("shlex") and
+      sanitizer.asExpr() = call
     )
   }
 }
 
-from DangerousAsyncioExecConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
-where cfg.hasFlowPath(source, sink)
-select sink, source, sink,
-  "Detected subprocess function '$LOOP.subprocess_exec' without a static string. " +
-  "Audit the use of this call to ensure it is not controllable by an external resource. " +
-  "You may consider using 'shlex.escape()'."
+from DangerousAsyncioExec config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Detected potentially unsafe subprocess call with dynamic command. Audit the use of this call to" +
+  " ensure it is not controllable by an external resource. Consider using shlex.escape()."
 ================================================================================
-Timestamp: 2025-10-28 18:05:04
+Timestamp: 2025-10-28 21:28:28
 Attempt: 3
 IR Content:
 ```yaml
@@ -400,25 +307,27 @@ rule:
   id: dangerous-asyncio-exec-audit
   kind: taint
   severity: ERROR
-  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection."
+  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh] }
 
 sources:
-  - id: UNTRUSTED_INPUT
-    match:
-      node: PARAM | RETURN | FIELD
-      type: { name: "str", match: exact }
-  
-sinks:
-  - id: DANGEROUS_EXEC
+  - id: DYNAMIC_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
-      arg_index: [1, 2]
-  - id: SHELL_EXEC
+      where:
+        - op: neq
+          left: arg[1].value
+          right: "..."
+        - op: neq
+          left: arg[1].value
+          right: ["...", ...]
+
+sinks:
+  - id: SHELL_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
@@ -426,86 +335,72 @@ sinks:
         - op: regex
           left: arg[1].value
           right: "/(sh|bash|ksh|csh|tcsh|zsh)/"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
 
 sanitizers:
-  - id: STATIC_STRING
-    match:
-      node: LITERAL
-      where:
-        - op: eq
-          left: is_static
-          right: true
+  - id: SHLEX_ESCAPE
+    match: { node: CALL, api: { type: shlex, method: escape } }
     effect: neutralize
-
-barriers:
-  - id: SHELL_ESCAPE
-    match:
-      node: CALL
-      api: { type: shlex, method: escape }
-    effect: neutralize
-
-propagations:
-  - id: ARG_TO_ARG
-    edge: arg->param
-    kind: taint
 
 flows:
-  - source: UNTRUSTED_INPUT
-    sink: DANGEROUS_EXEC
-    through: [ARG_TO_ARG*]
+  - source: DYNAMIC_COMMAND
+    sink: SHELL_COMMAND
     constraints:
       path:
-        must_not: [ { pattern: "LITERAL(is_static=true)" } ]
-  - source: UNTRUSTED_INPUT
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "CALL(shlex.escape)" } ]
 
 report:
-  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
-  locations: ["source", "sink", "path"]
-  metadata:
-    owasp:
-      - "A01:2017 - Injection"
-      - "A03:2021 - Injection"
-    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
-    references:
-      - "https://docs.python.org/3/library/shlex.html"
+  message: "Detected potentially unsafe subprocess call with dynamic command"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 1 }] }
+
+metadata:
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"]
+  references:
+    - "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec"
+    - "https://docs.python.org/3/library/shlex.html"
+    - "https://semgrep.dev/docs/cheat-sheets/python-command-injection/"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:15,8-27)
-ERROR: asParameter() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:22,14-25)
-ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:23,9-16)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:24,44-50)
-ERROR: could not resolve type FunctionReturn (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:27,12-26)
-ERROR: asDef() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:28,14-19)
-ERROR: could not resolve type Field (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:32,12-17)
-ERROR: asField() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:33,14-21)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:39,12-18)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:39,22-40)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:42,19-25)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:44,36-42)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:45,36-42)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:54,42-48)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:56,12-22)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:59,17-23)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:64,12-30)
-ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:64,37-45)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:65,13-19)
-ERROR: asParameter() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:66,13-24)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:73,38-56)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:73,65-83)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:38,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:53,22-33)
-ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:63,3-70,4)
-WARNING: unused variable 'shell' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff154caa/python-security-queries/queries/test-rule/TestRule.ql:46,30-35)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:18,8-16)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:23,31-39)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:24,12-20)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:34,29-37)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:35,12-20)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:41,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:42,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:43,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:44,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:45,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:46,15-23)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:49,14-22)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:51,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:55,34-42)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:56,12-20)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:59,17-23)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:64,35-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:64,35-53)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:64,62-70)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:64,62-80)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:34,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:16,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1670f714/python-security-queries/queries/test-rule/TestRule.ql:17,1-43)
 Rule Content:
 /**
- * @name Dangerous Asyncio Exec Audit
- * @description Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection.
+ * @name Dangerous asyncio subprocess_exec without static string
+ * @description Detected subprocess function without a static string. If this data can be controlled by
+ *              a malicious actor, it may be an instance of command injection. Audit the use of this call
+ *              to ensure it is not controllable by an external resource.
  * @kind path-problem
  * @problem.severity error
- * @id python/dangerous-asyncio-exec-audit
+ * @id pyr/dangerous-asyncio-exec-audit
  * @tags security
  *       external/cwe/cwe-078
  *       external/owasp/a01:2017
@@ -513,73 +408,61 @@ Rule Content:
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
+import semmle.python.security.TaintTracking
+import semmle.python.dataflow.new.DataFlow
 import DataFlow::PathGraph
 
-class DangerousAsyncioExecConfig extends TaintTracking::Configuration {
-  DangerousAsyncioExecConfig() { this = "DangerousAsyncioExecConfig" }
+class DangerousAsyncioExec extends TaintTracking::Configuration {
+  DangerousAsyncioExec() { this = "Dangerous asyncio subprocess_exec usage" }
 
   override predicate isSource(DataFlow::Node source) {
-    exists(Parameter p | 
-      source.asParameter() = p and 
-      p.getType().getName() = "str" and
-      not exists(StringLiteral sl | source.asExpr() = sl)
-    )
-    or
-    exists(FunctionReturn ret |
-      source.asDef() = ret.getReturn() and
-      ret.getType().getName() = "str"
-    )
-    or
-    exists(Field f |
-      source.asField() = f and
-      f.getType().getName() = "str"
+    exists(CallExpr call, Expr arg |
+      call.getCallee().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg = call.getArgument(1) and
+      not exists(StringLiteral s | s = arg) and
+      not exists(List l | l = arg) and
+      source.asExpr() = arg
     )
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    exists(Method m, DataFlow::CallNode call |
-      m.hasName("subprocess_exec") and
-      m.getDeclaringType().hasQualifiedName("asyncio.loop") and
-      call = sink.asExpr() and
-      (
-        call.getArgument(1) = sink.asExpr() or
-        call.getArgument(2) = sink.asExpr() or
-        exists(StringLiteral shell |
-          call.getArgument(1).getValue().regexpMatch("/(sh|bash|ksh|csh|tcsh|zsh)/")
-        )
-      )
+    exists(CallExpr call, Expr arg1, Expr arg2 |
+      call.getCallee().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg1 = call.getArgument(1) and
+      arg2 = call.getArgument(2) and
+      exists(StringLiteral shell | shell = arg1 |
+        shell.getValue().matches("%sh%") or
+        shell.getValue().matches("%bash%") or
+        shell.getValue().matches("%ksh%") or  
+        shell.getValue().matches("%csh%") or
+        shell.getValue().matches("%tcsh%") or
+        shell.getValue().matches("%zsh%")
+      ) and
+      exists(StringLiteral flag | flag = arg2 |
+        flag.getValue() = "-c"
+      ) and
+      sink.asExpr() = call
     )
   }
 
   override predicate isSanitizer(DataFlow::Node sanitizer) {
-    exists(StringLiteral lit | sanitizer.asExpr() = lit)
-    or
-    exists(MethodCall mc |
-      mc.getMethod().hasName("escape") and
-      mc.getQualifier().getType().hasQualifiedName("shlex") and
-      sanitizer.asExpr() = mc.getAnArgument()
-    )
-  }
-
-  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
-    exists(DataFlow::CallNode call, Argument arg, Parameter param |
-      node1.asExpr() = call.getAnArgument() and
-      node2.asParameter() = param and
-      arg = call.getAnArgument() and
-      param = arg.getParameter()
+    exists(CallExpr call |
+      call.getCallee().getName() = "escape" and
+      call.getReceiver().getType().hasQualifiedName("shlex") and
+      sanitizer.asExpr() = call
     )
   }
 }
 
-from DangerousAsyncioExecConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
-where cfg.hasFlowPath(source, sink)
-select sink, source, sink,
-  "Detected subprocess function '$LOOP.subprocess_exec' without a static string. " +
-  "Audit the use of this call to ensure it is not controllable by an external resource. " +
-  "You may consider using 'shlex.escape()'."
+from DangerousAsyncioExec config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected potentially unsafe subprocess call with dynamic command. " +
+  "Audit the use of this call to ensure it is not controllable by an external " +
+  "resource. Consider using shlex.escape()."
 ================================================================================
-Timestamp: 2025-10-28 18:07:21
+Timestamp: 2025-10-28 21:30:37
 Attempt: 4
 IR Content:
 ```yaml
@@ -588,25 +471,27 @@ rule:
   id: dangerous-asyncio-exec-audit
   kind: taint
   severity: ERROR
-  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection."
+  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh] }
 
 sources:
-  - id: UNTRUSTED_INPUT
-    match:
-      node: PARAM | RETURN | FIELD
-      type: { name: "str", match: exact }
-  
-sinks:
-  - id: DANGEROUS_EXEC
+  - id: DYNAMIC_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
-      arg_index: [1, 2]
-  - id: SHELL_EXEC
+      where:
+        - op: neq
+          left: arg[1].value
+          right: "..."
+        - op: neq
+          left: arg[1].value
+          right: ["...", ...]
+
+sinks:
+  - id: SHELL_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
@@ -614,99 +499,73 @@ sinks:
         - op: regex
           left: arg[1].value
           right: "/(sh|bash|ksh|csh|tcsh|zsh)/"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
 
 sanitizers:
-  - id: STATIC_STRING
-    match:
-      node: LITERAL
-      where:
-        - op: eq
-          left: is_static
-          right: true
+  - id: SHLEX_ESCAPE
+    match: { node: CALL, api: { type: shlex, method: escape } }
     effect: neutralize
-
-barriers:
-  - id: SHELL_ESCAPE
-    match:
-      node: CALL
-      api: { type: shlex, method: escape }
-    effect: neutralize
-
-propagations:
-  - id: ARG_TO_ARG
-    edge: arg->param
-    kind: taint
 
 flows:
-  - source: UNTRUSTED_INPUT
-    sink: DANGEROUS_EXEC
-    through: [ARG_TO_ARG*]
+  - source: DYNAMIC_COMMAND
+    sink: SHELL_COMMAND
     constraints:
       path:
-        must_not: [ { pattern: "LITERAL(is_static=true)" } ]
-  - source: UNTRUSTED_INPUT
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "CALL(shlex.escape)" } ]
 
 report:
-  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
-  locations: ["source", "sink", "path"]
-  metadata:
-    owasp:
-      - "A01:2017 - Injection"
-      - "A03:2021 - Injection"
-    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
-    references:
-      - "https://docs.python.org/3/library/shlex.html"
+  message: "Detected potentially unsafe subprocess call with dynamic command"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 1 }] }
+
+metadata:
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"]
+  references:
+    - "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec"
+    - "https://docs.python.org/3/library/shlex.html"
+    - "https://semgrep.dev/docs/cheat-sheets/python-command-injection/"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:21,31-39)
-ERROR: asParameter() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:23,14-25)
-ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:24,9-16)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:25,44-50)
-ERROR: could not resolve type FunctionReturn (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:28,12-26)
-ERROR: asDef() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:29,14-19)
-ERROR: could not resolve type Field (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:33,12-17)
-ERROR: asField() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:34,14-21)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:39,29-37)
-ERROR: getMethod() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:41,12-21)
-ERROR: getMethod() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:42,12-21)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:44,14-20)
-ERROR: getArgument(int) cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:44,30-41)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:45,14-20)
-ERROR: getArgument(int) cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:45,30-41)
-ERROR: getArgument(int) cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:47,16-27)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:53,34-42)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:54,42-48)
-ERROR: getMethod() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:57,10-19)
-ERROR: getQualifier() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:58,10-22)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:59,17-23)
-ERROR: getAnArgument() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:59,31-44)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:63,44-52)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:63,66-74)
-ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:64,32-40)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:65,13-19)
-ERROR: getAnArgument() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:65,29-42)
-ERROR: asParameter() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:66,13-24)
-ERROR: getAnArgument() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:67,18-31)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:73,38-46)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:73,38-56)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:73,65-73)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:73,65-83)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:21,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:39,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:53,22-33)
-ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:63,3-70,4)
-WARNING: unused variable 'shell' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:46,30-35)
-ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:14,1-44)
-ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9cbbb0f/python-security-queries/queries/test-rule/TestRule.ql:16,1-31)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:16,8-35)
+ERROR: could not resolve module semmle.python.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:17,8-30)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:18,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:20,36-49)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:23,31-44)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:25,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:26,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:27,18-29)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:34,29-42)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:36,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:37,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:38,19-30)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:39,19-30)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:41,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:42,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:43,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:44,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:45,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:46,15-31)
+ERROR: getLiteralString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:49,14-30)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:55,34-47)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:57,12-21)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:58,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:64,35-43)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:64,62-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:34,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_734b8906/python-security-queries/queries/test-rule/TestRule.ql:55,22-33)
 Rule Content:
 /**
- * @name Dangerous Asyncio Exec Audit
- * @description Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection.
+ * @name Dangerous asyncio subprocess_exec without static string
+ * @description Detected subprocess function without a static string. If this data can be controlled by
+ *              a malicious actor, it may be an instance of command injection. Audit the use of this call
+ *              to ensure it is not controllable by an external resource.
  * @kind path-problem
  * @problem.severity error
- * @id python/dangerous-asyncio-exec-audit
+ * @id pyr/dangerous-asyncio-exec-audit
  * @tags security
  *       external/cwe/cwe-078
  *       external/owasp/a01:2017
@@ -714,73 +573,61 @@ Rule Content:
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
-import semmle.python.ApiGraphs
+import semmle.python.TaintTracking
+import semmle.python.DataFlow
+import DataFlow::PathGraph
 
-class DangerousAsyncioExecConfig extends TaintTracking::Configuration {
-  DangerousAsyncioExecConfig() { this = "DangerousAsyncioExecConfig" }
+class DangerousAsyncioExec extends TaintTracking::Configuration {
+  DangerousAsyncioExec() { this = "Dangerous asyncio subprocess_exec usage" }
 
-  override predicate isSource(DataFlow::Node source) {
-    exists(Parameter p | 
-      source.asParameter() = p and 
-      p.getType().getName() = "str" and
-      not exists(StringLiteral sl | source.asExpr() = sl)
-    )
-    or
-    exists(FunctionReturn ret |
-      source.asDef() = ret.getReturn() and
-      ret.getType().getName() = "str"
-    )
-    or
-    exists(Field f |
-      source.asField() = f and
-      f.getType().getName() = "str"
+  override predicate isSource(TaintTracking::Source source) {
+    exists(Call call, Expr arg |
+      call.getCallee().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg = call.getArgument(1) and
+      not exists(StringLiteral s | s = arg) and
+      not exists(List l | l = arg) and
+      source.asSource() = arg
     )
   }
 
-  override predicate isSink(DataFlow::Node sink) {
-    exists(API::CallNode call |
-      call.getMethod().hasName("subprocess_exec") and
-      call.getMethod().getDeclaringType().hasQualifiedName("asyncio.loop") and
-      (
-        sink.asExpr() = call.getArgument(1) or
-        sink.asExpr() = call.getArgument(2) or
-        exists(StringLiteral shell |
-          call.getArgument(1).getValue().regexpMatch("/(sh|bash|ksh|csh|tcsh|zsh)/")
-        )
-      )
+  override predicate isSink(TaintTracking::Sink sink) {
+    exists(Call call, Expr arg1, Expr arg2 |
+      call.getCallee().getName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg1 = call.getArgument(1) and
+      arg2 = call.getArgument(2) and
+      exists(StringLiteral shell | shell = arg1 |
+        shell.getLiteralString().matches("%sh%") or
+        shell.getLiteralString().matches("%bash%") or
+        shell.getLiteralString().matches("%ksh%") or
+        shell.getLiteralString().matches("%csh%") or
+        shell.getLiteralString().matches("%tcsh%") or
+        shell.getLiteralString().matches("%zsh%")
+      ) and
+      exists(StringLiteral flag | flag = arg2 |
+        flag.getLiteralString() = "-c"
+      ) and
+      sink.asSink() = call
     )
   }
 
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    exists(StringLiteral lit | sanitizer.asExpr() = lit)
-    or
-    exists(API::CallNode mc |
-      mc.getMethod().hasName("escape") and
-      mc.getQualifier().getType().hasQualifiedName("shlex") and
-      sanitizer.asExpr() = mc.getAnArgument()
-    )
-  }
-
-  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
-    exists(API::CallNode call, Argument arg, Parameter param |
-      node1.asExpr() = call.getAnArgument() and
-      node2.asParameter() = param and
-      arg = call.getAnArgument() and
-      param = arg.getParameter()
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    exists(Call call |
+      call.getCallee().getName() = "escape" and
+      call.getReceiver().getType().hasQualifiedName("shlex") and
+      sanitizer.asSanitizer() = call
     )
   }
 }
 
-from DangerousAsyncioExecConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
-where cfg.hasFlowPath(source, sink)
-select sink, source, sink,
-  "Detected subprocess function '$LOOP.subprocess_exec' without a static string. " +
-  "Audit the use of this call to ensure it is not controllable by an external resource. " +
-  "You may consider using 'shlex.escape()'."
+from DangerousAsyncioExec config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected potentially unsafe subprocess call with dynamic command. " +
+  "Audit the use of this call to ensure it is not controllable by an external " +
+  "resource. Consider using shlex.escape()."
 ================================================================================
-Timestamp: 2025-10-28 18:09:30
+Timestamp: 2025-10-28 21:33:14
 Attempt: 5
 IR Content:
 ```yaml
@@ -789,25 +636,27 @@ rule:
   id: dangerous-asyncio-exec-audit
   kind: taint
   severity: ERROR
-  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection."
+  message: "Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
 scope:
   languages: [python]
   frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh, powershell] }
+  env: { os: [linux, windows], shell: [bash, sh, ksh, csh, tcsh, zsh] }
 
 sources:
-  - id: UNTRUSTED_INPUT
-    match:
-      node: PARAM | RETURN | FIELD
-      type: { name: "str", match: exact }
-  
-sinks:
-  - id: DANGEROUS_EXEC
+  - id: DYNAMIC_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
-      arg_index: [1, 2]
-  - id: SHELL_EXEC
+      where:
+        - op: neq
+          left: arg[1].value
+          right: "..."
+        - op: neq
+          left: arg[1].value
+          right: ["...", ...]
+
+sinks:
+  - id: SHELL_COMMAND
     match:
       node: CALL
       api: { type: asyncio.loop, method: subprocess_exec }
@@ -815,77 +664,68 @@ sinks:
         - op: regex
           left: arg[1].value
           right: "/(sh|bash|ksh|csh|tcsh|zsh)/"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
 
 sanitizers:
-  - id: STATIC_STRING
-    match:
-      node: LITERAL
-      where:
-        - op: eq
-          left: is_static
-          right: true
+  - id: SHLEX_ESCAPE
+    match: { node: CALL, api: { type: shlex, method: escape } }
     effect: neutralize
-
-barriers:
-  - id: SHELL_ESCAPE
-    match:
-      node: CALL
-      api: { type: shlex, method: escape }
-    effect: neutralize
-
-propagations:
-  - id: ARG_TO_ARG
-    edge: arg->param
-    kind: taint
 
 flows:
-  - source: UNTRUSTED_INPUT
-    sink: DANGEROUS_EXEC
-    through: [ARG_TO_ARG*]
+  - source: DYNAMIC_COMMAND
+    sink: SHELL_COMMAND
     constraints:
       path:
-        must_not: [ { pattern: "LITERAL(is_static=true)" } ]
-  - source: UNTRUSTED_INPUT
-    sink: SHELL_EXEC
-    through: [ARG_TO_ARG*]
+        must_not: [ { pattern: "CALL(shlex.escape)" } ]
 
 report:
-  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
-  locations: ["source", "sink", "path"]
-  metadata:
-    owasp:
-      - "A01:2017 - Injection"
-      - "A03:2021 - Injection"
-    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
-    references:
-      - "https://docs.python.org/3/library/shlex.html"
+  message: "Detected potentially unsafe subprocess call with dynamic command"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 1 }] }
+
+metadata:
+  owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+  cwe: ["CWE-78: Improper Neutralization of Special Elements used in an OS Command"]
+  references:
+    - "https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec"
+    - "https://docs.python.org/3/library/shlex.html"
+    - "https://semgrep.dev/docs/cheat-sheets/python-command-injection/"
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: asParameter() cannot be resolved for type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:22,14-25)
-ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:23,9-16)
-ERROR: asExpr() cannot be resolved for type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:24,44-50)
-ERROR: could not resolve type ReturnStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:27,24-34)
-ERROR: asReturn(<unknown>) cannot be resolved for type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:28,14-22)
-ERROR: getType() cannot be resolved for type Function::Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:30,9-16)
-ERROR: could not resolve type Field (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:33,12-17)
-ERROR: asField(<unknown>) cannot be resolved for type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:34,14-21)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:40,12-22)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:40,29-35)
-ERROR: asExpr() cannot be resolved for type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:45,14-20)
-ERROR: asExpr() cannot be resolved for type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:46,14-20)
-ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:54,34-58)
-ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:57,12-22)
-ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:57,27-33)
-ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:66,38-61)
-ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:66,70-93)
-WARNING: unused variable 'shell' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41248432/python-security-queries/queries/test-rule/TestRule.ql:47,30-35)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:18,8-16)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:23,31-39)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:25,12-25)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:26,12-23)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:27,18-29)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:34,29-37)
+ERROR: could not resolve type CCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:35,12-17)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:51,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:55,34-42)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:57,12-25)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:58,12-23)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:59,17-23)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:64,35-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:64,35-53)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:64,62-70)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:64,62-80)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:34,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:16,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b19a315a/python-security-queries/queries/test-rule/TestRule.ql:17,1-43)
 Rule Content:
 /**
- * @name Dangerous Asyncio Exec Audit
- * @description Detected subprocess function without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection.
+ * @name Dangerous asyncio subprocess_exec without static string
+ * @description Detected subprocess function without a static string. If this data can be controlled by
+ *              a malicious actor, it may be an instance of command injection. Audit the use of this call
+ *              to ensure it is not controllable by an external resource.
  * @kind path-problem
  * @problem.severity error
- * @id python/dangerous-asyncio-exec-audit
+ * @id pyr/dangerous-asyncio-exec-audite
  * @tags security
  *       external/cwe/cwe-078
  *       external/owasp/a01:2017
@@ -893,62 +733,57 @@ Rule Content:
  */
 
 import python
-import semmle.python.dataflow.TaintTracking
-import semmle.python.Concepts
+import semmle.python.security.TaintTracking
+import semmle.python.dataflow.new.DataFlow
+import DataFlow::PathGraph
 
-class DangerousAsyncioExecConfig extends TaintTracking::Configuration {
-  DangerousAsyncioExecConfig() { this = "DangerousAsyncioExecConfig" }
+class DangerousAsyncioExec extends TaintTracking::Configuration {
+  DangerousAsyncioExec() { this = "Dangerous asyncio subprocess_exec usage" }
 
-  override predicate isSource(TaintTracking::Source source) {
-    exists(Parameter p |
-      source.asParameter() = p and
-      p.getType().getName() = "str" and
-      not exists(StringLiteral sl | source.asExpr() = sl)
-    )
-    or
-    exists(Function f, ReturnStmt ret |
-      source.asReturn(ret) and
-      ret.getEnclosingFunction() = f and
-      f.getType().getName() = "str"
-    )
-    or
-    exists(Field f |
-      source.asField(f) and
-      f.getType().getName() = "str"
+  override predicate isSource(DataFlow::Node source) {
+    exists(Call call, Expr arg |
+      call.getCalleeName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg = call.getArgument(1) and
+      not arg instanceof StringLiteral and
+      not arg instanceof List and
+      source.asExpr() = arg
     )
   }
 
-  override predicate isSink(TaintTracking::Sink sink) {
-    exists(MethodCall call, Method m |
-      call.getMethod() = m and
-      m.hasName("subprocess_exec") and
-      m.getDeclaringType().hasQualifiedName("asyncio.loop") and
+  override predicate isSink(DataFlow::Node sink) {
+    exists(CCall call, Expr arg1, Expr arg2 |
+      call.getCalleeName() = "subprocess_exec" and
+      call.getReceiver().getType().hasQualifiedName("asyncio.loop") and
+      arg1 = call.getArgument(1) and
+      arg2 = call.getArgument(2) and
+      arg1 instanceof StringLiteral and
       (
-        sink.asExpr() = call.getArgument(1) or
-        sink.asExpr() = call.getArgument(2) or
-        exists(StringLiteral shell |
-          call.getArgument(1).getValue().regexpMatch("/(sh|bash|ksh|csh|tcsh|zsh)/")
-        )
-      )
+        arg1.toString().matches(".*sh.*") or
+        arg1.toString().matches(".*bash.*") or
+        arg1.toString().matches(".*ksh.*") or
+        arg1.toString().matches(".*csh.*") or
+        arg1.toString().matches(".*tcsh.*") or
+        arg1.toString().matches(".*zsh.*")
+      ) and
+      arg2 instanceof StringLiteral and
+      arg2.toString() = "-c" and
+      sink.asExpr() = call
     )
   }
 
-  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
-    exists(StringLiteral lit | sanitizer.asExpr() = lit)
-    or
-    exists(MethodCall mc, Method m |
-      mc.getMethod() = m and
-      m.hasName("escape") and
-      m.getDeclaringType().hasQualifiedName("shlex") and
-      sanitizer.asExpr() = mc.getAnArgument()
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Call call |
+      call.getCalleeName() = "escape" and
+      call.getReceiver().getType().hasQualifiedName("shlex") and
+      sanitizer.asExpr() = call
     )
   }
 }
 
-from DangerousAsyncioExecConfig cfg, TaintTracking::PathNode source, TaintTracking::PathNode sink
-where cfg.hasFlowPath(source, sink)
-select sink, source, sink,
-  "Detected subprocess function '$LOOP.subprocess_exec' without a static string. " +
-  "Audit the use of this call to ensure it is not controllable by an external resource. " +
-  "You may consider using 'shlex.escape()'."
+from DangerousAsyncioExec config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected potentially unsafe subprocess call with dynamic command. " +
+  "Audit the use of this call to ensure it is not controllable by an external " +
+  "resource. Consider using shlex.escape()."
 ================================================================================

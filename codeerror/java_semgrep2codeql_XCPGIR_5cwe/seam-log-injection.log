@@ -1,0 +1,656 @@
+Timestamp: 2025-10-28 21:24:05
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL | IDENTIFIER
+      where:
+        - op: neq
+          left: "@const"
+          right: true
+
+sinks:
+  - id: SEAM_LOG
+    match:
+      node: CALL
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->recv
+    kind: taint
+    when:
+      - op: eq
+        left: "@operator"
+        right: "+"
+
+flows:
+  - source: USER_INPUT
+    sink: SEAM_LOG
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential EL injection in Seam logging"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+
+metadata:
+  cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+  owasp: "A03:2021 - Injection"
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    - https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'PLUS' expecting one of: 'super' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:40,41-45)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:45,1-2)
+ERROR: could not resolve module semmle.code.java.frameworks.seam.Seam (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:16,8-45)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:18,38-66)
+ERROR: isConstant() cannot be resolved for type Expr::Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:22,54-64)
+ERROR: could not resolve type Identifier (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:23,12-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:40,10-21)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:38,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:38,81-86)
+WARNING: unused class 'SeamLogInjectionConfig' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:18,7-29)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:21,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:26,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e74ff4d2/java-security-queries/queries/test-rule/TestRule.ql:38,22-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects potential Expression Language injection in Seam logging APIs where
+ *              user input flows into log messages without proper sanitization.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.seam.Seam
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Literal l | source.asExpr() = l and not l.isConstant()) or
+    exists(Identifier i | source.asExpr() = i)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "debug") or
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "error") or
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "fatal") or
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "info") or
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "trace") or
+      ma.getMethod().hasQualifiedName("org.jboss.seam.log", "Log", "warn") |
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryExpr be |
+      be.getOperator() = BinaryOperator.PLUS and
+      (be.getLeftOperand() = node1.asExpr() and node2.asExpr() = be) or
+      (be.getRightOperand() = node1.asExpr() and node2.asExpr() = be)
+    )
+  }
+}
+
+from SeamLogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  source, sink, "Potential EL injection in Seam logging via unverified user input. [CWE-95, OWASP A03]"
+================================================================================
+Timestamp: 2025-10-28 21:28:13
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL | IDENTIFIER
+      where:
+        - op: neq
+          left: "@const"
+          right: true
+
+sinks:
+  - id: SEAM_LOG
+    match:
+      node: CALL
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->recv
+    kind: taint
+    when:
+      - op: eq
+        left: "@operator"
+        right: "+"
+
+flows:
+  - source: USER_INPUT
+    sink: SEAM_LOG
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential EL injection in Seam logging"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+
+metadata:
+  cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+  owasp: "A03:2021 - Injection"
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    - https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:18,38-66)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:25,21-35)
+ERROR: getSource() cannot be resolved for type FlowSources::RemoteFlowSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:27,63-72)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:34,25-33)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:40,10-21)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:47,37-55)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:47,64-82)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:21,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:30,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_56356405/java-security-queries/queries/test-rule/TestRule.ql:38,22-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects potential Expression Language injection in Seam logging APIs where
+ *              user input flows into log messages without proper sanitization.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e | 
+      e = source.asExpr() and
+      (e instanceof Literal and not e.isCompileTimeConstant() or
+       e instanceof VariableAccess)
+    ) or
+    exists(RemoteFlowSource remote | source.asExpr() = remote.getSource())
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      m.getName().matches("debug|error|fatal|info|trace|warn") and
+      sink.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryExpr be |
+      be.getOperator().toString() = "+" and
+      (node1.asExpr() = be.getLeftOperand() and node2.asExpr() = be) or
+      (node1.asExpr() = be.getRightOperand() and node2.asExpr() = be)
+    )
+  }
+}
+
+from SeamLogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  source, sink, "Potential EL injection in Seam logging via unverified user input. [CWE-95, OWASP A03]"
+================================================================================
+Timestamp: 2025-10-28 21:31:36
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL | IDENTIFIER
+      where:
+        - op: neq
+          left: "@const"
+          right: true
+
+sinks:
+  - id: SEAM_LOG
+    match:
+      node: CALL
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->recv
+    kind: taint
+    when:
+      - op: eq
+        left: "@operator"
+        right: "+"
+
+flows:
+  - source: USER_INPUT
+    sink: SEAM_LOG
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential EL injection in Seam logging"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+
+metadata:
+  cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+  owasp: "A03:2021 - Injection"
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    - https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'PLUS' expecting one of: 'super' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:39,40-44)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:44,1-2)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:18,38-66)
+ERROR: getOpKind() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:39,11-20)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:37,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:37,81-86)
+WARNING: unused class 'SeamLogInjectionConfig' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:18,7-29)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:21,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:29,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_776cb71d/java-security-queries/queries/test-rule/TestRule.ql:37,22-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects potential Expression Language injection in Seam logging APIs where
+ *              user input flows into log messages without proper sanitization.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e |
+      e = source.asExpr() and
+      (e instanceof Literal and not e.isCompileTimeConstant() or
+       e instanceof VarAccess)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Method m |
+      m.getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      m.getName().matches("debug|error|fatal|info|trace|warn") and
+      sink.asExpr() = m.getAReference().getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryExpr be |
+      (be.getOpKind() = BinaryOperator.PLUS or be.getOpKind() = BinaryOperator.PLUS_ASSIGN) and
+      (node1.asExpr() = be.getLeftOperand() and node2.asExpr() = be) or
+      (node1.asExpr() = be.getRightOperand() and node2.asExpr() = be)
+    )
+  }
+}
+
+from SeamLogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  source, sink, "Potential EL injection in Seam logging via unverified user input. [CWE-95, OWASP A03]"
+================================================================================
+Timestamp: 2025-10-28 21:34:20
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL | IDENTIFIER
+      where:
+        - op: neq
+          left: "@const"
+          right: true
+
+sinks:
+  - id: SEAM_LOG
+    match:
+      node: CALL
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->recv
+    kind: taint
+    when:
+      - op: eq
+        left: "@operator"
+        right: "+"
+
+flows:
+  - source: USER_INPUT
+    sink: SEAM_LOG
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential EL injection in Seam logging"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+
+metadata:
+  cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+  owasp: "A03:2021 - Injection"
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    - https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:18,38-61)
+ERROR: getLiteral() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:24,39-49)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:25,21-35)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:39,10-21)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:46,37-55)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:46,64-82)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:21,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:29,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_00adfe46/java-security-queries/queries/test-rule/TestRule.ql:37,22-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects potential Expression Language injection in Seam logging APIs where
+ *              user input flows into log messages without proper sanitization.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class SeamLogInjectionConfig extends DataFlow::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e | 
+      e = source.asExpr() and
+      (e instanceof Literal and not e.getLiteral().isCompileTimeConstant() or
+       e instanceof VariableAccess)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      mc.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      mc.getMethod().getName().matches("debug|error|fatal|info|trace|warn") and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryExpr be |
+      be.getOperator().toString() = "+" and
+      (node1.asExpr() = be.getLeftOperand() and node2.asExpr() = be) or
+      (node1.asExpr() = be.getRightOperand() and node2.asExpr() = be)
+    )
+  }
+}
+
+from SeamLogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potential EL injection in Seam logging via unverified user input. [CWE-95, OWASP A03]",
+  source.getNode(), "Source",
+  sink.getNode(), "Sink"
+================================================================================
+Timestamp: 2025-10-28 21:37:30
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+scope:
+  languages: [java]
+  frameworks: [jboss]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL | IDENTIFIER
+      where:
+        - op: neq
+          left: "@const"
+          right: true
+
+sinks:
+  - id: SEAM_LOG
+    match:
+      node: CALL
+      api:
+        package: org.jboss.seam.log
+        type: Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->recv
+    kind: taint
+    when:
+      - op: eq
+        left: "@operator"
+        right: "+"
+
+flows:
+  - source: USER_INPUT
+    sink: SEAM_LOG
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential EL injection in Seam logging"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - argument: 0
+
+metadata:
+  cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+  owasp: "A03:2021 - Injection"
+  references:
+    - https://owasp.org/Top10/A03_2021-Injection
+    - https://find-sec-bugs.github.io/bugs.htm#SEAM_LOG_INJECTION
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:17,8-53)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:19,38-66)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:26,21-35)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:40,10-21)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:47,37-55)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:47,64-82)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:22,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:30,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_842c0fbc/java-security-queries/queries/test-rule/TestRule.ql:38,22-43)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects potential Expression Language injection in Seam logging APIs where
+ *              user input flows into log messages without proper sanitization.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/seam-log-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow::PathGraph
+
+class SeamLogInjectionConfig extends TaintTracking::Configuration {
+  SeamLogInjectionConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Expr e |
+      e = source.asExpr() and
+      (e instanceof Literal and not e.isCompileTimeConstant() or
+       e instanceof VariableAccess)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      mc.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      mc.getMethod().getName().matches("debug|error|fatal|info|trace|warn") and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(BinaryExpr be |
+      be.getOperator() = "+" and
+      (node1.asExpr() = be.getLeftOperand() and node2.asExpr() = be) or
+      (node1.asExpr() = be.getRightOperand() and node2.asExpr() = be)
+    )
+  }
+}
+
+from SeamLogInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potential EL injection in Seam logging via unverified user input. [CWE-95, OWASP A03]",
+  source.getNode(), "Source",
+  sink.getNode(), "Sink"
+================================================================================

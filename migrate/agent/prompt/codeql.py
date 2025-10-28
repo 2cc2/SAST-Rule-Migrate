@@ -144,7 +144,7 @@ class AbstractPrompt(PromptTemplate):
             <output>
             请查找{sast}工具相关语法，进行修改正，给出修复的步骤用于COT指导大模型修复。格式如下：
             “”“
-            为解决以下错误：{error}，请按照以下步骤进行修复：
+            请按照以下步骤进行修复：
             1.xxx
             2.xxx
             ”“”

@@ -1,0 +1,709 @@
+Timestamp: 2025-10-28 21:55:07
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotations
+          right: "@(PathVariable|RequestParam|RequestHeader|CookieValue)"
+        - op: not_regex
+          left: evalType.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: SQL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: code
+              op: contains
+              right: '+"'
+            - left: name
+              op: eq
+              right: "concat"
+            - left: code
+              op: regex
+              right: "(StringBuilder|String\\w*\\s*\\+=)"
+            - left: name
+              op: eq
+              right: "format"
+        - op: not_regex
+          left: parent.code
+          right: "(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)"
+        - op: regex
+          left: receiver.code
+          right: "(?i)(select|delete|insert|create|update|alter|drop)"
+sanitizers: []
+barriers: []
+propagations:
+  - id: DEFAULT_PROPAGATION
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SQL_CONSTRUCTION
+    through: [DEFAULT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: []
+report:
+  message: "User data flows into manually-constructed SQL string. Use prepared statements instead."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:16,31-52)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:18,12-27)
+ERROR: could not resolve type TaintTracking::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:29,41-60)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:31,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:50,51-79)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:66,50-68)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:66,77-95)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:17,3-18)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:30,3-28)
+WARNING: unused method 'isSourceOf' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:24,22-32)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:42,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:57,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69c30f22/java-security-queries/queries/test-rule/TestRule.ql:61,22-33)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name User data flows into manually-constructed SQL string
+ * @description User data flows into this manually-constructed SQL string. 
+ *              User data can be safely inserted into SQL strings using 
+ *              prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends TaintTracking::Source {
+  UserInputSource() {
+    exists(MethodParameter p |
+      p.getAnAnnotation().getType().getName().matches("@(PathVariable|RequestParam|RequestHeader|CookieValue)") and
+      not p.getType().getName().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)")
+    )
+  }
+
+  override predicate isSourceOf(DataFlow::Node source) {
+    source.asParameter() instanceof UserInputSource
+  }
+}
+
+class SqlStringConstructionSink extends TaintTracking::Sink {
+  SqlStringConstructionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getArgument(0).toString().matches(".*\\+\\s*\".*") or
+       ma.getCompileTimeType().getName().matches("StringBuilder") or
+       ma.toString().matches("String\\w*\\s*\\+=.*")) and
+      not ma.getCaller().toString().matches("(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)") and
+      ma.getReceiver().toString().matches("(?i)(select|delete|insert|create|update|alter|drop)")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma = sink.asExpr() and
+      this.hasQualifiedName(ma)
+    )
+  }
+}
+
+class SqlStringInjectionFlowConfiguration extends TaintTracking::Configuration {
+  SqlStringInjectionFlowConfiguration() { this = "SqlStringInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlStringConstructionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    none()
+  }
+}
+
+from SqlStringInjectionFlowConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User data flows into manually-constructed SQL string. Use prepared statements instead.",
+  source, sink,
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:58:20
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotations
+          right: "@(PathVariable|RequestParam|RequestHeader|CookieValue)"
+        - op: not_regex
+          left: evalType.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: SQL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: code
+              op: contains
+              right: '+"'
+            - left: name
+              op: eq
+              right: "concat"
+            - left: code
+              op: regex
+              right: "(StringBuilder|String\\w*\\s*\\+=)"
+            - left: name
+              op: eq
+              right: "format"
+        - op: not_regex
+          left: parent.code
+          right: "(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)"
+        - op: regex
+          left: receiver.code
+          right: "(?i)(select|delete|insert|create|update|alter|drop)"
+sanitizers: []
+barriers: []
+propagations:
+  - id: DEFAULT_PROPAGATION
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SQL_CONSTRUCTION
+    through: [DEFAULT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: []
+report:
+  message: "User data flows into manually-constructed SQL string. Use prepared statements instead."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:16,31-45)
+ERROR: asParameter() cannot be resolved for type UserInputSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:21,12-23)
+ERROR: could not resolve type DataFlow::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:26,41-55)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:28,12-24)
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:41,51-74)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:57,50-68)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:57,77-95)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:44,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:48,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28aa0725/java-security-queries/queries/test-rule/TestRule.ql:52,22-33)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name User data flows into manually-constructed SQL string
+ * @description User data flows into this manually-constructed SQL string. 
+ *              User data can be safely inserted into SQL strings using 
+ *              prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection.
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends DataFlow::Expr {
+  UserInputSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().getName().matches("@(PathVariable|RequestParam|RequestHeader|CookieValue)") and
+      not p.getType().getName().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlStringConstructionSink extends DataFlow::Expr {
+  SqlStringConstructionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getArgument(0).toString().matches(".*\\+\\s*\".*") or
+       ma.getCompileTimeType().getName().matches("StringBuilder") or
+       ma.toString().matches("String\\w*\\s*\\+=.*")) and
+      not ma.getCaller().toString().matches("(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)") and
+      ma.getReceiver().toString().matches("(?i)(select|delete|insert|create|update|alter|drop)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlStringInjectionFlowConfiguration extends DataFlow::Configuration {
+  SqlStringInjectionFlowConfiguration() { this = "SqlStringInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlStringConstructionSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    none()
+  }
+}
+
+from SqlStringInjectionFlowConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, 
+  "User data flows into manually-constructed SQL string. Use prepared statements instead.",
+  source, sink,
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:02:44
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotations
+          right: "@(PathVariable|RequestParam|RequestHeader|CookieValue)"
+        - op: not_regex
+          left: evalType.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: SQL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: code
+              op: contains
+              right: '+"'
+            - left: name
+              op: eq
+              right: "concat"
+            - left: code
+              op: regex
+              right: "(StringBuilder|String\\w*\\s*\\+=)"
+            - left: name
+              op: eq
+              right: "format"
+        - op: not_regex
+          left: parent.code
+          right: "(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)"
+        - op: regex
+          left: receiver.code
+          right: "(?i)(select|delete|insert|create|update|alter|drop)"
+sanitizers: []
+barriers: []
+propagations:
+  - id: DEFAULT_PROPAGATION
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SQL_CONSTRUCTION
+    through: [DEFAULT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: []
+report:
+  message: "User data flows into manually-constructed SQL string. Use prepared statements instead."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:15,8-31)
+ERROR: could not resolve module semmle.code.java.Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:16,8-34)
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:18,31-52)
+ERROR: asParameter() cannot be resolved for type UserInputSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:23,12-23)
+ERROR: could not resolve type TaintTracking::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:28,41-60)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:42,51-79)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:50,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:50,33-51)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:29,3-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f2ff843/java-security-queries/queries/test-rule/TestRule.ql:47,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name User data flows into manually-constructed SQL string
+ * @description User data flows into this manually-constructed SQL string.
+ *              User data can be safely inserted into SQL strings using
+ *              prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.Method
+import semmle.code.java.Parameter
+
+class UserInputSource extends TaintTracking::Source {
+  UserInputSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().getName().matches("@(PathVariable|RequestParam|RequestHeader|CookieValue)") and
+      not p.getType().getName().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlStringConstructionSink extends TaintTracking::Sink {
+  SqlStringConstructionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getArgument(0).toString().matches(".*\\+\\s*\".*") or
+       ma.getCompileTimeType().getName().matches("StringBuilder") or
+       ma.toString().matches("String\\w*\\s*\\+=.*")) and
+      not ma.getCaller().toString().matches("(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)") and
+      ma.getReceiver().toString().matches("(?i)(select|delete|insert|create|update|alter|drop)")
+    )
+  }
+}
+
+class SqlStringInjectionFlowConfiguration extends TaintTracking::Configuration {
+  SqlStringInjectionFlowConfiguration() { this = "SqlStringInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInputSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstructionSink }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SqlStringInjectionFlowConfiguration config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "User data flows into manually-constructed SQL string. Use prepared statements instead.",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:05:35
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotations
+          right: "@(PathVariable|RequestParam|RequestHeader|CookieValue)"
+        - op: not_regex
+          left: evalType.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: SQL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: code
+              op: contains
+              right: '+"'
+            - left: name
+              op: eq
+              right: "concat"
+            - left: code
+              op: regex
+              right: "(StringBuilder|String\\w*\\s*\\+=)"
+            - left: name
+              op: eq
+              right: "format"
+        - op: not_regex
+          left: parent.code
+          right: "(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)"
+        - op: regex
+          left: receiver.code
+          right: "(?i)(select|delete|insert|create|update|alter|drop)"
+sanitizers: []
+barriers: []
+propagations:
+  - id: DEFAULT_PROPAGATION
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SQL_CONSTRUCTION
+    through: [DEFAULT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: []
+report:
+  message: "User data flows into manually-constructed SQL string. Use prepared statements instead."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:42,51-79)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:50,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:50,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ee74ab5/java-security-queries/queries/test-rule/TestRule.ql:47,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name User data flows into manually-constructed SQL string
+ * @description User data flows into this manually-constructed SQL string. 
+ *              User data can be safely inserted into SQL strings using 
+ *              prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection.
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.dataflow.TaintTracking
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().getName().matches("@(PathVariable|RequestParam|RequestHeader|CookieValue)") and
+      not p.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlStringConstructionSink extends DataFlow::Node {
+  SqlStringConstructionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getArgument(0).toString().matches(".*\\+\\s*\".*") or
+       ma.getCompileTimeType().getName().matches("StringBuilder") or
+       ma.toString().matches("String\\w*\\s*\\+=.*")) and
+      not ma.getCaller().toString().matches("(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)") and
+      ma.getReceiver().toString().matches("(?i)(select|delete|insert|create|update|alter|drop)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlStringInjectionFlowConfiguration extends TaintTracking::Configuration {
+  SqlStringInjectionFlowConfiguration() { this = "SqlStringInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInputSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstructionSink }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SqlStringInjectionFlowConfiguration config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "User data flows into manually-constructed SQL string. Use prepared statements instead.",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:08:44
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection."
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: annotations
+          right: "@(PathVariable|RequestParam|RequestHeader|CookieValue)"
+        - op: not_regex
+          left: evalType.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)"
+sinks:
+  - id: SQL_CONSTRUCTION
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: code
+              op: contains
+              right: '+"'
+            - left: name
+              op: eq
+              right: "concat"
+            - left: code
+              op: regex
+              right: "(StringBuilder|String\\w*\\s*\\+=)"
+            - left: name
+              op: eq
+              right: "format"
+        - op: not_regex
+          left: parent.code
+          right: "(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)"
+        - op: regex
+          left: receiver.code
+          right: "(?i)(select|delete|insert|create|update|alter|drop)"
+sanitizers: []
+barriers: []
+propagations:
+  - id: DEFAULT_PROPAGATION
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: SQL_CONSTRUCTION
+    through: [DEFAULT_PROPAGATION*]
+    constraints:
+      path:
+        must_not: []
+report:
+  message: "User data flows into manually-constructed SQL string. Use prepared statements instead."
+  locations: ["source", "sink", "path"]
+  evidence: {}
+tests: {}
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:16,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:43,51-79)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:51,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:51,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b20d5caa/java-security-queries/queries/test-rule/TestRule.ql:48,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name User data flows into manually-constructed SQL string
+ * @description User data flows into this manually-constructed SQL string. 
+ *              User data can be safely inserted into SQL strings using 
+ *              prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection.
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Parameter p |
+      p.getAnAnnotation().getType().getName().matches("@(PathVariable|RequestParam|RequestHeader|CookieValue)") and
+      not p.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlStringConstructionSink extends DataFlow::Node {
+  SqlStringConstructionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "format" or
+       ma.getArgument(0).toString().matches(".*\\+\\s*\".*") or
+       ma.getCompileTimeType().getName().matches("StringBuilder") or
+       ma.toString().matches("String\\w*\\s*\\+=.*")) and
+      not ma.getCaller().toString().matches("(System.out.println|LOG.(info|warn|warning|debug|debugging|error)|new Exception|throw)") and
+      ma.getReceiver().toString().matches("(?i)(select|delete|insert|create|update|alter|drop)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class SqlStringInjectionFlowConfiguration extends TaintTracking::Configuration {
+  SqlStringInjectionFlowConfiguration() { this = "SqlStringInjectionFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInputSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlStringConstructionSink }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SqlStringInjectionFlowConfiguration config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "User data flows into manually-constructed SQL string. Use prepared statements instead.",
+  source.getNode(), sink.getNode(),
+  "Potential SQL injection vulnerability"
+================================================================================

@@ -41,25 +41,70 @@ def write_rule_file(rule_file: str, rule_content: str):
     with open(rule_file, "w", encoding="utf-8") as f:
         f.write(rule_content)
 
-
 def write_sample_code(sample_file: str, language: str = "python"):
     """写入简单样例源码"""
     if language == "python":
         content = "import os\nos.system('ls')\n"
     elif language == "java":
         content = (
+            "package com.example;\n\n"
             "public class Sample {\n"
             "  public static void main(String[] args) {\n"
-            "    Runtime.getRuntime().exec(\"ls\");\n"
+            "    try {\n"
+            "      Runtime.getRuntime().exec(\"ls\");\n"
+            "    } catch (Exception e) {\n"
+            "      e.printStackTrace();\n"
+            "    }\n"
             "  }\n"
             "}\n"
         )
+        # 写入 pom.xml 文件
+        pom_content = """<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>sample</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <properties>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+    </properties>
+</project>
+"""
+        sample_dir = os.path.dirname(sample_file)
+        pom_file = os.path.join(sample_dir, "pom.xml")
+        with open(pom_file, "w", encoding="utf-8") as f:
+            f.write(pom_content)
+        # 创建 src/main/java/com/example 目录结构
+        java_src_dir = os.path.join(sample_dir, "src", "main", "java", "com", "example")
+        ensure_dir(java_src_dir)
+        sample_file = os.path.join(java_src_dir, "Sample.java")
     elif language == "javascript":
         content = "eval('console.log(1)');"
     else:
         content = "// sample\n"
     with open(sample_file, "w", encoding="utf-8") as f:
         f.write(content)
+
+# def write_sample_code(sample_file: str, language: str = "python"):
+#     """写入简单样例源码"""
+#     if language == "python":
+#         content = "import os\nos.system('ls')\n"
+#     elif language == "java":
+#         content = (
+#             "public class Sample {\n"
+#             "  public static void main(String[] args) {\n"
+#             "    Runtime.getRuntime().exec(\"ls\");\n"
+#             "  }\n"
+#             "}\n"
+#         )
+#     elif language == "javascript":
+#         content = "eval('console.log(1)');"
+#     else:
+#         content = "// sample\n"
+#     with open(sample_file, "w", encoding="utf-8") as f:
+#         f.write(content)
 
 
 def run_cmd(cmd, cwd=None, timeout=cmd_timeout):
@@ -201,15 +246,21 @@ where
   name.getId() = "exec"
 select call, "Use of exec function detected"
 '''
-    rules = [sample_rule] * 3
+    rule = '''import java
+
+    from MethodCall mc
+    where mc.getMethod().hasName("exec")
+    select mc, "This method call executes a system command."
+    '''
+    
 
     ensure_dir(base_path)
     print(f"[{datetime.now()}] Starting validation with {max_workers} workers...")
-    result = validate_codeql_rule(sample_rule, base_path, language = "java")
+    result = validate_codeql_rule(rule, base_path, language = "java")
     print(result)
     if result["valid"]:
         print("[✅] 规则验证通过！")
-    results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="python")
+    # results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="java")
 
     # summary_path = os.path.join(base_path, "validation_summary.json")
     # with open(summary_path, "w", encoding="utf-8") as f:

@@ -1,0 +1,729 @@
+Timestamp: 2025-10-28 21:40:19
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+  
+sources:
+  - id: SQL_STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String\\s\\$SQL\\s=\\s\\$X\\s\\+\\s\\$Y"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: com.liferay.portal.kernel.dao.orm.BasePeer, method: executeQuery }
+      arg_index: 0
+      
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT\\s.+"
+
+propagations:
+  - id: SQL_ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: SQL_STRING_FORMAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+
+report:
+  message: "Untrusted SQL query detected in ${sink.methodFullName}"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:23,40-41)
+ERROR: unexpected input ')' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:27,5-6)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:52,1-2)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:15,33-61)
+ERROR: getStringValue() cannot be resolved for type DataFlowNodes::Public::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:25,20-34)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+ERROR: getStringValue() cannot be resolved for type DataFlowNodes::Public::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:50,15-29)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:39,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:48,3-11)
+WARNING: unused class 'TurbineSqliConfig' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:15,7-24)
+WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:48,22-33)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad554d89/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection.
+ * @id turbine-sqli
+ * @kind path-problem
+ * @severity Warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "TurbineSqliConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() calls with SQL pattern
+    exists(Call formatCall |
+      formatCall.getCallee().getName() = "format" and
+      formatCall.getCallee().getDeclaringType().getName() = "String" and
+      exists(formatCall.getArgument(0) |
+        source.asExpr() = formatCall.getArgument(0) and
+        not source.getStringValue().regexpMatch("^\"SELECT\\s.+")
+      )
+    )
+    or
+    // String concatenation assignments with SQL pattern
+    exists(AssignExpr assign, Expr lhs, Expr rhs |
+      assign.getTarget() = lhs and
+      assign.getSource() = rhs and
+      lhs.toString().matches("%String\\s\\$SQL%") and
+      source.asExpr() = rhs and
+      not source.getStringValue().regexpMatch("^\"SELECT\\s.+")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().getName() = "BasePeer" and
+      ma.getMethod().getDeclaringType().getPackage().getName() = "com.liferay.portal.kernel.dao.orm" and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral and
+    sanitizer.getStringValue().regexpMatch("^\"SELECT\\s.+")
+  }
+}
+
+from TurbineSqliConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Untrusted SQL query detected in $@", sink.getNode(),
+  sink.getNode().toString()
+================================================================================
+Timestamp: 2025-10-28 21:42:56
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+  
+sources:
+  - id: SQL_STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String\\s\\$SQL\\s=\\s\\$X\\s\\+\\s\\$Y"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: com.liferay.portal.kernel.dao.orm.BasePeer, method: executeQuery }
+      arg_index: 0
+      
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT\\s.+"
+
+propagations:
+  - id: SQL_ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: SQL_STRING_FORMAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+
+report:
+  message: "Untrusted SQL query detected in ${sink.methodFullName}"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:13,8-34)
+ERROR: could not resolve module semmle.code.java.frameworks.JSQL (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:14,8-40)
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:16,33-56)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: getStringValue() cannot be resolved for type DataFlowNodes::Public::ExprNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:25,57-71)
+ERROR: getTarget() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:30,14-23)
+ERROR: getStringValue() cannot be resolved for type DataFlowNodes::Public::ExprNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:32,50-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: getStringValue() cannot be resolved for type DataFlowNodes::Public::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:47,17-31)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:52,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:52,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:36,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9eb33838/java-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection.
+ * @id turbine-sqli
+ * @kind path-problem
+ * @severity Warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringOps
+import semmle.code.java.frameworks.JSQL
+
+class TurbineSqliConfig extends DataFlow::Configuration {
+  TurbineSqliConfig() { this = "Turbine SQL Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() calls with SQL pattern
+    exists(MethodAccess formatCall |
+      formatCall.getMethod().getName() = "format" and
+      formatCall.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = formatCall.getArgument(0) and
+      not DataFlow::exprNode(formatCall.getArgument(0)).getStringValue().regexpMatch("^\"SELECT\\\\s.+")
+    )
+    or
+    // String concatenation assignments with SQL pattern
+    exists(AssignExpr assign |
+      assign.getTarget().toString().matches("%String\\s\\$SQL%") and
+      source.asExpr() = assign.getSource() and
+      not DataFlow::exprNode(assign.getSource()).getStringValue().regexpMatch("^\"SELECT\\\\s.+")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("com.liferay.portal.kernel.dao.orm", "BasePeer") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral sl |
+      sanitizer.asExpr() = sl and
+      sanitizer.getStringValue().regexpMatch("^\"SELECT\\\\s.+")
+    )
+  }
+}
+
+from TurbineSqliConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Untrusted SQL query detected in $@", sink.toString(),
+  "Potential SQL injection vulnerability due to use of unescaped user input in SQL query"
+================================================================================
+Timestamp: 2025-10-28 21:46:25
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+  
+sources:
+  - id: SQL_STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String\\s\\$SQL\\s=\\s\\$X\\s\\+\\s\\$Y"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: com.liferay.portal.kernel.dao.orm.BasePeer, method: executeQuery }
+      arg_index: 0
+      
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT\\s.+"
+
+propagations:
+  - id: SQL_ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: SQL_STRING_FORMAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+
+report:
+  message: "Untrusted SQL query detected in ${sink.methodFullName}"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringFormatExtensions (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+ERROR: getLhs() cannot be resolved for type Expr::Assignment (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:30,14-20)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:50,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:50,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:36,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_724c4e95/java-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection.
+ * @id turbine-sqli
+ * @kind path-problem
+ * @severity Warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormatExtensions
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "Turbine SQL Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() calls
+    exists(Call formatCall |
+      formatCall.getCallee().getName() = "format" and
+      formatCall.getCallee().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = formatCall.getArgument(0) and
+      not source.asExpr().(StringLiteral).getValue().matches("^SELECT\\s.+")
+    )
+    or
+    // String concatenation assignments
+    exists(Assignment assign |
+      assign.getLhs().toString().matches("String\\s\\$SQL") and
+      source.asExpr() = assign.getRhs() and
+      not source.asExpr().(StringLiteral).getValue().matches("^SELECT\\s.+")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCallee().getName() = "executeQuery" and
+      call.getCallee().getDeclaringType().hasQualifiedName("com.liferay.portal.kernel.dao.orm", "BasePeer") and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral and
+    sanitizer.asExpr().(StringLiteral).getValue().matches("^SELECT\\s.+")
+  }
+}
+
+from TurbineSqliConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Untrusted SQL query detected in " + sink.getNode().toString(),
+  source.getNode(), "SQL injection vulnerability"
+================================================================================
+Timestamp: 2025-10-28 21:49:14
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+  
+sources:
+  - id: SQL_STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String\\s\\$SQL\\s=\\s\\$X\\s\\+\\s\\$Y"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: com.liferay.portal.kernel.dao.orm.BasePeer, method: executeQuery }
+      arg_index: 0
+      
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT\\s.+"
+
+propagations:
+  - id: SQL_ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: SQL_STRING_FORMAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+
+report:
+  message: "Untrusted SQL query detected in ${sink.methodFullName}"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringExtensions (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:13,8-41)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:15,33-61)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: getTarget() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:31,14-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:48,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:48,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_761c0def/java-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection.
+ * @id turbine-sqli
+ * @kind path-problem
+ * @severity Warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringExtensions
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "Turbine SQL Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() calls
+    exists(MethodAccess formatCall |
+      formatCall.getMethod().getName() = "format" and
+      formatCall.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = formatCall.getArgument(0) and
+      not exists(StringLiteral sl | sl = source.asExpr() | 
+        sl.getValue().matches("^SELECT\\s.+")
+      )
+    )
+    or
+    // String concatenation assignments
+    exists(AssignExpr assign |
+      assign.getTarget().toString().matches("String\\s\\$SQL") and
+      source.asExpr() = assign.getSource() and
+      not exists(StringLiteral sl | sl = source.asExpr() |
+        sl.getValue().matches("^SELECT\\s.+")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("com.liferay.portal.kernel.dao.orm", "BasePeer") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqliConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, 
+  "Untrusted SQL query detected in $" + sink.toString() + "$", 
+  source, sink,
+  "Potential SQL injection vulnerability due to use of unescaped user input in SQL query"
+================================================================================
+Timestamp: 2025-10-28 21:51:47
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead."
+scope:
+  languages: [java]
+  frameworks: [turbine]
+  
+sources:
+  - id: SQL_STRING_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: "String\\s\\$SQL\\s=\\s\\$X\\s\\+\\s\\$Y"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api: { type: com.liferay.portal.kernel.dao.orm.BasePeer, method: executeQuery }
+      arg_index: 0
+      
+sanitizers:
+  - id: STATIC_SQL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "^\"SELECT\\s.+"
+
+propagations:
+  - id: SQL_ARG_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: SQL_STRING_FORMAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+  - source: SQL_STRING_CONCAT
+    sink: SQL_EXECUTION
+    through: [SQL_ARG_TO_EXEC*]
+    constraints:
+      path:
+        must_not: [ { pattern: "LITERAL(\"SELECT * FROM table\")" } ]
+
+report:
+  message: "Untrusted SQL query detected in ${sink.methodFullName}"
+  locations: ["source", "sink", "path"]
+  evidence:
+    capture:
+      - { argument: 0 }
+
+tests:
+  positive:
+    - "BasePeer.executeQuery(\"SELECT * FROM users WHERE id = \" + userId);"
+    - "BasePeer.executeQuery(String.format(\"SELECT * FROM users WHERE id = %s\", userId));"
+  negative:
+    - "BasePeer.executeQuery(\"SELECT * FROM users\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringExtensions (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:14,8-41)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:16,33-61)
+ERROR: getTarget() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:32,34-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:58,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:58,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:43,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b3024e41/java-security-queries/queries/test-rule/TestRule.ql:51,22-33)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detects formatted strings in SQL statements that could lead to SQL injection.
+ * @id turbine-sqli
+ * @kind path-problem
+ * @severity Warning
+ * @tags security
+ *       external/cwe/cwe-089
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringExtensions
+
+class TurbineSqliConfig extends TaintTracking::Configuration {
+  TurbineSqliConfig() { this = "Turbine SQL Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // String.format() calls
+    exists(Call formatCall |
+      formatCall.getCallee().hasName("format") and
+      formatCall.getCallee().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      source.asExpr() = formatCall.getArgument(0) and
+      not exists(StringLiteral sl | sl = source.asExpr() | 
+        sl.getValue().matches("^SELECT\\s.+")
+      )
+    )
+    or
+    // String concatenation assignments
+    exists(AssignExpr assign |
+      exists(Variable v | assign.getTarget() = v.getAnAccess() |
+        v.getName().matches("SQL") and
+        v.getType().hasName("String")
+      ) and
+      source.asExpr() = assign.getSource() and
+      not exists(StringLiteral sl | sl = source.asExpr() |
+        sl.getValue().matches("^SELECT\\s.+")
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(Call call |
+      call.getCallee().hasName("executeQuery") and
+      call.getCallee().getDeclaringType().hasQualifiedName("com.liferay.portal.kernel.dao.orm", "BasePeer") and
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(StringLiteral sl | sl = sanitizer.asExpr() |
+      sl.getValue().matches("^SELECT\\s.+")
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TurbineSqliConfig config
+where config.hasFlowPath(source, sink)
+select sink, source, 
+  "Potential SQL injection: Untrusted data flows into SQL query at $" + sink.toString() + "$",
+  source, sink,
+  "Consider using prepared statements instead of string concatenation"
+================================================================================

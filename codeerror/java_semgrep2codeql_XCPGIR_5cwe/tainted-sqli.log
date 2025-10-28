@@ -1,0 +1,903 @@
+Timestamp: 2025-10-28 21:39:37
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: LAMBDA_EVENT
+    match:
+      node: PARAM
+      api:
+        type: com.amazonaws.services.lambda.runtime.Context
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: query
+      arg_index: 0
+  - id: SQL_UPDATE
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: executeUpdate
+      arg_index: 0
+  - id: SPRING_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 1
+  - id: SPRING_QUERY_MAP
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForMap
+      arg_index: 1
+
+propagations:
+  - id: METHOD_PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: LAMBDA_EVENT
+    sink: SQL_EXECUTION
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_UPDATE
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY_MAP
+    through: [METHOD_PARAM_TO_ARG*]
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{argument: 0}]
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.QueryUtils (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:16,8-35)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:20,12-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:39,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:50,44-72)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:57,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8385f920/java-security-queries/queries/test-rule/TestRule.ql:59,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Query in AWS Lambda
+ * @description Detects SQL statements that are tainted by user input from AWS Lambda events.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.QueryUtils
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(MethodParameter mp |
+      mp.getDeclaringType().getASourceSupertype*().hasQualifiedName("com.amazonaws.services.lambda.runtime", "Context") and
+      mp.getName() = "$EVENT" and
+      this.asParameter() = mp
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      (
+        ma.getMethod().getName() = "execute" or
+        ma.getMethod().getName() = "query" or
+        ma.getMethod().getName() = "executeUpdate"
+      ) and
+      ma.getArgument(0) = this.asExpr()
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      (
+        ma.getMethod().getName() = "queryForObject" or
+        ma.getMethod().getName() = "queryForMap"
+      ) and
+      ma.getArgument(1) = this.asExpr()
+    )
+  }
+}
+
+class TaintedSqlQueryConfiguration extends TaintTracking::Configuration {
+  TaintedSqlQueryConfiguration() { this = "TaintedSqlQueryConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LambdaEventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlExecutionSink }
+
+  override predicate isSanitizer(DataFlow::Node node) { none() }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodCall mc |
+      node1.asExpr() = mc.getArgument(_) and
+      node2.asExpr() = mc.getQualifier()
+    )
+  }
+}
+
+from TaintedSqlQueryConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where
+  config.hasFlow(source, sink)
+select sink, "Potential SQL injection vulnerability from user input in AWS Lambda", source,
+  "This SQL statement uses tainted data from $@", source, "a Lambda event parameter"
+================================================================================
+Timestamp: 2025-10-28 21:42:10
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: LAMBDA_EVENT
+    match:
+      node: PARAM
+      api:
+        type: com.amazonaws.services.lambda.runtime.Context
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: query
+      arg_index: 0
+  - id: SQL_UPDATE
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: executeUpdate
+      arg_index: 0
+  - id: SPRING_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 1
+  - id: SPRING_QUERY_MAP
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForMap
+      arg_index: 1
+
+propagations:
+  - id: METHOD_PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: LAMBDA_EVENT
+    sink: SQL_EXECUTION
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_UPDATE
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY_MAP
+    through: [METHOD_PARAM_TO_ARG*]
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{argument: 0}]
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.aws.AWSLambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql:16,8-49)
+ERROR: getASupertype() cannot be resolved for type Type::Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql:21,19-32)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql:51,32-60)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql:54,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_22f9c675/java-security-queries/queries/test-rule/TestRule.ql:56,22-28)
+Rule Content:
+/**
+ * @name Tainted SQL Query in AWS Lambda
+ * @description Detects SQL statements that are tainted by user input from AWS Lambda events.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.aws.AWSLambda
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Parameter p |
+      p.getType().getASupertype*().hasQualifiedName("com.amazonaws.services.lambda.runtime", "Context") and
+      p.getName() = "$EVENT" and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodCall mc |
+      mc.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      (
+        mc.getMethod().getName() = "execute" or
+        mc.getMethod().getName() = "query" or
+        mc.getMethod().getName() = "executeUpdate"
+      ) and
+      this.asExpr() = mc.getArgument(0)
+    )
+    or
+    exists(MethodCall mc |
+      mc.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      (
+        mc.getMethod().getName() = "queryForObject" or
+        mc.getMethod().getName() = "queryForMap"
+      ) and
+      this.asExpr() = mc.getArgument(1)
+    )
+  }
+}
+
+class TaintedSqlConfig extends TaintTracking::Configuration {
+  TaintedSqlConfig() { this = "Tainted SQL Query in AWS Lambda" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LambdaEventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlExecutionSink }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintedSqlConfig config
+where config.hasFlow(source, sink)
+select sink, "Potential SQL injection vulnerability from user input in AWS Lambda ($@)", 
+  source, "Lambda event parameter", source, sink
+================================================================================
+Timestamp: 2025-10-28 21:44:44
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: LAMBDA_EVENT
+    match:
+      node: PARAM
+      api:
+        type: com.amazonaws.services.lambda.runtime.Context
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: query
+      arg_index: 0
+  - id: SQL_UPDATE
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: executeUpdate
+      arg_index: 0
+  - id: SPRING_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 1
+  - id: SPRING_QUERY_MAP
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForMap
+      arg_index: 1
+
+propagations:
+  - id: METHOD_PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: LAMBDA_EVENT
+    sink: SQL_EXECUTION
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_UPDATE
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY_MAP
+    through: [METHOD_PARAM_TO_ARG*]
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{argument: 0}]
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:16,33-41)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:19,19-35)
+ERROR: asParameter() cannot be resolved for type LambdaEventSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:21,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:26,32-40)
+ERROR: asExpr() cannot be resolved for type SqlExecutionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:36,12-18)
+ERROR: asExpr() cannot be resolved for type SqlExecutionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:46,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:51,32-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:56,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:64,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:67,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:67,33-41)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28a2a087/java-security-queries/queries/test-rule/TestRule.ql:64,22-33)
+Rule Content:
+/**
+ * @name Tainted SQL Query in AWS Lambda
+ * @description Detects SQL statements that are tainted by user input from AWS Lambda events.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import DataFlow::PathGraph
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Parameter p |
+      p.getType().hasQualifiedName("com.amazonaws.services.lambda.runtime", "Context") and
+      p.getName() = "$EVENT" and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      (
+        m.getName() = "execute" or
+        m.getName() = "query" or
+        m.getName() = "executeUpdate"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(0)
+    )
+    or
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      (
+        m.getName() = "queryForObject" or
+        m.getName() = "queryForMap"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(1)
+    )
+  }
+}
+
+class TaintedSqlConfig extends TaintTracking::Configuration {
+  TaintedSqlConfig() { 
+    this = "Tainted SQL Query in AWS Lambda" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof LambdaEventSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecutionSink 
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) { none() }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSqlConfig config
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection vulnerability from user input in AWS Lambda ($@)", 
+  source, "Lambda event parameter"
+================================================================================
+Timestamp: 2025-10-28 21:48:03
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: LAMBDA_EVENT
+    match:
+      node: PARAM
+      api:
+        type: com.amazonaws.services.lambda.runtime.Context
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: query
+      arg_index: 0
+  - id: SQL_UPDATE
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: executeUpdate
+      arg_index: 0
+  - id: SPRING_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 1
+  - id: SPRING_QUERY_MAP
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForMap
+      arg_index: 1
+
+propagations:
+  - id: METHOD_PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: LAMBDA_EVENT
+    sink: SQL_EXECUTION
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_UPDATE
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY_MAP
+    through: [METHOD_PARAM_TO_ARG*]
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{argument: 0}]
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string, string) cannot be resolved for type Type::Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:20,19-35)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:52,32-60)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:66,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:66,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:57,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_31bcc55d/java-security-queries/queries/test-rule/TestRule.ql:61,22-28)
+Rule Content:
+/**
+ * @name Tainted SQL Query in AWS Lambda
+ * @description Detects SQL statements that are tainted by user input from AWS Lambda events.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Parameter p |
+      p.getType().hasQualifiedName("com.amazonaws.services.lambda.runtime", "Context") and
+      p.getName() = "$EVENT" and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      (
+        m.getName() = "execute" or
+        m.getName() = "query" or
+        m.getName() = "executeUpdate"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(0)
+    )
+    or
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      (
+        m.getName() = "queryForObject" or
+        m.getName() = "queryForMap"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(1)
+    )
+  }
+}
+
+class TaintedSqlConfig extends TaintTracking::Configuration {
+  TaintedSqlConfig() { 
+    this = "Tainted SQL Query in AWS Lambda" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof LambdaEventSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecutionSink 
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSqlConfig config
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection vulnerability from user input in AWS Lambda ($@)", 
+  source, "Lambda event parameter"
+================================================================================
+Timestamp: 2025-10-28 21:51:04
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by user input. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["aws-lambda"]
+  env: { os: [linux, windows], shell: [bash, sh] }
+
+sources:
+  - id: LAMBDA_EVENT
+    match:
+      node: PARAM
+      api:
+        type: com.amazonaws.services.lambda.runtime.Context
+      where:
+        - op: eq
+          left: name
+          right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: execute
+      arg_index: 0
+  - id: SQL_QUERY
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: query
+      arg_index: 0
+  - id: SQL_UPDATE
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: executeUpdate
+      arg_index: 0
+  - id: SPRING_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 1
+  - id: SPRING_QUERY_MAP
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForMap
+      arg_index: 1
+
+propagations:
+  - id: METHOD_PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: LAMBDA_EVENT
+    sink: SQL_EXECUTION
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SQL_UPDATE
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY
+    through: [METHOD_PARAM_TO_ARG*]
+  - source: LAMBDA_EVENT
+    sink: SPRING_QUERY_MAP
+    through: [METHOD_PARAM_TO_ARG*]
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{argument: 0}]
+
+metadata:
+  category: security
+  technology:
+    - sql
+    - java
+    - aws-lambda
+  cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+  owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getASupertype() cannot be resolved for type Type::Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:20,19-32)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:52,32-60)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:66,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:66,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:57,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ffbbf07a/java-security-queries/queries/test-rule/TestRule.ql:61,22-28)
+Rule Content:
+/**
+ * @name Tainted SQL Query in AWS Lambda
+ * @description Detects SQL statements that are tainted by user input from AWS Lambda events.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Parameter p |
+      p.getType().getASupertype*().hasQualifiedName("com.amazonaws.services.lambda.runtime", "Context") and
+      p.getName() = "$EVENT" and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("java.sql", "Statement") and
+      (
+        m.getName() = "execute" or
+        m.getName() = "query" or
+        m.getName() = "executeUpdate"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(0)
+    )
+    or
+    exists(Method m, MethodCall mc |
+      m.getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") and
+      (
+        m.getName() = "queryForObject" or
+        m.getName() = "queryForMap"
+      ) and
+      mc.getMethod() = m and
+      this.asExpr() = mc.getArgument(1)
+    )
+  }
+}
+
+class TaintedSqlConfig extends TaintTracking::Configuration {
+  TaintedSqlConfig() { 
+    this = "Tainted SQL Query in AWS Lambda" 
+  }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof LambdaEventSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecutionSink 
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSqlConfig config
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection vulnerability from user input in AWS Lambda ($@)", 
+  source, "Lambda event parameter"
+================================================================================

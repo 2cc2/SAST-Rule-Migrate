@@ -1,4 +1,4 @@
-Timestamp: 2025-10-28 18:09:53
+Timestamp: 2025-10-28 21:34:20
 Attempt: 1
 IR Content:
 ```yaml
@@ -10,75 +10,90 @@ rule:
   message: "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
 scope:
   languages: [python]
-  frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
-sources:
-  - id: DYNAMIC_INPUT
-    match:
-      node: CALL
-      api: { method: eval }
-      arg_index: 0
+  
 sinks:
   - id: EVAL_CALL
     match:
       node: CALL
       api: { method: eval }
-sanitizers: []
-barriers: []
-propagations: []
+      
+sanitizers:
+  - id: LITERAL_ARG
+    match:
+      node: LITERAL
+    effect: neutralize
+    
+barriers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^\w+$'
+    effect: stop
+
 flows:
-  - source: DYNAMIC_INPUT
-    sink: EVAL_CALL
+  - sink: EVAL_CALL
     constraints:
       path:
-        must_not:
-          - pattern: 'STRING_LITERAL'
-          - pattern: 'f"..."'
+        must_not: [ { pattern: "LITERAL" } ]
+
 report:
-  message: "Detected the use of eval() with potentially dynamic input"
   locations: ["sink"]
-  evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "eval(input())"
-  negative:
-    - 'eval("1+1")'
+  evidence: { capture: [{ node: "sink" }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: expected an expression but found a term instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:13,12-56)
-ERROR: expected an expression but found a term instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:14,7-46)
-ERROR: unexpected input '|' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:13,57-58)
-ERROR: unexpected input ')' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:15,5-6)
-WARNING: unused variable 'expr' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:9,22-26)
-WARNING: unused variable 'inputValue' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:9,34-44)
-WARNING: unused variable 'inputCall' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87251e3c/python-security-queries/queries/test-rule/TestRule.ql:9,51-60)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_240fa4d5/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_240fa4d5/python-security-queries/queries/test-rule/TestRule.ql:26,12-19)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_240fa4d5/python-security-queries/queries/test-rule/TestRule.ql:31,35-42)
+ERROR: getStringValue() cannot be resolved for type SafeLiteral.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_240fa4d5/python-security-queries/queries/test-rule/TestRule.ql:33,10-24)
 Rule Content:
 /**
  * @name eval-detected
+ * @description Detected the use of eval(). eval() can be dangerous if used to evaluate
+ *              dynamic content. If this content can be input from outside the program,
+ *              this may be a code injection vulnerability. Ensure evaluated content is
+ *              not definable by external sources.
  * @kind problem
- * @id python/eval-detected
- * @severity Warning
+ * @problem.severity warning
+ * @id py/eval-detected
+ * @tags security
+ *       external/cwe/cwe-094
  */
+
 import python
 
-from Call call, Expr expr, Value inputValue, Call inputCall
+// Define eval() calls
+private class EvalCall extends Call {
+  EvalCall() {
+    this.getFunc().(Name).getId() = "eval"
+  }
+}
+
+// Define literal sanitizers
+private class LiteralArg extends Expr {
+  LiteralArg() {
+    exists(Literal literal | literal = this)
+  }
+}
+
+// Define safe literal barriers
+private class SafeLiteral extends Literal {
+  SafeLiteral() {
+    this.getStringValue().regexpMatch("^\\w+$")
+  }
+}
+
+from EvalCall call, Expr arg
 where
-  call.getFunc().(Name).getId() = "eval" and
-  (
-    exists(inputCall.getFunc().(Name).getId() = "input" |
-      inputCall = call.getArg(0).getAChild*()
-    )
-    or
-    not (
-      exists(Value v | v = call.getArg(0) and v instanceof StrLiteral) 
-      or
-      exists(FString f | f = call.getArg(0))
-    )
-  )
-and expr = call.getParent()
-select call, "Detected the use of eval() with potentially dynamic input. eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
+  arg = call.getArg(0) and
+  not exists(SafeLiteral safe | safe = arg) and
+  not exists(LiteralArg literal | literal = arg)
+select call, "Detected the use of eval(). eval() can be dangerous if used to evaluate " +
+  "dynamic content. If this content can be input from outside the program, this may " +
+  "be a code injection vulnerability."
 ================================================================================
-Timestamp: 2025-10-28 18:11:41
+Timestamp: 2025-10-28 21:36:11
 Attempt: 2
 IR Content:
 ```yaml
@@ -90,291 +105,84 @@ rule:
   message: "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
 scope:
   languages: [python]
-  frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
-sources:
-  - id: DYNAMIC_INPUT
-    match:
-      node: CALL
-      api: { method: eval }
-      arg_index: 0
+  
 sinks:
   - id: EVAL_CALL
     match:
       node: CALL
       api: { method: eval }
-sanitizers: []
-barriers: []
-propagations: []
+      
+sanitizers:
+  - id: LITERAL_ARG
+    match:
+      node: LITERAL
+    effect: neutralize
+    
+barriers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: '^\w+$'
+    effect: stop
+
 flows:
-  - source: DYNAMIC_INPUT
-    sink: EVAL_CALL
+  - sink: EVAL_CALL
     constraints:
       path:
-        must_not:
-          - pattern: 'STRING_LITERAL'
-          - pattern: 'f"..."'
+        must_not: [ { pattern: "LITERAL" } ]
+
 report:
-  message: "Detected the use of eval() with potentially dynamic input"
   locations: ["sink"]
-  evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "eval(input())"
-  negative:
-    - 'eval("1+1")'
+  evidence: { capture: [{ node: "sink" }] }
 ```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_13dcbcff/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve type StrLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_13dcbcff/python-security-queries/queries/test-rule/TestRule.ql:17,25-35)
-ERROR: could not resolve type FString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_13dcbcff/python-security-queries/queries/test-rule/TestRule.ql:19,25-32)
-ERROR: getAChild() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_13dcbcff/python-security-queries/queries/test-rule/TestRule.ql:24,36-45)
-ERROR: ObjectAPI::Value is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_13dcbcff/python-security-queries/queries/test-rule/TestRule.ql:15,7-8)
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e71b0623/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getValue() cannot be resolved for type SafeLiteral.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e71b0623/python-security-queries/queries/test-rule/TestRule.ql:33,10-18)
 Rule Content:
 /**
  * @name eval-detected
+ * @description Detected the use of eval(). eval() can be dangerous if used to evaluate
+ *              dynamic content. If this content can be input from outside the program,
+ *              this may be a code injection vulnerability. Ensure evaluated content is
+ *              not definable by external sources.
  * @kind problem
- * @id python/eval-detected
- * @description Detects the use of eval() with potentially dynamic input. 
- *   eval() can be dangerous if used to evaluate dynamic content. If this content can 
- *   be input from outside the program, this may be a code injection vulnerability.
- * @severity Warning
+ * @problem.severity warning
+ * @id py/eval-detected
+ * @tags security
+ *       external/cwe/cwe-094
  */
+
 import python
 
-from Call call, Value arg
-where
-  call.getFunc().(Name).getId() = "eval" and
-  arg = call.getArg(0) and
-  (
-    not (arg instanceof StrLiteral)
-    and
-    not (arg instanceof FString)
-    and
-    not (
-      exists(Call inputCall | 
-        inputCall.getFunc().(Name).getId() = "input" and
-        inputCall = call.getArg(0).getAChild*()
-      )
-    )
-  )
-select call, "Detected the use of eval() with potentially dynamic input. eval() can be dangerous if used to evaluate dynamic content. Ensure evaluated content is not definable by external sources."
-================================================================================
-Timestamp: 2025-10-28 18:13:13
-Attempt: 3
-IR Content:
-```yaml
-xcpgir_version: "1.0"
-rule:
-  id: eval-detected
-  kind: pattern
-  severity: WARNING
-  message: "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
-scope:
-  languages: [python]
-  frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
-sources:
-  - id: DYNAMIC_INPUT
-    match:
-      node: CALL
-      api: { method: eval }
-      arg_index: 0
-sinks:
-  - id: EVAL_CALL
-    match:
-      node: CALL
-      api: { method: eval }
-sanitizers: []
-barriers: []
-propagations: []
-flows:
-  - source: DYNAMIC_INPUT
-    sink: EVAL_CALL
-    constraints:
-      path:
-        must_not:
-          - pattern: 'STRING_LITERAL'
-          - pattern: 'f"..."'
-report:
-  message: "Detected the use of eval() with potentially dynamic input"
-  locations: ["sink"]
-  evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "eval(input())"
-  negative:
-    - 'eval("1+1")'
-```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_aa801db2/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_aa801db2/python-security-queries/queries/test-rule/TestRule.ql:17,14-32)
-ERROR: getAChildExpr() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_aa801db2/python-security-queries/queries/test-rule/TestRule.ql:20,21-34)
-Rule Content:
-/**
- * @name eval-detected
- * @kind problem
- * @id python/eval-detected
- * @description Detects the use of eval() with potentially dynamic input.
- *   eval() can be dangerous if used to evaluate dynamic content. If this content can
- *   be input from outside the program, this may be a code injection vulnerability.
- * @severity Warning
- */
-import python
+// Define eval() calls
+private class EvalCall extends Call {
+  EvalCall() {
+    this.getFunc().(Name).getId() = "eval"
+  }
+}
 
-from Call call, Expr arg
-where
-  call.getFunc().(Name).getId() = "eval" and
-  arg = call.getArg(0) and
-  not exists(StringLiteral s | s = arg) and
-  not exists(InterpolatedString is | is = arg) and
-  exists(Call inputCall |
-    inputCall.getFunc().(Name).getId() = "input" and
-    inputCall = arg.getAChildExpr*()
-  )
-select call, "Detected the use of eval() with potentially dynamic input. eval() can be dangerous if used to evaluate dynamic content. Ensure evaluated content is not definable by external sources."
-================================================================================
-Timestamp: 2025-10-28 18:14:44
-Attempt: 4
-IR Content:
-```yaml
-xcpgir_version: "1.0"
-rule:
-  id: eval-detected
-  kind: pattern
-  severity: WARNING
-  message: "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
-scope:
-  languages: [python]
-  frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
-sources:
-  - id: DYNAMIC_INPUT
-    match:
-      node: CALL
-      api: { method: eval }
-      arg_index: 0
-sinks:
-  - id: EVAL_CALL
-    match:
-      node: CALL
-      api: { method: eval }
-sanitizers: []
-barriers: []
-propagations: []
-flows:
-  - source: DYNAMIC_INPUT
-    sink: EVAL_CALL
-    constraints:
-      path:
-        must_not:
-          - pattern: 'STRING_LITERAL'
-          - pattern: 'f"..."'
-report:
-  message: "Detected the use of eval() with potentially dynamic input"
-  locations: ["sink"]
-  evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "eval(input())"
-  negative:
-    - 'eval("1+1")'
-```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91efdc92/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve type FString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91efdc92/python-security-queries/queries/test-rule/TestRule.ql:17,14-21)
-ERROR: getChild() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91efdc92/python-security-queries/queries/test-rule/TestRule.ql:20,21-29)
-Rule Content:
-/**
- * @name eval-detected
- * @kind problem
- * @id python/eval-detected
- * @description Detects the use of eval() with potentially dynamic input. 
- *   eval() can be dangerous if used to evaluate dynamic content. If this content can 
- *   be input from outside the program, this may be a code injection vulnerability.
- * @severity Warning
- */
-import python
+// Define literal sanitizers
+private class LiteralArg extends Expr {
+  LiteralArg() {
+    exists(StringLiteral stringLiteral | stringLiteral = this)
+  }
+}
 
-from Call call, Expr arg
-where
-  call.getFunc().(Name).getId() = "eval" and
-  arg = call.getArg(0) and
-  not exists(StringLiteral s | s = arg) and
-  not exists(FString fs | fs = arg) and
-  exists(Call inputCall |
-    inputCall.getFunc().(Name).getId() = "input" and
-    inputCall = arg.getChild*()
-  )
-select call, "Detected the use of eval() with potentially dynamic input. eval() can be dangerous if used to evaluate dynamic content. Ensure evaluated content is not definable by external sources."
-================================================================================
-Timestamp: 2025-10-28 18:16:07
-Attempt: 5
-IR Content:
-```yaml
-xcpgir_version: "1.0"
-rule:
-  id: eval-detected
-  kind: pattern
-  severity: WARNING
-  message: "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources."
-scope:
-  languages: [python]
-  frameworks: ["*"]
-  env: { os: [linux, windows], shell: [bash, sh, powershell] }
-sources:
-  - id: DYNAMIC_INPUT
-    match:
-      node: CALL
-      api: { method: eval }
-      arg_index: 0
-sinks:
-  - id: EVAL_CALL
-    match:
-      node: CALL
-      api: { method: eval }
-sanitizers: []
-barriers: []
-propagations: []
-flows:
-  - source: DYNAMIC_INPUT
-    sink: EVAL_CALL
-    constraints:
-      path:
-        must_not:
-          - pattern: 'STRING_LITERAL'
-          - pattern: 'f"..."'
-report:
-  message: "Detected the use of eval() with potentially dynamic input"
-  locations: ["sink"]
-  evidence: { capture: [{ argument: 0 }] }
-tests:
-  positive:
-    - "eval(input())"
-  negative:
-    - 'eval("1+1")'
-```
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28d14a2b/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve type InterpolatedString (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28d14a2b/python-security-queries/queries/test-rule/TestRule.ql:17,14-32)
-ERROR: getAChildExpr() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_28d14a2b/python-security-queries/queries/test-rule/TestRule.ql:20,21-34)
-Rule Content:
-/**
- * @name eval-detected
- * @kind problem
- * @id python/eval-detected
- * @description Detects the use of eval() with potentially dynamic input.
- *   eval() can be dangerous if used to evaluate dynamic content. If this content can
- *   be input from outside the program, this may be a code injection vulnerability.
- * @severity Warning
- */
-import python
+// Define safe literal barriers
+private class SafeLiteral extends StringLiteral {
+  SafeLiteral() {
+    this.getValue().regexpMatch("^\\w+$")
+  }
+}
 
-from Call call, Expr arg
+from EvalCall call, Expr arg
 where
-  call.getFunc().(Name).getId() = "eval" and
   arg = call.getArg(0) and
-  not exists(StringLiteral s | s = arg) and
-  not exists(InterpolatedString is | is = arg) and
-  exists(Call inputCall |
-    inputCall.getFunc().(Name).getId() = "input" and
-    inputCall = arg.getAChildExpr*()
-  )
-select call, "Detected the use of eval() with potentially dynamic input. eval() can be dangerous if used to evaluate dynamic content. Ensure evaluated content is not definable by external sources."
+  not exists(SafeLiteral safe | safe = arg) and
+  not exists(LiteralArg literal | literal = arg)
+select call, "Detected the use of eval(). eval() can be dangerous if used to evaluate " +
+  "dynamic content. If this content can be input from outside the program, this may " +
+  "be a code injection vulnerability."
 ================================================================================

@@ -1,0 +1,933 @@
+Timestamp: 2025-10-28 21:40:07
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: vertx-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["vertx"]
+
+sources:
+  - id: UNSAFE_SQL_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: UNSAFE_SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String\\s+\\$SQL\\s*=\\s*\\$X\\s*\\+\\s*\\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: query }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: preparedQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: prepare }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: ARG_TO_SQL
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: dfg
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_SQL*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: UNSAFE_SQL_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential SQL injection via un-sanitized SQL string formatting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "client.query(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM \" + tableName; client.query(sql);"
+  negative:
+    - "PreparedStatement stmt = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:37,35-36)
+ERROR: extraneous input ')' expecting one of: '}' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:41,5-6)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+ERROR: could not resolve type DataFlow::BarrierGuard (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:57,42-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:59,12-24)
+ERROR: getNode() cannot be resolved for type PreparedStatementSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:62,12-19)
+ERROR: could not resolve type TaintFlowConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:68,10-25)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:81 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:77,1-79,103)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:77 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0ca040a5/java-security-queries/queries/test-rule/TestRule.ql:81,1-83,100)
+Rule Content:
+/**
+ * @name Vertx SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/vertx-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+import DataFlow::PathGraph
+
+class VertxSqlClient extends RefType {
+  VertxSqlClient() {
+    this.hasQualifiedName("io.vertx.sqlclient", "SqlClient")
+  }
+}
+
+class StringFormatSource extends DataFlow::Node {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "format" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class UnsafeSqlConcatSource extends DataFlow::Node {
+  UnsafeSqlConcatSource() {
+    exists(LocalVariableDecl lvd |
+      lvd.getType() instanceof TypeString and
+      lvd.getName().matches("%SQL%") and
+      exists(lvd.getInitializer() |
+        this.asExpr() = lvd.getInitializer() and
+        this.asExpr().(AddExpr).getAnOperand().toString().matches("%+%")
+      )
+    )
+  }
+}
+
+class SqlExecSink extends DataFlow::Node {
+  SqlExecSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType() instanceof VertxSqlClient and
+      (ma.getMethod().getName() = "query" or
+       ma.getMethod().getName() = "preparedQuery" or
+       ma.getMethod().getName() = "prepare") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends DataFlow::BarrierGuard {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "prepareStatement" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      this.getNode().asExpr() = ma
+    )
+  }
+}
+
+predicate isFlow(DataFlow::Node source, DataFlow::Node sink) {
+  exists(TaintFlowConfig conf |
+    conf.hasFlow(source, sink) and
+    not exists(DataFlow::Node barrier |
+      barrier instanceof PreparedStatementSanitizer and
+      conf.hasFlowThrough(barrier)
+    )
+  )
+}
+
+from StringFormatSource source, SqlExecSink sink
+where isFlow(source, sink)
+select sink, "Potential SQL injection via un-sanitized SQL string formatting", source, sink.toString()
+
+from UnsafeSqlConcatSource source, SqlExecSink sink
+where isFlow(source, sink)
+select sink, "Potential SQL injection via unsafe SQL string concatenation", source, sink.toString()
+================================================================================
+Timestamp: 2025-10-28 21:43:24
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: vertx-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["vertx"]
+
+sources:
+  - id: UNSAFE_SQL_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: UNSAFE_SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String\\s+\\$SQL\\s*=\\s*\\$X\\s*\\+\\s*\\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: query }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: preparedQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: prepare }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: ARG_TO_SQL
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: dfg
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_SQL*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: UNSAFE_SQL_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential SQL injection via un-sanitized SQL string formatting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "client.query(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM \" + tableName; client.query(sql);"
+  negative:
+    - "PreparedStatement stmt = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:20,34-55)
+ERROR: asExpr() cannot be resolved for type StringFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:25,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:25,25-33)
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:30,37-58)
+ERROR: asExpr() cannot be resolved for type UnsafeSqlConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:35,70-76)
+ERROR: could not resolve type TaintTracking::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:40,27-46)
+ERROR: asExpr() cannot be resolved for type SqlExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:45,25-33)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:50,42-66)
+ERROR: asExpr() cannot be resolved for type PreparedStatementSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:55,12-18)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:55,25-33)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:60,39-67)
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:65,31-52)
+ERROR: could not resolve type TaintTracking::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:69,29-48)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:73,34-58)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:78,35-58)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:78,67-90)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:65,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:69,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8ce93ee3/java-security-queries/queries/test-rule/TestRule.ql:73,22-33)
+Rule Content:
+/**
+ * @name Vertx SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/vertx-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class VertxSqlClient extends RefType {
+  VertxSqlClient() {
+    this.hasQualifiedName("io.vertx.sqlclient", "SqlClient")
+  }
+}
+
+class StringFormatSource extends TaintTracking::Source {
+  StringFormatSource() {
+    exists(Method m | 
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") |
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class UnsafeSqlConcatSource extends TaintTracking::Source {
+  UnsafeSqlConcatSource() {
+    exists(LocalVariableDecl lvd |
+      lvd.getType().hasName("String") and
+      lvd.getName().matches("%SQL%") and
+      exists(AddExpr addExpr | addExpr = lvd.getInitializer() | this.asExpr() = addExpr)
+    )
+  }
+}
+
+class SqlExecSink extends TaintTracking::Sink {
+  SqlExecSink() {
+    exists(Method m |
+      m.getDeclaringType() instanceof VertxSqlClient and
+      (m.hasName("query") or m.hasName("preparedQuery") or m.hasName("prepare")) |
+      this.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends TaintTracking::Sanitizer {
+  PreparedStatementSanitizer() {
+    exists(Method m |
+      m.hasName("prepareStatement") and
+      m.getDeclaringType().hasQualifiedName("java.sql", "Connection") |
+      this.asExpr() = m.getACall()
+    )
+  }
+}
+
+class VertxSqlInjectionConfig extends TaintTracking::Configuration {
+  VertxSqlInjectionConfig() {
+    this = "VertxSqlInjectionConfig"
+  }
+  
+  override predicate isSource(TaintTracking::Source source) {
+    source instanceof StringFormatSource or source instanceof UnsafeSqlConcatSource
+  }
+  
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof SqlExecSink
+  }
+  
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+}
+
+from VertxSqlInjectionConfig cfg, TaintTracking::PathNode source, TaintTracking::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Potential SQL injection via un-sanitized SQL string formatting",
+  source, sink,
+  "SQL execution with potentially tainted input"
+================================================================================
+Timestamp: 2025-10-28 21:46:32
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: vertx-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["vertx"]
+
+sources:
+  - id: UNSAFE_SQL_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: UNSAFE_SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String\\s+\\$SQL\\s*=\\s*\\$X\\s*\\+\\s*\\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: query }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: preparedQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: prepare }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: ARG_TO_SQL
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: dfg
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_SQL*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: UNSAFE_SQL_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential SQL injection via un-sanitized SQL string formatting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "client.query(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM \" + tableName; client.query(sql);"
+  negative:
+    - "PreparedStatement stmt = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.vertx.VertxCore (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:13,8-51)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:58,39-67)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:22,10-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:41,10-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:51,10-22)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:76,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:76,62-80)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:63,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:67,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1dbe7546/java-security-queries/queries/test-rule/TestRule.ql:71,22-33)
+Rule Content:
+/**
+ * @name Vertx SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/vertx-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+import semmle.code.java.frameworks.vertx.VertxCore
+
+class VertxSqlClient extends RefType {
+  VertxSqlClient() {
+    this.hasQualifiedName("io.vertx.sqlclient", "SqlClient")
+  }
+}
+
+predicate isStringFormatSource(DataFlow::Node source) {
+  exists(MethodAccess ma |
+    ma.getMethod().getName() = "format" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    source.asExpr() = ma
+  )
+}
+
+predicate isUnsafeSqlConcatSource(DataFlow::Node source) {
+  exists(LocalVariableDecl lvd |
+    lvd.getType() instanceof TypeString and
+    lvd.getName().matches("%SQL%") and
+    exists(AddExpr add |
+      add = lvd.getInitializer() and
+      source.asExpr() = add
+    )
+  )
+}
+
+predicate isSqlExecSink(DataFlow::Node sink) {
+  exists(MethodAccess ma |
+    ma.getMethod().getDeclaringType() instanceof VertxSqlClient and
+    (ma.getMethod().getName() = "query" or
+     ma.getMethod().getName() = "preparedQuery" or
+     ma.getMethod().getName() = "prepare") and
+    sink.asExpr() = ma.getArgument(0)
+  )
+}
+
+predicate isPreparedStatementSanitizer(DataFlow::Node sanitizer) {
+  exists(MethodAccess ma |
+    ma.getMethod().getName() = "prepareStatement" and
+    ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+    sanitizer.asExpr() = ma
+  )
+}
+
+class VertxSqlInjectionConfig extends TaintTracking::Configuration {
+  VertxSqlInjectionConfig() {
+    this = "VertxSqlInjectionConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    isStringFormatSource(source) or isUnsafeSqlConcatSource(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isSqlExecSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isPreparedStatementSanitizer(sanitizer)
+  }
+}
+
+from VertxSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Potential SQL injection via un-sanitized SQL string formatting",
+  source, sink,
+  "SQL execution with potentially tainted input"
+================================================================================
+Timestamp: 2025-10-28 21:49:34
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: vertx-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["vertx"]
+
+sources:
+  - id: UNSAFE_SQL_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: UNSAFE_SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String\\s+\\$SQL\\s*=\\s*\\$X\\s*\\+\\s*\\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: query }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: preparedQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: prepare }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: ARG_TO_SQL
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: dfg
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_SQL*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: UNSAFE_SQL_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential SQL injection via un-sanitized SQL string formatting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "client.query(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM \" + tableName; client.query(sql);"
+  negative:
+    - "PreparedStatement stmt = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:58,39-62)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:21,20-32)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:41,20-32)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:50,20-32)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:80,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:80,62-80)
+ERROR: Expr::Expr is incompatible with Statement::ReturnStmt (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:76,45-46)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:63,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:67,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:71,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a9dc0e22/java-security-queries/queries/test-rule/TestRule.ql:75,22-31)
+Rule Content:
+/**
+ * @name Vertx SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/vertx-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringFormat
+
+class VertxSqlClient extends RefType {
+  VertxSqlClient() {
+    this.hasQualifiedName("io.vertx.sqlclient", "SqlClient")
+  }
+}
+
+predicate isStringFormatSource(DataFlow::Node source) {
+  exists(Method m, MethodAccess ma |
+    m.hasName("format") and
+    m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+    ma.getMethod() = m and
+    source.asExpr() = ma
+  )
+}
+
+predicate isUnsafeSqlConcatSource(DataFlow::Node source) {
+  exists(LocalVariableDecl lvd |
+    lvd.getType().hasName("String") and
+    lvd.getName().matches("%SQL%") and
+    exists(AddExpr addExpr |
+      addExpr = lvd.getInitializer() and
+      source.asExpr() = addExpr
+    )
+  )
+}
+
+predicate isSqlExecSink(DataFlow::Node sink) {
+  exists(Method m, MethodAccess ma |
+    m.getDeclaringType() instanceof VertxSqlClient and
+    (m.hasName("query") or m.hasName("preparedQuery") or m.hasName("prepare")) and
+    ma.getMethod() = m and
+    sink.asExpr() = ma.getArgument(0)
+  )
+}
+
+predicate isPreparedStatementSanitizer(DataFlow::Node sanitizer) {
+  exists(Method m, MethodAccess ma |
+    m.hasName("prepareStatement") and
+    m.getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+    ma.getMethod() = m and
+    sanitizer.asExpr() = ma
+  )
+}
+
+class VertxSqlInjectionConfig extends DataFlow::Configuration {
+  VertxSqlInjectionConfig() {
+    this = "VertxSqlInjectionConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    isStringFormatSource(source) or isUnsafeSqlConcatSource(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isSqlExecSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isPreparedStatementSanitizer(sanitizer)
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    exists(ReturnStmt rs | barrier.asExpr() = rs)
+  }
+}
+
+from VertxSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink,
+  "Potential SQL injection via un-sanitized SQL string formatting",
+  source, sink,
+  "SQL execution with potentially tainted input"
+================================================================================
+Timestamp: 2025-10-28 21:52:41
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: vertx-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized."
+scope:
+  languages: [java]
+  frameworks: ["vertx"]
+
+sources:
+  - id: UNSAFE_SQL_FORMAT
+    match:
+      node: CALL
+      api: { type: java.lang.String, method: format }
+  - id: UNSAFE_SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String\\s+\\$SQL\\s*=\\s*\\$X\\s*\\+\\s*\\$Y"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: query }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: preparedQuery }
+      arg_index: 0
+    match:
+      node: CALL
+      api: { type: io.vertx.sqlclient.SqlClient, method: prepare }
+      arg_index: 0
+
+sanitizers:
+  - id: PREPARED_STATEMENT
+    match: { node: CALL, api: { type: java.sql.Connection, method: prepareStatement } }
+    effect: neutralize
+
+barriers:
+  - id: RETURN_STOP
+    match: { node: RETURN }
+    effect: stop
+
+propagations:
+  - id: ARG_TO_SQL
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: dfg
+    kind: taint
+
+flows:
+  - source: UNSAFE_SQL_FORMAT
+    sink: SQL_EXEC
+    through: [ARG_TO_SQL*]
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(java.sql.Connection.prepareStatement)" } ]
+  - source: UNSAFE_SQL_CONCAT
+    sink: SQL_EXEC
+    through: [STRING_CONCAT*]
+
+report:
+  message: "Potential SQL injection via un-sanitized SQL string formatting"
+  locations: ["sink"]
+  evidence: { capture: [{ argument: 0 }] }
+
+tests:
+  positive:
+    - "client.query(String.format(\"SELECT * FROM users WHERE name = %s\", userInput));"
+    - "String sql = \"SELECT * FROM \" + tableName; client.query(sql);"
+  negative:
+    - "PreparedStatement stmt = conn.prepareStatement(\"SELECT * FROM users WHERE name = ?\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:20,34-55)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+ERROR: asExpr() cannot be resolved for type StringFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:25,12-18)
+ERROR: could not resolve type TaintTracking::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:30,37-58)
+ERROR: asExpr() cannot be resolved for type UnsafeSqlConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:37,14-20)
+ERROR: could not resolve type TaintTracking::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:43,27-46)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: asExpr() cannot be resolved for type SqlExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:50,12-18)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:55,42-66)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:57,12-24)
+ERROR: asExpr() cannot be resolved for type PreparedStatementSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:60,12-18)
+ERROR: could not resolve type TaintTracking::Barrier (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:65,29-51)
+ERROR: asExpr() cannot be resolved for type ReturnBarrier.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:67,33-39)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:71,39-67)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:93,35-58)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:93,67-90)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:76,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:80,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:84,22-33)
+WARNING: unused method 'isBarrier' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff291657/java-security-queries/queries/test-rule/TestRule.ql:88,22-31)
+Rule Content:
+/**
+ * @name Vertx SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/vertx-sqli
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class VertxSqlClient extends RefType {
+  VertxSqlClient() {
+    this.hasQualifiedName("io.vertx.sqlclient", "SqlClient")
+  }
+}
+
+class StringFormatSource extends TaintTracking::Source {
+  StringFormatSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "format" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class UnsafeSqlConcatSource extends TaintTracking::Source {
+  UnsafeSqlConcatSource() {
+    exists(LocalVariableDecl lvd |
+      lvd.getType() instanceof TypeString and
+      lvd.getName().matches("%SQL%") and
+      exists(AddExpr add |
+        add = lvd.getInitializer() and
+        this.asExpr() = add
+      )
+    )
+  }
+}
+
+class SqlExecSink extends TaintTracking::Sink {
+  SqlExecSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType() instanceof VertxSqlClient and
+      (ma.getMethod().getName() = "query" or
+       ma.getMethod().getName() = "preparedQuery" or
+       ma.getMethod().getName() = "prepare") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class PreparedStatementSanitizer extends TaintTracking::Sanitizer {
+  PreparedStatementSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "prepareStatement" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class ReturnBarrier extends TaintTracking::Barrier {
+  ReturnBarrier() {
+    exists(ReturnStmt rs | this.asExpr() = rs)
+  }
+}
+
+class VertxSqlInjectionConfig extends TaintTracking::Configuration {
+  VertxSqlInjectionConfig() {
+    this = "VertxSqlInjectionConfig"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or source instanceof UnsafeSqlConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof PreparedStatementSanitizer
+  }
+
+  override predicate isBarrier(DataFlow::Node barrier) {
+    barrier instanceof ReturnBarrier
+  }
+}
+
+from VertxSqlInjectionConfig cfg, TaintTracking::PathNode source, TaintTracking::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Potential SQL injection via un-sanitized SQL string formatting",
+  source, sink,
+  "SQL execution with potentially tainted input"
+================================================================================

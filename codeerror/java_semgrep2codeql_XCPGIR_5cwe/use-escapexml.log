@@ -1,0 +1,571 @@
+Timestamp: 2025-10-28 22:11:16
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["JSP"]
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: \$\{(?!.*escapeXml).*\}
+sinks:
+  - id: XSS_SINK
+    match:
+      node: IDENTIFIER
+      api:
+        type: javax.servlet.jsp.PageContext
+        method: getOut
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.jsp.jstl.functions
+        method: escapeXml
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.functions.escapeXml)" } ]
+report:
+  message: "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib."
+  locations: ["source"]
+tests:
+  positive:
+    - "${param.userInput}"
+  negative:
+    - "${fn:escapeXml(param.userInput)}"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module ExpressionLanguage (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:13,8-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve type ELExpression (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:32,33-45)
+ERROR: getAChildExpr() cannot be resolved for type UnescapedELSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:36,12-25)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:41,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:16,31-43)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:45,46-54)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:45,77-85)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:46,7-15)
+WARNING: unused variable 'source' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:45,24-30)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a0f90d38/java-security-queries/queries/test-rule/TestRule.ql:45,40-44)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detects Expression Language segments that don't escape output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import ExpressionLanguage
+import DataFlow
+
+predicate isPageContextGetOut(MethodAccess ma) {
+  exists(Method m |
+    m.hasName("getOut") and
+    m.getDeclaringType().hasQualifiedName("javax.servlet.jsp", "PageContext") and
+    ma.getMethod() = m
+  )
+}
+
+predicate isEscapeXmlCall(Call c) {
+  exists(Method m |
+    m.hasName("escapeXml") and
+    m.getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.functions", "functions") and
+    c.getCallee() = m
+  )
+}
+
+class UnescapedELSource extends ELExpression {
+  UnescapedELSource() {
+    not exists(Call c |
+      isEscapeXmlCall(c) and
+      this.getAChildExpr() = c.getAnArgument()
+    )
+  }
+}
+
+class XssSink extends MethodAccess {
+  XssSink() { isPageContextGetOut(this) }
+}
+
+from UnescapedELSource source, XssSink sink, DataFlow::PathNode sourceNode, DataFlow::PathNode sinkNode
+where DataFlow::flowPath(sourceNode, sinkNode)
+select sourceNode.getNode(), 
+  "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib.",
+  sourceNode.getNode(), "Potential XSS vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:13:55
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["JSP"]
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: \$\{(?!.*escapeXml).*\}
+sinks:
+  - id: XSS_SINK
+    match:
+      node: IDENTIFIER
+      api:
+        type: javax.servlet.jsp.PageContext
+        method: getOut
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.jsp.jstl.functions
+        method: escapeXml
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.functions.escapeXml)" } ]
+report:
+  message: "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib."
+  locations: ["source"]
+tests:
+  positive:
+    - "${param.userInput}"
+  negative:
+    - "${fn:escapeXml(param.userInput)}"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.jsp.expr.JspExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:15,8-41)
+ERROR: could not resolve type JspExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:33,33-40)
+ERROR: getStringValue() cannot be resolved for type UnescapedELSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:35,10-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:39,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:17,31-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:43,46-64)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:43,77-95)
+ERROR: could not resolve predicate flowPath/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:44,7-25)
+WARNING: unused variable 'source' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:43,24-30)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f4261da/java-security-queries/queries/test-rule/TestRule.ql:43,40-44)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detects Expression Language segments that don't escape output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.StringFormat
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.jsp.expr.JspExpr
+
+predicate isPageContextGetOut(MethodAccess ma) {
+  exists(Method m |
+    m.hasName("getOut") and
+    m.getDeclaringType().hasQualifiedName("javax.servlet.jsp", "PageContext") and
+    ma.getMethod() = m
+  )
+}
+
+predicate isEscapeXmlCall(Call c) {
+  exists(Method m |
+    m.hasName("escapeXml") and
+    m.getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.functions", "functions") and
+    c.getCallee() = m
+  )
+}
+
+class UnescapedELSource extends JspExpr {
+  UnescapedELSource() {
+    this.getStringValue().regexpMatch("\\$\\{[^}]*escapeXml[^}]*\\}") = false
+  }
+}
+
+class XssSink extends MethodAccess {
+  XssSink() { isPageContextGetOut(this) }
+}
+
+from UnescapedELSource source, XssSink sink, DataFlow::PathNode sourceNode, DataFlow::PathNode sinkNode
+where DataFlow::flowPath(sourceNode, sinkNode) and
+  not exists(Call c |
+    isEscapeXmlCall(c) and
+    c.getAnArgument() = sourceNode.getNode()
+  )
+select sourceNode.getNode(), 
+  "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib.",
+  sourceNode.getNode(), "Potential XSS vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:16:13
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["JSP"]
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: \$\{(?!.*escapeXml).*\}
+sinks:
+  - id: XSS_SINK
+    match:
+      node: IDENTIFIER
+      api:
+        type: javax.servlet.jsp.PageContext
+        method: getOut
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.jsp.jstl.functions
+        method: escapeXml
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.functions.escapeXml)" } ]
+report:
+  message: "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib."
+  locations: ["source"]
+tests:
+  positive:
+    - "${param.userInput}"
+  negative:
+    - "${fn:escapeXml(param.userInput)}"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.jsp.Jsp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:15,8-32)
+ERROR: could not resolve module Jsp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:30,33-36)
+ERROR: getStringValue() cannot be resolved for type UnescapedELSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:32,10-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:36,23-35)
+ERROR: getMethod() cannot be resolved for type XssSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:38,55-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:22,27-39)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:42,46-69)
+ERROR: could not resolve type TaintTracking::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:42,82-105)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:44,14-26)
+WARNING: unused variable 'source' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:42,24-30)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_90b65bf2/java-security-queries/queries/test-rule/TestRule.ql:42,40-44)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detects Expression Language segments that don't escape output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.StringFormat
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.jsp.Jsp
+
+predicate isPageContextGetOut(Method m) {
+  m.hasName("getOut") and
+  m.getDeclaringType().hasQualifiedName("javax.servlet.jsp", "PageContext")
+}
+
+predicate isEscapeXmlCall(MethodAccess ma) {
+  exists(Method m |
+    m.hasName("escapeXml") and
+    m.getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.functions", "functions") and
+    ma.getMethod() = m
+  )
+}
+
+class UnescapedELSource extends Jsp::JspExpr {
+  UnescapedELSource() {
+    this.getStringValue().regexpMatch("\\$\\{[^}]*escapeXml[^}]*\\}") = false
+  }
+}
+
+class XssSink extends MethodAccess {
+  XssSink() {
+    exists(Method m | isPageContextGetOut(m) and this.getMethod() = m)
+  }
+}
+
+from UnescapedELSource source, XssSink sink, TaintTracking::PathNode sourceNode, TaintTracking::PathNode sinkNode
+where TaintTracking::localTaint(sourceNode, sinkNode) and
+  not exists(MethodAccess c |
+    isEscapeXmlCall(c) and
+    c.getAnArgument() = sourceNode.getNode()
+  )
+select sinkNode.getNode(), 
+  "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib.",
+  sourceNode.getNode(), "Potential XSS vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:18:42
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["JSP"]
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: \$\{(?!.*escapeXml).*\}
+sinks:
+  - id: XSS_SINK
+    match:
+      node: IDENTIFIER
+      api:
+        type: javax.servlet.jsp.PageContext
+        method: getOut
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.jsp.jstl.functions
+        method: escapeXml
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.functions.escapeXml)" } ]
+report:
+  message: "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib."
+  locations: ["source"]
+tests:
+  positive:
+    - "${param.userInput}"
+  negative:
+    - "${fn:escapeXml(param.userInput)}"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JSP (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: getValue() cannot be resolved for type UnescapedELSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql:19,10-18)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql:34,10-22)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32164a8f/java-security-queries/queries/test-rule/TestRule.ql:41,50-78)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detects Expression Language segments that don't escape output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JSP
+
+class UnescapedELSource extends Expr {
+  UnescapedELSource() {
+    this instanceof StringLiteral and
+    this.getValue().regexpMatch("\\$\\{[^}]*escapeXml[^}]*\\}") = false
+  }
+}
+
+class XssSink extends Expr {
+  XssSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getOut") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp", "PageContext") and
+      ma.getQualifier() = this
+    )
+  }
+}
+
+predicate isEscapeXmlCall(Expr e) {
+  exists(MethodAccess ma |
+    ma.getMethod().hasName("escapeXml") and
+    ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.functions", "functions") and
+    ma.getAnArgument() = e
+  )
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintTracking::Configuration cfg
+where
+  cfg.hasFlow(source, sink) and
+  source.asExpr() instanceof UnescapedELSource and
+  sink.asExpr() instanceof XssSink and
+  not exists(Expr e | isEscapeXmlCall(e) and e = source.asExpr())
+select sink,
+  "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib.",
+  source, "Potential XSS vulnerability"
+================================================================================
+Timestamp: 2025-10-28 22:21:15
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability."
+scope:
+  languages: [java]
+  frameworks: ["JSP"]
+sources:
+  - id: EL_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: \$\{(?!.*escapeXml).*\}
+sinks:
+  - id: XSS_SINK
+    match:
+      node: IDENTIFIER
+      api:
+        type: javax.servlet.jsp.PageContext
+        method: getOut
+sanitizers:
+  - id: ESCAPE_XML
+    match:
+      node: CALL
+      api:
+        type: javax.servlet.jsp.jstl.functions
+        method: escapeXml
+    effect: neutralize
+    scope:
+      sinks: [XSS_SINK]
+flows:
+  - source: EL_EXPRESSION
+    sink: XSS_SINK
+    constraints:
+      path:
+        must_not: [ { pattern: "CALL(javax.servlet.jsp.jstl.functions.escapeXml)" } ]
+report:
+  message: "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib."
+  locations: ["source"]
+tests:
+  positive:
+    - "${param.userInput}"
+  negative:
+    - "${fn:escapeXml(param.userInput)}"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringLiterals (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:15,8-39)
+ERROR: getText() cannot be resolved for type UnescapedELSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:19,10-17)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:34,10-22)
+ERROR: DataFlowNodes::Public::Node is not compatible with Expr::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:43,29-55)
+ERROR: DataFlowNodes::Public::Node is not compatible with Expr::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_93008dc0/java-security-queries/queries/test-rule/TestRule.ql:43,57-81)
+Rule Content:
+/**
+ * @name Use of unescaped Expression Language output
+ * @description Detects Expression Language segments that don't escape output,
+ *              which could lead to cross-site scripting vulnerabilities.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/use-escapexml
+ * @tags security
+ *       external/cwe/cwe-079
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringLiterals
+
+class UnescapedELSource extends StringLiteral {
+  UnescapedELSource() {
+    this.getText().regexpMatch("\\$\\{[^}]*escapeXml[^}]*\\}") = false
+  }
+}
+
+class XssSink extends Expr {
+  XssSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("getOut") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp", "PageContext") and
+      ma.getQualifier() = this
+    )
+  }
+}
+
+predicate isEscapeXmlCall(Expr e) {
+  exists(MethodAccess ma |
+    ma.getMethod().hasName("escapeXml") and
+    ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.functions", "functions") and
+    ma.getAnArgument() = e
+  )
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where
+  TaintTracking::localTaint(DataFlow::exprNode(source), DataFlow::exprNode(sink)) and
+  source.asExpr() instanceof UnescapedELSource and
+  sink.asExpr() instanceof XssSink and
+  not exists(Expr e | isEscapeXmlCall(e) and e = source.asExpr())
+select sink,
+  "Expression Language segment does not escape output. Use the 'escapeXml' function from the JSTL taglib.",
+  source, "Potential XSS vulnerability"
+================================================================================

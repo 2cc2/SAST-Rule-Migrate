@@ -1,0 +1,853 @@
+Timestamp: 2025-10-28 21:56:05
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter
+      where:
+        - op: regex
+          left: annotations
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: "<init>" }
+      arg_index: 0
+  - id: URL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: http(s?)://%(v|s|q).*
+        - op: or
+          conditions:
+            - { left: name, op: eq, right: concat }
+            - { left: name, op: eq, right: append }
+            - { left: name, op: eq, right: operator_+= }
+            - { left: name, op: eq, right: format }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->receiver
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: URL_STRING_CONCAT
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+report:
+  message: User data flows into the host portion of this manually-constructed URL.
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new URL(request.getParameter(\"host\"));"
+    - "\"http://%v\".concat(userInput);"
+  negative:
+    - "new URL(\"https://example.com\");"
+    - "String.format(\"https://%s\", \"example.com\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type RemoteUserInput (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:18,31-46)
+ERROR: could not resolve type HttpServletRequestGetParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:20,21-51)
+ERROR: getCall() cannot be resolved for type UserInputSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:22,14-21)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+ERROR: could not resolve type AssignmentOperation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:55,12-31)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:63,36-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:76,12-24)
+ERROR: could not resolve predicate isAssignmentAdd/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:80,8-23)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:87,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:87,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:66,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:70,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3385ee6e/java-security-queries/queries/test-rule/TestRule.ql:74,22-43)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL.
+ *              This could allow SSRF attacks. Do not allow arbitrary hosts.
+ * @kind taint
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.dataflow.FlowSources
+
+class UserInputSource extends RemoteUserInput {
+  UserInputSource() {
+    this instanceof HttpServletRequestGetParameter
+    and
+    not this.getCall().getArgument(0).getType().isPrimitive()
+    and
+    exists(Annotation a |
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestBody") or
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") or
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestParam") or
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestHeader") or
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "CookieValue") or
+      a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "ModelAttribute")
+    )
+  }
+}
+
+class URLConstructionSink extends DataFlow::Node {
+  URLConstructionSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class URLStringConcatSink extends DataFlow::Node {
+  URLStringConcatSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "append" or
+       ma.getMethod().hasName("format")) and
+      ma.getArgument(0).getType().hasName(["String", "CharSequence"]) and
+      exists(DataFlow::ExprNode en | en.asExpr().toString().matches("http(s?)://%(v|s|q).*"))|
+      this.asExpr() = ma.getQualifier()
+    )
+    or
+    exists(AssignmentOperation ao |
+      ao.getOperator().toString() = "+=" and
+      exists(DataFlow::ExprNode en | en.asExpr().toString().matches("http(s?)://%(v|s|q).*"))|
+      this.asExpr() = ao.getLeftOperand()
+    )
+  }
+}
+
+class TaintedURLHostConfig extends TaintTracking::Configuration {
+  TaintedURLHostConfig() { this = "TaintedURLHostConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof URLConstructionSink or sink instanceof URLStringConcatSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    TaintTracking::localTaintStep(node1, node2) or
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "concat" or
+       ma.getMethod().getName() = "append" or
+       ma.getMethod().hasName("format") or
+       isAssignmentAdd(ma)) and
+      (node1.asExpr() = ma.getAnArgument() and node2.asExpr() = ma.getQualifier() or
+       node1.asExpr() = ma.getQualifier() and node2.asExpr() = ma)
+    )
+  }
+}
+
+from TaintedURLHostConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "User data flows into the host portion of this manually-constructed URL."
+================================================================================
+Timestamp: 2025-10-28 21:59:31
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter
+      where:
+        - op: regex
+          left: annotations
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: "<init>" }
+      arg_index: 0
+  - id: URL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: http(s?)://%(v|s|q).*
+        - op: or
+          conditions:
+            - { left: name, op: eq, right: concat }
+            - { left: name, op: eq, right: append }
+            - { left: name, op: eq, right: operator_+= }
+            - { left: name, op: eq, right: format }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->receiver
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: URL_STRING_CONCAT
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+report:
+  message: User data flows into the host portion of this manually-constructed URL.
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new URL(request.getParameter(\"host\"));"
+    - "\"http://%v\".concat(userInput);"
+  negative:
+    - "new URL(\"https://example.com\");"
+    - "String.format(\"https://%s\", \"example.com\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type DataFlow::AssignmentNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:54,12-36)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:61,36-64)
+ERROR: could not resolve type DataFlow::AssignmentNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:82,12-36)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:90,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:90,59-77)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:46,3-22)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:64,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:68,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bdd2431d/java-security-queries/queries/test-rule/TestRule.ql:72,22-43)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL.
+ *              This could allow SSRF attacks. Do not allow arbitrary hosts.
+ * @kind taint
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.dataflow.FlowSources
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") and
+      this.asExpr() = ma and
+      exists(Annotation a |
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestBody") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestParam") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestHeader") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "CookieValue") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "ModelAttribute")
+      ) and
+      not ma.getArgument(0).getType().isPrimitive()
+    )
+  }
+}
+
+class URLConstructionSink extends DataFlow::Node {
+  URLConstructionSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class URLStringConcatSink extends DataFlow::Node {
+  URLStringConcatSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "concat" or
+       mc.getMethod().getName() = "append" or
+       mc.getMethod().hasName("format")) and
+      exists(DataFlow::ExprNode en | en.asExpr().toString().matches("http(s?)://%(v|s|q).*"))
+    )
+    or
+    exists(DataFlow::AssignmentNode an |
+      an.getOperator().toString() = "+=" and
+      exists(DataFlow::ExprNode en | en.asExpr().toString().matches("http(s?)://%(v|s|q).*"))
+    )
+  }
+}
+
+class TaintedURLHostConfig extends TaintTracking::Configuration {
+  TaintedURLHostConfig() { this = "TaintedURLHostConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof URLConstructionSink or sink instanceof URLStringConcatSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    TaintTracking::localTaintStep(node1, node2)
+    or
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "concat" or
+       mc.getMethod().getName() = "append" or
+       mc.getMethod().hasName("format")) and
+      (node1.asExpr() = mc.getAnArgument() and node2.asExpr() = mc.getQualifier())
+    )
+    or
+    exists(DataFlow::AssignmentNode an |
+      an.getOperator().toString() = "+=" and
+      node1.asExpr() = an.getRightOperand() and
+      node2.asExpr() = an.getLeftOperand()
+    )
+  }
+}
+
+from TaintedURLHostConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "User data flows into the host portion of this manually-constructed URL."
+================================================================================
+Timestamp: 2025-10-28 22:03:22
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter
+      where:
+        - op: regex
+          left: annotations
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: "<init>" }
+      arg_index: 0
+  - id: URL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: http(s?)://%(v|s|q).*
+        - op: or
+          conditions:
+            - { left: name, op: eq, right: concat }
+            - { left: name, op: eq, right: append }
+            - { left: name, op: eq, right: operator_+= }
+            - { left: name, op: eq, right: format }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->receiver
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: URL_STRING_CONCAT
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+report:
+  message: User data flows into the host portion of this manually-constructed URL.
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new URL(request.getParameter(\"host\"));"
+    - "\"http://%v\".concat(userInput);"
+  negative:
+    - "new URL(\"https://example.com\");"
+    - "String.format(\"https://%s\", \"example.com\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'ADD_ASSIGN and', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:61,26-36)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:65,1-2)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:22,14-26)
+ERROR: getOperator() cannot be resolved for type Expr::AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:61,10-21)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:52,3-22)
+WARNING: unused class 'UserInputSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:18,7-22)
+WARNING: unused class 'URLConstructionSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:39,7-26)
+WARNING: unused class 'URLStringConcatSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_441cb61f/java-security-queries/queries/test-rule/TestRule.ql:51,7-26)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL.
+ *              This could allow SSRF attacks. Do not allow arbitrary hosts.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Method m | 
+      m.hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") |
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        this.asExpr() = ma and
+        exists(Annotation a |
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestBody") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestParam") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestHeader") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "CookieValue") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "ModelAttribute")
+        ) and
+        not ma.getArgument(0).getType().isPrimitive()
+      )
+    )
+  }
+}
+
+class URLConstructionSink extends DataFlow::Node {
+  URLConstructionSink() {
+    exists(Constructor c |
+      c.hasQualifiedName("java.net", "URL", "<init>") |
+      exists(ConstructorCall cc |
+        cc.getConstructor() = c and
+        this.asExpr() = cc.getArgument(0)
+      )
+    )
+  }
+}
+
+class URLStringConcatSink extends DataFlow::Node {
+  URLStringConcatSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "concat" or
+       mc.getMethod().getName() = "append" or
+       mc.getMethod().hasName("format")) and
+      exists(DataFlow::Node n | n.asExpr().toString().matches("http(s?)://%(v|s|q).*"))
+    )
+    or
+    exists(AssignExpr ae |
+      ae.getOperator() = ADD_ASSIGN and
+      exists(DataFlow::Node n | n.asExpr().toString().matches("http(s?)://%(v|s|q).*"))
+    )
+  }
+}
+
+module TaintTracking::Configuration cfg {
+  exists(UserInputSource source, URLConstructionSink sink | 
+    cfg.hasFlow(source, sink)
+  )
+  or
+  exists(UserInputSource source, URLStringConcatSink sink |
+    cfg.hasFlow(source, sink)
+  )
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where 
+  source instanceof UserInputSource and
+  (sink instanceof URLConstructionSink or sink instanceof URLStringConcatSink) and
+  cfg.hasFlow(source, sink)
+select sink, source, sink, "User data flows into the host portion of this manually-constructed URL."
+================================================================================
+Timestamp: 2025-10-28 22:07:08
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter
+      where:
+        - op: regex
+          left: annotations
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: "<init>" }
+      arg_index: 0
+  - id: URL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: http(s?)://%(v|s|q).*
+        - op: or
+          conditions:
+            - { left: name, op: eq, right: concat }
+            - { left: name, op: eq, right: append }
+            - { left: name, op: eq, right: operator_+= }
+            - { left: name, op: eq, right: format }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->receiver
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: URL_STRING_CONCAT
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+report:
+  message: User data flows into the host portion of this manually-constructed URL.
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new URL(request.getParameter(\"host\"));"
+    - "\"http://%v\".concat(userInput);"
+  negative:
+    - "new URL(\"https://example.com\");"
+    - "String.format(\"https://%s\", \"example.com\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'PLUS' expecting one of: 'super' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:56,41-45)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:60,1-2)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: getOperator() cannot be resolved for type Expr::BinaryExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:56,10-21)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:47,3-22)
+WARNING: unused class 'UserInputSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+WARNING: unused class 'URLConstructionSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:37,7-26)
+WARNING: unused class 'URLStringConcatSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_7ef567ad/java-security-queries/queries/test-rule/TestRule.ql:46,7-26)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL.
+ *              This could allow SSRF attacks. Do not allow arbitrary hosts.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+import semmle.code.java.dataflow.FlowSources
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") and
+      this.asExpr() = ma and
+      exists(Annotation a |
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestBody") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestParam") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestHeader") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "CookieValue") or
+        a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "ModelAttribute")
+      ) and
+      not ma.getArgument(0).getType().isPrimitive()
+    )
+  }
+}
+
+class URLConstructionSink extends DataFlow::Node {
+  URLConstructionSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.net", "URL") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class URLStringConcatSink extends DataFlow::Node {
+  URLStringConcatSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "concat" or
+       mc.getMethod().getName() = "append" or
+       mc.getMethod().hasName("format")) and
+      mc.getQualifier().toString().matches("http(s?)://.*")
+    )
+    or
+    exists(BinaryExpr be |
+      be.getOperator() = BinaryOperator.PLUS and
+      be.getLeftOperand().toString().matches("http(s?)://.*")
+    )
+  }
+}
+
+class TaintedURLHostConfig extends TaintTracking::Configuration {
+  TaintedURLHostConfig() { this = "TaintedURLHostConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof URLConstructionSink or sink instanceof URLStringConcatSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    TaintTracking::localTaintStep(node1, node2)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedURLHostConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink, "User data flows into the host portion of this manually-constructed URL: $@",
+  source, sink.toString()
+================================================================================
+Timestamp: 2025-10-28 22:10:23
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-url-host
+  kind: taint
+  severity: ERROR
+  message: User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters.
+scope:
+  languages: [java]
+  frameworks: [spring]
+  env: { os: [linux, windows], shell: [bash, sh, powershell] }
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      api:
+        type: javax.servlet.ServletRequest
+        method: getParameter
+      where:
+        - op: regex
+          left: annotations
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: neq
+          left: type
+          right: (Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api: { type: java.net.URL, method: "<init>" }
+      arg_index: 0
+  - id: URL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: http(s?)://%(v|s|q).*
+        - op: or
+          conditions:
+            - { left: name, op: eq, right: concat }
+            - { left: name, op: eq, right: append }
+            - { left: name, op: eq, right: operator_+= }
+            - { left: name, op: eq, right: format }
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: STRING_CONCAT
+    edge: arg->receiver
+    kind: taint
+flows:
+  - source: USER_INPUT
+    sink: URL_CONSTRUCTION
+    through: [ARG_TO_PARAM*]
+  - source: USER_INPUT
+    sink: URL_STRING_CONCAT
+    through: [ARG_TO_PARAM*, STRING_CONCAT*]
+report:
+  message: User data flows into the host portion of this manually-constructed URL.
+  locations: ["source","sink","path"]
+  evidence: { capture: [{ argument: 0 }] }
+tests:
+  positive:
+    - "new URL(request.getParameter(\"host\"));"
+    - "\"http://%v\".concat(userInput);"
+  negative:
+    - "new URL(\"https://example.com\");"
+    - "String.format(\"https://%s\", \"example.com\");"
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::MethodAccessNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:22,14-40)
+ERROR: could not resolve type DataFlow::ConstructorCallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:43,14-43)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:67,32-60)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:52,3-22)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:70,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5c7291a1/java-security-queries/queries/test-rule/TestRule.ql:74,22-28)
+Rule Content:
+/**
+ * @name Tainted URL Host
+ * @description User data flows into the host portion of this manually-constructed URL.
+ *              This could allow SSRF attacks. Do not allow arbitrary hosts.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-url-host
+ * @tags security
+ *       external/cwe/cwe-918
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Method m | 
+      m.hasQualifiedName("javax.servlet", "ServletRequest", "getParameter") |
+      exists(DataFlow::MethodAccessNode ma |
+        ma.getMethod() = m and
+        this.asExpr() = ma and
+        exists(Annotation a |
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestBody") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "PathVariable") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestParam") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "RequestHeader") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "CookieValue") or
+          a.getType().hasQualifiedName("org.springframework.web.bind.annotation", "ModelAttribute")
+        ) and
+        not ma.getArgument(0).getType().isPrimitive()
+      )
+    )
+  }
+}
+
+class URLConstructionSink extends DataFlow::Node {
+  URLConstructionSink() {
+    exists(Constructor c |
+      c.hasQualifiedName("java.net", "URL", "<init>") |
+      exists(DataFlow::ConstructorCallNode cc |
+        cc.getConstructor() = c and
+        this.asExpr() = cc.getArgument(0)
+      )
+    )
+  }
+}
+
+class URLStringConcatSink extends DataFlow::Node {
+  URLStringConcatSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getName() = "concat" or
+       mc.getMethod().getName() = "append" or
+       mc.getMethod().hasName("format")) and
+      mc.getQualifier().toString().matches("http(s?)://.*")
+    )
+    or
+    exists(BinaryExpr be |
+      be.getOp().toString() = "+" and
+      be.getLeftOperand().toString().matches("http(s?)://.*")
+    )
+  }
+}
+
+class TaintedURLConfig extends TaintTracking::Configuration {
+  TaintedURLConfig() { this = "TaintedURLConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof URLConstructionSink or sink instanceof URLStringConcatSink
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintedURLConfig config
+where config.hasFlow(source, sink)
+select sink, "User data flows into the host portion of this manually-constructed URL: $@", 
+  source, sink.toString()
+================================================================================
