@@ -63,7 +63,7 @@ def write_sample_code(sample_file: str, language: str = "python"):
 
 
 def run_cmd(cmd, cwd=None, timeout=cmd_timeout):
-    """运行子进程命令并返回 (returncode, stdout, stderr)"""
+  
     try:
         proc = subprocess.run(
             cmd,
