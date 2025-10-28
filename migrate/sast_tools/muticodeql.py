@@ -138,12 +138,12 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
             return result
 
         # 安装依赖
-        # print(f"[📦] ({thread_id}) 安装 CodeQL 依赖包...")
-        # code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
-        # if code != 0:
-        #     result["valid"] = False
-        #     result["error"] = f"Pack install failed: {err_pack.strip()}"
-        #     return result
+        print(f"[📦] ({thread_id}) 安装 CodeQL 依赖包...")
+        code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
+        if code != 0:
+            result["valid"] = False
+            result["error"] = f"Pack install failed: {err_pack.strip()}"
+            return result
 
         # 运行查询
         print(f"[🚀] ({thread_id}) 正在运行规则验证...")
@@ -205,9 +205,11 @@ select call, "Use of exec function detected"
 
     ensure_dir(base_path)
     print(f"[{datetime.now()}] Starting validation with {max_workers} workers...")
-    result = validate_codeql_rule(sample_rule, base_path, language = "python")
+    result = validate_codeql_rule(sample_rule, base_path, language = "java")
     print(result)
-    # results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="python")
+    if result["valid"]:
+        print("[✅] 规则验证通过！")
+    results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="python")
 
     # summary_path = os.path.join(base_path, "validation_summary.json")
     # with open(summary_path, "w", encoding="utf-8") as f:
