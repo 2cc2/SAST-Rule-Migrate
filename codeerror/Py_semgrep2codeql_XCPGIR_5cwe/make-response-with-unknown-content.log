@@ -1,100 +1,855 @@
-Timestamp: 2025-10-28 13:50:43
+Timestamp: 2025-10-28 18:30:02
 Attempt: 1
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:45,30-43)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:12,35-43)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:13,22-30)
-ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:14,12-20)
-ERROR: could not resolve type StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:17,30-43)
-ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:18,16-24)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:28,20-28)
-ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:29,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:35,25-33)
-ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:36,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:47,6-14)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:47,33-41)
-ERROR: could not resolve type MakeResponseXSSFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:47,58-77)
-ERROR: could not resolve variable call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:25,27-31)
-WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:13,13-21)
-WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:28,13-19)
-WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_07c1f58e/python-security-queries/queries/test-rule/TestRule.ql:35,13-24)
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: make-response-with-unknown-content
+  kind: taint
+  severity: WARNING
+  message: "Be careful with `flask.make_response()`. If this response is rendered onto a webpage, this could create a cross-site scripting (XSS) vulnerability. `flask.make_response()` will not autoescape HTML. If you are rendering HTML, write your HTML in a template file and use `flask.render_template()` which will take care of escaping. If you are returning data from an API, consider using `flask.jsonify()`."
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: UNTRUSTED_CONTENT
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      where:
+        - op: not
+          patterns:
+            - pattern: flask.make_response()
+            - pattern: flask.make_response("...", ...)
+            - pattern: 'flask.make_response({"...": "..."}, ...)'
+            - pattern: flask.make_response(flask.redirect(...), ...)
+            - pattern: flask.make_response(flask.render_template(...), ...)
+            - pattern: flask.make_response(flask.jsonify(...), ...)
+            - pattern: flask.make_response(json.dumps(...), ...)
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_RENDER
+    match:
+      node: CALL
+      api: { package: flask, method: render_template }
+    effect: neutralize
+  - id: SAFE_JSON
+    match:
+      node: CALL
+      api: { package: flask, method: jsonify }
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_RESPONSE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNTRUSTED_CONTENT
+    sink: XSS_SINK
+    through: [ARG_TO_RESPONSE]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(flask.render_template)"
+          - pattern: "CALL(flask.jsonify)"
+          - pattern: "CALL(json.dumps)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{ argument: 0 }]
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input '|' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:28,75-76)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:34,1-2)
+ERROR: could not resolve module semantic (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:10,8-16)
+ERROR: could not resolve module semmle.python.security.XSS (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:12,8-34)
+ERROR: could not resolve module semmle.python.web.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:14,8-31)
+ERROR: getImportedPackageCall(string, string, string) cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:18,55-77)
+ERROR: getImportedPackageCall(string, string, <unknown>) cannot be resolved for type SafeContentCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:27,55-77)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: could not resolve variable funcName (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:27,101-109)
+WARNING: unused class 'FlaskMakeResponseCall' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:16,7-28)
+WARNING: unused class 'SafeContentCall' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_bce95bba/python-security-queries/queries/test-rule/TestRule.ql:25,7-22)
+Rule Content:
+/**
+ * @name make-response-with-unknown-content
+ * @description Detects unsafe usage of flask.make_response() that could lead to XSS vulnerabilities
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/make-response-with-unknown-content
+ */
+
+import python
+import semantic
+import DataFlow
+import semmle.python.security.XSS
+import semmle.python.ApiGraphs
+import semmle.python.web.Flask
+
+class FlaskMakeResponseCall extends API::CallNode {
+  FlaskMakeResponseCall() {
+    exists(string moduleName, string className | this.getImportedPackageCall(moduleName, className, "make_response") |
+      moduleName = "flask" or
+      moduleName = "Flask"
+    )
+  }
+}
+
+class SafeContentCall extends API::CallNode {
+  SafeContentCall() {
+    exists(string moduleName, string className | this.getImportedPackageCall(moduleName, className, funcName) |
+      moduleName = "flask" or moduleName = "Flask" or moduleName = "json" |
+      funcName = "render_template" or
+      funcName = "jsonify" or
+      funcName = "dumps"
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "make-response-with-unknown-content" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(FlaskMakeResponseCall call |
+      source.asExpr() = call.getArgument(0) and
+      not exists(SafeContentCall safeCall |
+        call.getArgument(0).getAChildExpr*() = safeCall
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FlaskMakeResponseCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeContentCall call |
+      sanitizer.asExpr() = call
+    )
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential XSS vulnerability from unsafe content in flask.make_response(). " +
+  "Use flask.render_template(), flask.jsonify() or json.dumps() for safe content rendering.", 
+  source, sink
 ================================================================================
-Timestamp: 2025-10-28 13:53:15
+Timestamp: 2025-10-28 18:32:17
 Attempt: 2
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:14,8-16)
-ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:16,44-72)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:19,31-39)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:20,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:23,16-24)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:28,16-24)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:39,29-37)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:40,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:46,34-42)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:47,12-20)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:56,6-14)
-ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:56,33-41)
-WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:19,22-30)
-WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:39,22-28)
-WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e561f339/python-security-queries/queries/test-rule/TestRule.ql:46,22-33)
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: make-response-with-unknown-content
+  kind: taint
+  severity: WARNING
+  message: "Be careful with `flask.make_response()`. If this response is rendered onto a webpage, this could create a cross-site scripting (XSS) vulnerability. `flask.make_response()` will not autoescape HTML. If you are rendering HTML, write your HTML in a template file and use `flask.render_template()` which will take care of escaping. If you are returning data from an API, consider using `flask.jsonify()`."
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: UNTRUSTED_CONTENT
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      where:
+        - op: not
+          patterns:
+            - pattern: flask.make_response()
+            - pattern: flask.make_response("...", ...)
+            - pattern: 'flask.make_response({"...": "..."}, ...)'
+            - pattern: flask.make_response(flask.redirect(...), ...)
+            - pattern: flask.make_response(flask.render_template(...), ...)
+            - pattern: flask.make_response(flask.jsonify(...), ...)
+            - pattern: flask.make_response(json.dumps(...), ...)
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_RENDER
+    match:
+      node: CALL
+      api: { package: flask, method: render_template }
+    effect: neutralize
+  - id: SAFE_JSON
+    match:
+      node: CALL
+      api: { package: flask, method: jsonify }
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_RESPONSE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNTRUSTED_CONTENT
+    sink: XSS_SINK
+    through: [ARG_TO_RESPONSE]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(flask.render_template)"
+          - pattern: "CALL(flask.jsonify)"
+          - pattern: "CALL(json.dumps)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{ argument: 0 }]
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:10,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:11,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:13,37-45)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:15,10-19)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:20,30-38)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:22,10-19)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:23,10-19)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:27,28-36)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:29,10-19)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:30,10-19)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:31,10-19)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:35,22-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:38,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:50,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:56,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:62,18-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:62,45-53)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:38,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_666b6b03/python-security-queries/queries/test-rule/TestRule.ql:56,22-33)
+Rule Content:
+/**
+ * @name make-response-with-unknown-content
+ * @description Detects unsafe usage of flask.make_response() that could lead to XSS vulnerabilities
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/make-response-with-unknown-content
+ */
+
+import python
+import DataFlow
+import DataFlow::PathGraph
+
+class FlaskMakeResponseCall extends DataFlow::CallNode {
+  FlaskMakeResponseCall() {
+    this.getTarget().toString() = "flask.make_response" or
+    this.getTarget().toString() = "Flask.make_response"
+  }
+}
+
+class SafeRenderCall extends DataFlow::CallNode {
+  SafeRenderCall() {
+    this.getTarget().toString() = "flask.render_template" or
+    this.getTarget().toString() = "Flask.render_template"
+  }
+}
+
+class SafeJsonCall extends DataFlow::CallNode {
+  SafeJsonCall() {
+    this.getTarget().toString() = "flask.jsonify" or
+    this.getTarget().toString() = "Flask.jsonify" or
+    this.getTarget().toString() = "json.dumps"
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "make-response-with-unknown-content" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(FlaskMakeResponseCall call |
+      source.asExpr() = call.getArgument(0) and
+      not exists(SafeRenderCall safeRender |
+        call.getArgument(0).getExpr().getAChildExpr*() = safeRender
+      ) and
+      not exists(SafeJsonCall safeJson |
+        call.getArgument(0).getExpr().getAChildExpr*() = safeJson
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FlaskMakeResponseCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeRenderCall call | sanitizer.asExpr() = call) or
+    exists(SafeJsonCall call | sanitizer.asExpr() = call)
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential XSS vulnerability from unsafe content in flask.make_response(). " +
+  "Use flask.render_template(), flask.jsonify() or json.dumps() for safe content rendering.", 
+  source, sink
 ================================================================================
-Timestamp: 2025-10-28 13:55:07
+Timestamp: 2025-10-28 18:34:17
 Attempt: 3
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:19,31-39)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:20,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:20,12-30)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:24,16-24)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:24,16-34)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:34,29-37)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:35,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:35,12-30)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:37,12-18)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:41,34-42)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:42,12-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:42,12-30)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:46,17-23)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:51,6-14)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:51,6-24)
-ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:51,33-41)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:51,33-51)
-ERROR: hasFlow(<unknown>, <unknown>) cannot be resolved for type MakeResponseXSSConfiguration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:52,14-21)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:19,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:34,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:41,22-33)
-ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:13,1-44)
-ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cdf9b9a2/python-security-queries/queries/test-rule/TestRule.ql:14,1-43)
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: make-response-with-unknown-content
+  kind: taint
+  severity: WARNING
+  message: "Be careful with `flask.make_response()`. If this response is rendered onto a webpage, this could create a cross-site scripting (XSS) vulnerability. `flask.make_response()` will not autoescape HTML. If you are rendering HTML, write your HTML in a template file and use `flask.render_template()` which will take care of escaping. If you are returning data from an API, consider using `flask.jsonify()`."
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: UNTRUSTED_CONTENT
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      where:
+        - op: not
+          patterns:
+            - pattern: flask.make_response()
+            - pattern: flask.make_response("...", ...)
+            - pattern: 'flask.make_response({"...": "..."}, ...)'
+            - pattern: flask.make_response(flask.redirect(...), ...)
+            - pattern: flask.make_response(flask.render_template(...), ...)
+            - pattern: flask.make_response(flask.jsonify(...), ...)
+            - pattern: flask.make_response(json.dumps(...), ...)
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_RENDER
+    match:
+      node: CALL
+      api: { package: flask, method: render_template }
+    effect: neutralize
+  - id: SAFE_JSON
+    match:
+      node: CALL
+      api: { package: flask, method: jsonify }
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_RESPONSE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNTRUSTED_CONTENT
+    sink: XSS_SINK
+    through: [ARG_TO_RESPONSE]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(flask.render_template)"
+          - pattern: "CALL(flask.jsonify)"
+          - pattern: "CALL(json.dumps)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{ argument: 0 }]
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:13,37-55)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:15,10-19)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:17,12-21)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:23,30-48)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:33,28-46)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:36,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:37,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:38,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:40,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:51,14-20)
+ERROR: could not resolve type DataFlow::ExprNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:52,46-64)
+ERROR: could not resolve type DataFlow::ExprNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:53,44-62)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:59,12-18)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:64,44-50)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:65,42-48)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:69,18-36)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:69,45-63)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:57,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_80aed264/python-security-queries/queries/test-rule/TestRule.ql:63,22-33)
+Rule Content:
+/**
+ * @name make-response-with-unknown-content
+ * @description Detects unsafe usage of flask.make_response() that could lead to XSS vulnerabilities
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/make-response-with-unknown-content
+ */
+
+import python
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
+
+class FlaskMakeResponseCall extends DataFlow::CallNode {
+  FlaskMakeResponseCall() {
+    this.getTarget().getName() = "make_response" and
+    (
+      this.getTarget().getQualifier().getName() = "flask" or
+      this.getTarget().getQualifier().getName() = "Flask"
+    )
+  }
+}
+
+class SafeRenderCall extends DataFlow::CallNode {
+  SafeRenderCall() {
+    this.getTarget().getName() = "render_template" and
+    (
+      this.getTarget().getQualifier().getName() = "flask" or
+      this.getTarget().getQualifier().getName() = "Flask"
+    )
+  }
+}
+
+class SafeJsonCall extends DataFlow::CallNode {
+  SafeJsonCall() {
+    (
+      (this.getTarget().getName() = "jsonify" and
+       (this.getTarget().getQualifier().getName() = "flask" or
+        this.getTarget().getQualifier().getName() = "Flask")
+      ) or
+      (this.getTarget().getName() = "dumps" and
+       this.getTarget().getQualifier().getName() = "json")
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "make-response-with-unknown-content" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(FlaskMakeResponseCall call |
+      source.asExpr() = call.getArgument(0) and
+      not exists(SafeRenderCall safe | safe.(DataFlow::ExprNode) = call.getArgument(0).getAChildExpr*()) and
+      not exists(SafeJsonCall safe | safe.(DataFlow::ExprNode) = call.getArgument(0).getAChildExpr*())
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FlaskMakeResponseCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeRenderCall call | sanitizer.asExpr() = call) or
+    exists(SafeJsonCall call | sanitizer.asExpr() = call)
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential XSS vulnerability from unsafe content in flask.make_response(). " +
+  "Use flask.render_template(), flask.jsonify() or json.dumps() for safe content rendering.",
+  source, sink
 ================================================================================
-Timestamp: 2025-10-28 13:56:52
+Timestamp: 2025-10-28 18:36:25
 Attempt: 4
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve module semmle.python.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:14,8-30)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:20,12-30)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:24,16-34)
-ERROR: asExpr() cannot be resolved for type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:35,12-30)
-ERROR: asExpr() cannot be resolved for type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:37,12-18)
-ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:41,34-58)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:42,12-30)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:51,6-24)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:51,33-51)
-ERROR: hasFlow(<unknown>, <unknown>) cannot be resolved for type MakeResponseXSSConfiguration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_87e4dc7c/python-security-queries/queries/test-rule/TestRule.ql:52,14-21)
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: make-response-with-unknown-content
+  kind: taint
+  severity: WARNING
+  message: "Be careful with `flask.make_response()`. If this response is rendered onto a webpage, this could create a cross-site scripting (XSS) vulnerability. `flask.make_response()` will not autoescape HTML. If you are rendering HTML, write your HTML in a template file and use `flask.render_template()` which will take care of escaping. If you are returning data from an API, consider using `flask.jsonify()`."
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: UNTRUSTED_CONTENT
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      where:
+        - op: not
+          patterns:
+            - pattern: flask.make_response()
+            - pattern: flask.make_response("...", ...)
+            - pattern: 'flask.make_response({"...": "..."}, ...)'
+            - pattern: flask.make_response(flask.redirect(...), ...)
+            - pattern: flask.make_response(flask.render_template(...), ...)
+            - pattern: flask.make_response(flask.jsonify(...), ...)
+            - pattern: flask.make_response(json.dumps(...), ...)
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_RENDER
+    match:
+      node: CALL
+      api: { package: flask, method: render_template }
+    effect: neutralize
+  - id: SAFE_JSON
+    match:
+      node: CALL
+      api: { package: flask, method: jsonify }
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_RESPONSE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNTRUSTED_CONTENT
+    sink: XSS_SINK
+    through: [ARG_TO_RESPONSE]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(flask.render_template)"
+          - pattern: "CALL(flask.jsonify)"
+          - pattern: "CALL(json.dumps)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{ argument: 0 }]
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:19,12-21)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:26,10-19)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:29,12-21)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:37,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:38,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:39,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:42,13-22)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:47,22-50)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:52,30-41)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:53,16-27)
+ERROR: getTarget() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:55,18-27)
+ERROR: getQualifier() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:56,18-30)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:57,14-25)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:60,14-25)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:63,14-25)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:70,28-39)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:80,18-36)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:80,45-63)
+ERROR: Exprs::Expr is incompatible with SafeRenderCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:75,53-54)
+ERROR: Exprs::Expr is incompatible with SafeJsonCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:76,51-52)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:50,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:68,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ddbc3f9a/python-security-queries/queries/test-rule/TestRule.ql:74,22-33)
+Rule Content:
+/**
+ * @name make-response-with-unknown-content
+ * @description Detects unsafe usage of flask.make_response() that could lead to XSS vulnerabilities
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/make-response-with-unknown-content
+ */
+
+import python
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.new.TaintTracking
+import semmle.python.dataflow.new.DataFlow
+
+class FlaskMakeResponseCall extends API::CallNode {
+  FlaskMakeResponseCall() {
+    this.getTarget().hasName("make_response") and
+    (
+      this.getTarget().getQualifier().hasName("flask") or
+      this.getTarget().getQualifier().hasName("Flask")
+    )
+  }
+}
+
+class SafeRenderCall extends API::CallNode {
+  SafeRenderCall() {
+    this.getTarget().hasName("render_template") and
+    (
+      this.getTarget().getQualifier().hasName("flask") or
+      this.getTarget().getQualifier().hasName("Flask")
+    )
+  }
+}
+
+class SafeJsonCall extends API::CallNode {
+  SafeJsonCall() {
+    (
+      (this.getTarget().hasName("jsonify") and
+       (this.getTarget().getQualifier().hasName("flask") or
+        this.getTarget().getQualifier().hasName("Flask"))
+      ) or
+      (this.getTarget().hasName("dumps") and
+       this.getTarget().getQualifier().hasName("json"))
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "make-response-with-unknown-content" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(FlaskMakeResponseCall call |
+      source.asExpr() = call.getArgument(0) and
+      not call.getArgument(0).getStringValue() and
+      not exists(API::CallNode redirect | 
+        redirect.getTarget().hasName("redirect") and
+        redirect.getQualifier().hasName(["flask", "Flask"]) and
+        call.getArgument(0).getAChildExpr*() = redirect
+      ) and
+      not exists(SafeRenderCall safe | 
+        call.getArgument(0).getAChildExpr*() = safe
+      ) and
+      not exists(SafeJsonCall safe |
+        call.getArgument(0).getAChildExpr*() = safe
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FlaskMakeResponseCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeRenderCall call | sanitizer.asExpr() = call) or
+    exists(SafeJsonCall call | sanitizer.asExpr() = call)
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential XSS vulnerability from unsafe content in flask.make_response(). " +
+  "Use flask.render_template(), flask.jsonify() or json.dumps() for safe content rendering.",
+  source, sink
 ================================================================================
-Timestamp: 2025-10-28 13:58:39
+Timestamp: 2025-10-28 18:38:43
 Attempt: 5
-Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql.
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:20,12-30)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:24,16-34)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:30,14-20)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:35,12-30)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:37,12-18)
-ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:42,12-30)
-ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:46,17-23)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:51,6-24)
-ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:51,33-51)
-ERROR: hasFlow(<unknown>, <unknown>) cannot be resolved for type MakeResponseXSSConfiguration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:52,14-21)
-ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:19,22-30)
-ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:34,22-28)
-ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1fb9fa55/python-security-queries/queries/test-rule/TestRule.ql:41,22-33)
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: make-response-with-unknown-content
+  kind: taint
+  severity: WARNING
+  message: "Be careful with `flask.make_response()`. If this response is rendered onto a webpage, this could create a cross-site scripting (XSS) vulnerability. `flask.make_response()` will not autoescape HTML. If you are rendering HTML, write your HTML in a template file and use `flask.render_template()` which will take care of escaping. If you are returning data from an API, consider using `flask.jsonify()`."
+scope:
+  languages: [python]
+  frameworks: [flask]
+
+sources:
+  - id: UNTRUSTED_CONTENT
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      where:
+        - op: not
+          patterns:
+            - pattern: flask.make_response()
+            - pattern: flask.make_response("...", ...)
+            - pattern: 'flask.make_response({"...": "..."}, ...)'
+            - pattern: flask.make_response(flask.redirect(...), ...)
+            - pattern: flask.make_response(flask.render_template(...), ...)
+            - pattern: flask.make_response(flask.jsonify(...), ...)
+            - pattern: flask.make_response(json.dumps(...), ...)
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: CALL
+      api: { package: flask, method: make_response }
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_RENDER
+    match:
+      node: CALL
+      api: { package: flask, method: render_template }
+    effect: neutralize
+  - id: SAFE_JSON
+    match:
+      node: CALL
+      api: { package: flask, method: jsonify }
+    effect: neutralize
+
+propagations:
+  - id: ARG_TO_RESPONSE
+    edge: arg->param
+    kind: taint
+
+flows:
+  - source: UNTRUSTED_CONTENT
+    sink: XSS_SINK
+    through: [ARG_TO_RESPONSE]
+    constraints:
+      path:
+        must_not:
+          - pattern: "CALL(flask.render_template)"
+          - pattern: "CALL(flask.jsonify)"
+          - pattern: "CALL(json.dumps)"
+
+report:
+  locations: ["source", "sink"]
+  evidence:
+    capture: [{ argument: 0 }]
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
+ERROR: getTarget() cannot be resolved for type FlaskMakeResponseCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:19,12-21)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:26,10-19)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: getTarget() cannot be resolved for type SafeRenderCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:29,12-21)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:37,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:38,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:39,14-23)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:41,13-22)
+ERROR: getTarget() cannot be resolved for type SafeJsonCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:42,13-22)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:50,31-39)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:52,30-41)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:53,16-27)
+ERROR: getTarget() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:55,18-27)
+ERROR: getQualifier() cannot be resolved for type ApiGraphs::API::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:56,18-30)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:57,14-25)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:60,14-25)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:63,14-25)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:68,29-37)
+ERROR: getArgument(int) cannot be resolved for type FlaskMakeResponseCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:70,28-39)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:74,34-42)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:80,18-26)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:80,18-36)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:80,45-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:80,45-63)
+ERROR: predicate 'isSource' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:50,22-30)
+ERROR: predicate 'isSink' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:68,22-28)
+ERROR: predicate 'isSanitizer' has relational type DataFlowPublic::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:74,22-33)
+ERROR: Exprs::Expr is incompatible with SafeRenderCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:75,53-54)
+ERROR: Exprs::Expr is incompatible with SafeJsonCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:76,51-52)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:10,1-31)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:11,1-44)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f48367db/python-security-queries/queries/test-rule/TestRule.ql:12,1-39)
+Rule Content:
+/**
+ * @name make-response-with-unknown-content
+ * @description Detects unsafe usage of flask.make_response() that could lead to XSS vulnerabilities
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/make-response-with-unknown-content
+ */
+
+import python
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.TaintTracking
+import semmle.python.dataflow.DataFlow
+
+class FlaskMakeResponseCall extends API::CallNode {
+  FlaskMakeResponseCall() {
+    this.getTarget().hasName("make_response") and
+    (
+      this.getTarget().getQualifier().hasName("flask") or
+      this.getTarget().getQualifier().hasName("Flask")
+    )
+  }
+}
+
+class SafeRenderCall extends API::CallNode {
+  SafeRenderCall() {
+    this.getTarget().hasName("render_template") and
+    (
+      this.getTarget().getQualifier().hasName("flask") or
+      this.getTarget().getQualifier().hasName("Flask")
+    )
+  }
+}
+
+class SafeJsonCall extends API::CallNode {
+  SafeJsonCall() {
+    (
+      (this.getTarget().hasName("jsonify") and
+       (this.getTarget().getQualifier().hasName("flask") or
+        this.getTarget().getQualifier().hasName("Flask"))
+      ) or
+      (this.getTarget().hasName("dumps") and
+       this.getTarget().getQualifier().hasName("json"))
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "make-response-with-unknown-content" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(FlaskMakeResponseCall call |
+      source.asExpr() = call.getArgument(0) and
+      not call.getArgument(0).getStringValue() and
+      not exists(API::CallNode redirect | 
+        redirect.getTarget().hasName("redirect") and
+        redirect.getQualifier().hasName(["flask", "Flask"]) and
+        call.getArgument(0).getAChildExpr*() = redirect
+      ) and
+      not exists(SafeRenderCall safe | 
+        call.getArgument(0).getAChildExpr*() = safe
+      ) and
+      not exists(SafeJsonCall safe |
+        call.getArgument(0).getAChildExpr*() = safe
+      )
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FlaskMakeResponseCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(SafeRenderCall call | sanitizer.asExpr() = call) or
+    exists(SafeJsonCall call | sanitizer.asExpr() = call)
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential XSS vulnerability from unsafe content in flask.make_response(). " +
+  "Use flask.render_template(), flask.jsonify() or json.dumps() for safe content rendering.",
+  source, sink
 ================================================================================

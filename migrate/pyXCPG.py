@@ -70,7 +70,7 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
     llm = LLM(
         system_prompt="You are a skilled vulnerability detection rule designer.",
         model="deepseek-v3",
-        verbose=True
+        verbose=False
     )
 
     input_filename = os.path.splitext(os.path.basename(input_file))[0]
@@ -116,7 +116,12 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
             thread_print(f"🙅 验证失败：{result['error']}")
             with open(log_file, "a") as log:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                log.write(f"Timestamp: {timestamp}\nAttempt: {attempt}\nError: {result['error']}\n{'=' * 80}\n")
+                log.write(f"Timestamp: {timestamp}\n")
+                log.write(f"Attempt: {attempt}\n")
+                log.write(f"IR Content:\n{IR_content}\n")
+                log.write(f"Error: {result['error']}\n")
+                log.write(f"Rule Content:\n{rule_content}\n")
+                log.write(f"{'=' * 80}\n")
 
             # 生成修复建议
             prompt = AbstractPrompt().format(code=rule_content, error=result['error'], language="python", sast=sast)

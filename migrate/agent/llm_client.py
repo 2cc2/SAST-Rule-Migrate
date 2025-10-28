@@ -43,7 +43,7 @@ class LLMBot:
         }
         response = requests.post(self.url, headers=self.headers, json=data)
         response_json = response.json()
-        print(response_json)
+        # print(response_json)
         if "choices" not in response_json or not response_json["choices"]:
             raise RuntimeError("Invalid response: 'choices' field is missing or empty.")
         if "message" not in response_json["choices"][0] or "content" not in response_json["choices"][0]["message"]:
