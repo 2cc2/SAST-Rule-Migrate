@@ -72,6 +72,7 @@ class LLM:
         encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
         tokenized = encoding.encode(text)
         return len(tokenized)
+        
     def ExtIR(self, prompt: str, max_tokens: int = 3000) -> str:
         """
         GET IR
@@ -80,7 +81,7 @@ class LLM:
             print(f"Input prompt: {prompt}")
             print(f"Max tokens: {max_tokens}")
 
-        response = self.bot.inference(prompt, max_tokens=max_tokens,preserve_context=False)
+        response = self.bot.inference(prompt, max_tokens=max_tokens,preserve_context=True)
         if self.verbose:
             print(f"LLM response: {response}")
         return response.strip()

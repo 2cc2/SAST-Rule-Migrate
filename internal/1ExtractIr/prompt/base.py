@@ -164,3 +164,33 @@ sanitizers:
     effect: { remove: ["path(relative)"], add: ["path(absolute)"] }
 ```
 """
+specific_content ="""
+```yaml 
+<output>   
+请参照文档内容直接返回如下格式的yaml文件，不输出其他内容,要求不漏不缺严格正确：
+xcpgir_version: "1.0"  # XCPG-IR 的版本号
+rule:
+  id: string            # 规则的唯一标识符
+  name: string          # 规则的名称（可选）
+  kind:                 # 规则的类型
+    - taint             # 污点分析规则
+    - pattern           # 模式匹配规则
+    - hybrid            # 混合规则
+    - value             # 值分析规则
+  severity:             # 规则的严重性级别
+    - INFO              # 信息提示
+    - WARNING           # 警告
+    - ERROR             # 错误
+    - CRITICAL          # 严重错误
+  message: string       # 规则的描述信息
+  tags:                 # 规则的标签（可选）
+    - string            # 例如：语言、框架等
+  metadata:             # 元信息（可选）
+    language: string    # 适用的语言（如 Python、Java）
+    category: string    # 规则分类（如 安全、性能）
+  sources: [...]        # 定义规则的 Source 节点
+  sinks: [...]          # 定义规则的 Sink 节点
+  sanitizers: [...]     # 定义规则的 Sanitizer 节点
+  propagations: [...]   # 定义规则的传播路径
+</output>
+"""
