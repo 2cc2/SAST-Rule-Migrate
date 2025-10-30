@@ -1,0 +1,78 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: pg8000-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a pg8000 Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries or prepared statements instead."
+  metadata:
+    language: python
+    category: security
+    references:
+      - https://github.com/tlocke/pg8000
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+
+sources:
+  - id: STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: right.value
+          right: ".*\\+.*|.*\\..*format\\(.*\\).*|.*%.*\\(.*\\).*|.*f'.*\\{.*\\}.*'.*"
+  - id: VAR_MODIFICATION
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: left.name
+          right: ".*QUERY.*"
+        - op: regex
+          left: right.value
+          right: ".*\\+.*|.*\\..*format\\(.*\\).*|.*%.*\\(.*\\).*|.*f'.*\\{.*\\}.*'.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        package: pg8000
+        type: Connection
+        method: run|execute|executemany|prepare
+      arg_index: 1
+    where:
+      - op: neq
+        left: arg[1].type
+        right: "string"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        package: pg8000
+        type: Connection
+        method: run|execute|executemany|prepare
+      arg_index: 1
+    where:
+      - op: eq
+        left: arg[1].type
+        right: "string"
+      - op: regex
+        left: arg[1].value
+        right: "^[^+%{}]*$"
+    effect: neutralize
+
+propagations:
+  - id: STRING_OPERATIONS
+    edge: DFG
+    kind: taint
+    where:
+      - op: regex
+        left: source.value
+        right: ".*\\+.*|.*\\..*format\\(.*\\).*|.*%.*\\(.*\\).*|.*f'.*\\{.*\\}.*'.*"
+```

@@ -1,0 +1,60 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "asyncpg-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries or prepared statements instead."
+  metadata:
+    language: python
+    category: security
+    references:
+      - "https://github.com/MagicStack/asyncpg"
+      - "https://magicstack.github.io/asyncpg/current/"
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: ".*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        package: asyncpg
+        method: "(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: ".*\\+.*|.*\\..*format\\(.*\\)|.*%.*\\(.*\\)|f'.*\\{.*\\}.*'"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        package: asyncpg
+        method: "(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)"
+    effect: neutralize
+    scope:
+      sinks: [SQL_EXEC]
+    where:
+      - op: regex
+        left: arg[0].value
+        right: "^\\$[0-9]+$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```

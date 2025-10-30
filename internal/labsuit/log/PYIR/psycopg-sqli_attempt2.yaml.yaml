@@ -1,0 +1,77 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "psycopg-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries or prepared statements instead."
+  metadata:
+    language: "python"
+    category: "security"
+    cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    technology: ["psycopg"]
+
+sources:
+  - id: "STRING_CONCAT"
+    match:
+      node: "CALL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: ".*\+.*"
+  - id: "STRING_FORMAT"
+    match:
+      node: "CALL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: ".*\.format\(.*\)"
+  - id: "F_STRING"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "^f'.*\{.*\}.*'$"
+
+sinks:
+  - id: "SQL_EXEC"
+    match:
+      node: "CALL"
+      api:
+        type: "psycopg2"
+        method: ["execute", "executemany", "mogrify"]
+      arg_index: 0
+
+sanitizers:
+  - id: "SAFE_CONCAT"
+    match:
+      node: "LITERAL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "^\"[^\"]*\"\+\"[^\"]*\"$"
+  - id: "SAFE_FORMAT"
+    match:
+      node: "CALL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: ".*\.format\(\)"
+  - id: "PARAMETERIZED_QUERY"
+    match:
+      node: "CALL"
+      api:
+        type: "psycopg2"
+        method: ["execute", "executemany", "mogrify"]
+      where:
+        - op: "regex"
+          left: "value"
+          right: "^SELECT.*%s.*"
+
+propagations:
+  - id: "ARG_TO_PARAM"
+    edge: "arg->param"
+    kind: "taint"
+```

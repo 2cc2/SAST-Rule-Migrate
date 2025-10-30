@@ -1,0 +1,69 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-asyncio-exec-audit
+  kind: taint
+  severity: ERROR
+  message: "Detected subprocess function '$LOOP.subprocess_exec' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'."
+  tags:
+    - python
+    - asyncio
+  metadata:
+    language: python
+    category: security
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    cwe:
+      - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    references:
+      - https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.subprocess_exec
+      - https://docs.python.org/3/library/shlex.html
+      - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+
+sources:
+  - id: DYNAMIC_SUBPROCESS_EXEC
+    match:
+      node: CALL
+      api:
+        type: asyncio.loop
+        method: subprocess_exec
+      where:
+        - op: not_regex
+          left: arg[1].value
+          right: "^.+$"
+        - op: not_regex
+          left: arg[1].elements[0].value
+          right: "^(sh|bash|ksh|csh|tcsh|zsh)$"
+
+sinks:
+  - id: SHELL_SUBPROCESS_EXEC
+    match:
+      node: CALL
+      api:
+        type: asyncio.loop
+        method: subprocess_exec
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^(sh|bash|ksh|csh|tcsh|zsh)$"
+        - op: eq
+          left: arg[2].value
+          right: "-c"
+
+sanitizers:
+  - id: SHLEX_ESCAPE
+    match:
+      node: CALL
+      api:
+        type: shlex
+        method: escape
+    effect: neutralize
+    scope:
+      sinks: [SHELL_SUBPROCESS_EXEC]
+
+propagations:
+  - id: ARG_TO_ARG
+    edge: arg->arg
+    kind: taint
+```

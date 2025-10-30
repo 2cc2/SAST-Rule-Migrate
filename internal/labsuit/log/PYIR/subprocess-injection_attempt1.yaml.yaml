@@ -1,0 +1,97 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: subprocess-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Detected user input entering a `subprocess` call unsafely. This could
+    result in a command injection vulnerability. An attacker could use this
+    vulnerability to execute arbitrary commands on the host, which allows
+    them to download malware, scan sensitive data, or run any command they
+    wish on the server. Do not let users choose the command to run. In general,
+    prefer to use Python API versions of system commands. If you must use subprocess,
+    use a dictionary to allowlist a set of commands.
+  metadata:
+    language: python
+    category: security
+    technology:
+    - flask
+    owasp:
+    - A01:2017 - Injection
+    - A03:2021 - Injection
+    cwe:
+    - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    references:
+    - https://semgrep.dev/docs/cheat-sheets/python-command-injection/
+
+sources:
+  - id: FLASK_USER_INPUT
+    match:
+      node: CALL
+      api:
+        package: flask.request
+        methods:
+          - form.get
+          - form.__getitem__
+          - args.get
+          - args.__getitem__
+          - values.get
+          - values.__getitem__
+          - cookies.get
+          - cookies.__getitem__
+          - headers.get
+          - headers.__getitem__
+          - view_args.get
+          - view_args.__getitem__
+          - get_json
+      - id: ROUTE_PARAM
+        match:
+          node: METHOD_PARAMETER_IN
+          where:
+            - op: inside
+              left: METHOD
+              right: "@$APP.route($ROUTE, ...)"
+
+sinks:
+  - id: SUBPROCESS_CALL
+    match:
+      node: CALL
+      api:
+        package: subprocess
+        methods:
+          - Popen
+          - run
+          - call
+          - check_call
+          - check_output
+      where:
+        - op: not_eq
+          left: arg[0].value
+          right: "..."
+        - op: not_eq
+          left: arg[0].value[0].value
+          right: "..."
+        - op: not_regex
+          left: arg[0].value[0].value
+          right: "^(sh|bash|ksh|csh|tcsh|zsh)$"
+        - op: not_regex
+          left: arg[0].value[0].value
+          right: "^(python|python\\d)$"
+
+sanitizers:
+  - id: DICT_KEY_LOOKUP
+    match:
+      node: CALL
+      api:
+        package: builtins
+        method: dict.__getitem__
+    effect: neutralize
+    scope:
+      focus_meta: $KEY
+
+propagations:
+  - id: DIRECT_ARGUMENT
+    edge: arg->param
+    kind: taint
+```

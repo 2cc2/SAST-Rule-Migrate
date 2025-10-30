@@ -1,0 +1,68 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "dynamic-urllib-use-detected"
+  kind: taint
+  severity: WARNING
+  message: "Detected a dynamic value being used with urllib. urllib supports 'file://' schemes, so a dynamic value controlled by a malicious actor may allow them to read arbitrary files. Audit uses of urllib calls to ensure user data cannot control the URLs, or consider using the 'requests' library instead."
+  metadata:
+    language: python
+    category: security
+    tags:
+      - urllib
+      - file-access
+
+sources:
+  - id: DYNAMIC_URL_INPUT
+    match:
+      node: CALL
+      where:
+        - op: not
+          children:
+            - op: regex
+              left: methodFullName
+              right: "urllib\\..*"
+
+sinks:
+  - id: UNSAFE_URL_OPEN
+    match:
+      node: CALL
+      api:
+        package: urllib
+        methods: [urlopen, urlretrieve]
+      arg_index: 0
+  - id: UNSAFE_OPENER_USE
+    match:
+      node: CALL
+      api:
+        package: urllib
+        methods: [open, retrieve]
+      where:
+        - op: regex
+          left: receiver.type
+          right: ".*(URLopener|FancyURLopener)"
+
+sanitizers:
+  - id: SAFE_URL_CALLS
+    match:
+      node: CALL
+      api:
+        package: urllib
+        methods: [urlopen, urlretrieve, open, retrieve]
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^(?!file://)"
+
+propagations:
+  - id: URL_TO_OPENER
+    edge: arg->param
+    kind: taint
+  - id: OPENER_ASSIGNMENT
+    edge: bind
+    kind: taint
+    where:
+      - op: regex
+        left: rhs.type
+        right: ".*(URLopener|FancyURLopener)"
+```

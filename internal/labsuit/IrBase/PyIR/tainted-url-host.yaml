@@ -1,0 +1,102 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-url-host"
+  kind: taint
+  severity: WARNING
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, or hardcode the correct host."
+  metadata:
+    language: python
+    category: security
+    technology:
+      - flask
+    cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+    owasp: "A10:2021 - Server-Side Request Forgery (SSRF)"
+
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: methodFullName
+          right: flask.request.$ANYTHING
+  - id: ROUTE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: and
+          clauses:
+            - op: eq
+              left: context
+              right: "@$APP.route(...)"
+            - op: regex
+              left: name
+              right: "^\\$ROUTEVAR$"
+
+sinks:
+  - id: URL_CONSTRUCTION_PERCENT
+    match:
+      node: CALL
+      where:
+        - op: and
+          clauses:
+            - op: regex
+              left: code
+              right: '\"\$URLSTR\" % ...'
+            - op: regex
+              left: receiver.code
+              right: '.*://%s|.*://%r'
+  - id: URL_CONSTRUCTION_FORMAT
+    match:
+      node: CALL
+      where:
+        - op: and
+          clauses:
+            - op: regex
+              left: code
+              right: '\"\$URLSTR\"\.format\(...\)'
+            - op: regex
+              left: receiver.code
+              right: '.*://\s*\{.*\}'
+  - id: URL_CONSTRUCTION_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: and
+          clauses:
+            - op: regex
+              left: code
+              right: '\"\$URLSTR\" \+ ...'
+            - op: regex
+              left: receiver.code
+              right: '.*://$'
+  - id: URL_CONSTRUCTION_FSTRING
+    match:
+      node: CALL
+      where:
+        - op: and
+          clauses:
+            - op: regex
+              left: code
+              right: 'f"\$URLSTR\{...\}..."'
+            - op: regex
+              left: receiver.code
+              right: '.*://$'
+  - id: URL_CONSTRUCTION_INPLACE
+    match:
+      node: CALL
+      where:
+        - op: and
+          clauses:
+            - op: regex
+              left: code
+              right: '\$URL = "\$URLSTR" ... \$URL \+= ...'
+            - op: regex
+              left: receiver.code
+              right: '.*://$'
+
+sanitizers: []
+
+propagations: []
+```

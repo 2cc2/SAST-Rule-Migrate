@@ -1,0 +1,68 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "dangerous-interactive-code-run-audit"
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+  tags:
+    - "python"
+  metadata:
+    language: "python"
+    category: "security"
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+
+sources:
+  - id: "DYNAMIC_CODE"
+    match:
+      node: CALL
+      api:
+        type: "code.InteractiveConsole | code.InteractiveInterpreter"
+        method: "push | runsource | runcode"
+      where:
+        - op: neq
+          left: "arg[0].value"
+          right: '""...""'
+  - id: "COMPILE_COMMAND"
+    match:
+      node: CALL
+      api:
+        type: "code"
+        method: "compile_command"
+      arg_index: 0
+
+sinks:
+  - id: "CODE_EXECUTION"
+    match:
+      node: CALL
+      api:
+        type: "code.InteractiveConsole | code.InteractiveInterpreter"
+        method: "push | runsource | runcode"
+      arg_index: 0
+
+sanitizers:
+  - id: "SAFE_LITERAL"
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: "arg[0].value"
+          right: '""...""'
+    effect: neutralize
+
+propagations:
+  - id: "ARG_TO_CODE"
+    edge: arg->param
+    kind: taint
+  - id: "COMPILE_TO_RUNCODE"
+    edge: arg->param
+    kind: taint
+    where:
+      - op: eq
+        left: "source.node.api.method"
+        right: "compile_command"
+      - op: eq
+        right: "runcode"
+        left: "sink.node.api.method"
+```

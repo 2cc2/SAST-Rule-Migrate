@@ -1,0 +1,99 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: aiopg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in an aiopg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries instead."
+  metadata:
+    language: python
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    technology: aiopg
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+
+sources:
+  - id: NON_LITERAL_VAR
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: or
+          conditions:
+            - op: regex
+              left: right.value
+              right: ".+\+.+"
+            - op: regex
+              left: right.value
+              right: ".+\+=.+"
+            - op: regex
+              left: right.value
+              right: ".format\(.+\)"
+            - op: regex
+              left: right.value
+              right: ".%\(.+\)"
+            - op: regex
+              left: right.value
+              right: "f'.+\{.+}.*'"
+        - pattern-inside: |
+            async with $POOL.acquire() as $CONN:
+              ...
+            | async with $CONN.cursor() as $CUR:
+              ...
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: 
+        type: aiopg
+        method: execute
+      arg_index: 0
+      where:
+        - op: regex
+          left: methodFullName
+          right: ".*execute.*"
+        - pattern-inside: |
+            async with $POOL.acquire() as $CONN:
+              ...
+            | async with $CONN.cursor() as $CUR:
+              ...
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        type: aiopg
+        method: execute
+      where:
+        - op: and
+          conditions:
+            - op: regex
+              left: arg[0].value
+              right: "^SELECT %s|^INSERT %s|^UPDATE %s|^DELETE %s"
+            - op: neq
+              left: arg[1]
+              right: null
+    effect: neutralize
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: STRING_FORMAT
+    edge: arg->param
+    kind: taint
+    where:
+      - op: regex
+        left: methodFullName
+        right: ".*format.*|.*%s.*"
+  - id: F_STRING
+    edge: arg->param
+    kind: taint
+    where:
+      - op: regex
+        left: code
+        right: "f'.+\{.+}.*'"
+```
