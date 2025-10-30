@@ -1,0 +1,318 @@
+Timestamp: 2025-10-30 00:41:15
+Attempt: 1
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: flask.xss-template-unescaped-with-safe
+  kind: taint
+  severity: WARNING
+  message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '| safe' filter. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability."
+
+sources:
+  - id: HTML_TEMPLATE_CONTENT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\{\{.*?\|\s*safe(\s*}})?"
+
+sinks:
+  - id: XSS_OUTPUT
+    match:
+      node: CALL
+      api: { type: flask.templating, method: render_template }
+      arg_index: [0, 1]
+
+sanitizers: []
+
+propagations: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.XSS (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:11,8-34)
+ERROR: could not resolve module semmle.python.web.flask.Templating (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:16,32-40)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:19,31-39)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:23,7-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:27,29-37)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:28,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:37,28-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:37,55-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+Rule Content:
+/**
+ * @name Flask XSS in template with unsafe filter
+ * @description Detects Flask templates where autoescaping is disabled with '| safe' filter,
+ *              potentially leading to XSS vulnerabilities if user-controlled data is rendered.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/flask/xss-template-unescaped-with-safe
+ */
+
+import python
+import semmle.python.security.XSS
+import semmle.python.web.flask.Templating
+import semmle.python.Concepts
+import DataFlow::PathGraph
+
+class SafeFilterConfig extends DataFlow::Configuration {
+  SafeFilterConfig() { this = "SafeFilterConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(string templateContent |
+      source.asExpr() instanceof StringLiteral and
+      templateContent = source.asExpr().(StringLiteral).getText() and
+      regexpMatch("\\{\\{.*?\\|\\s*safe(\\s*\\}\\})?", templateContent)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall renderCall |
+      renderCall = sink.asExpr() and
+      renderCall.getMethodName() = "render_template" and
+      renderCall.getQualifier().getType().hasName("flask.templating") and
+      (sink = renderCall.getArgument(0) or sink = renderCall.getArgument(1))
+    )
+  }
+}
+
+from SafeFilterConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "Detected Flask template with autoescaping disabled via '| safe' filter. " +
+  "This allows raw HTML rendering and may lead to XSS if user data is included.",
+  source, "Unsafe template content here"
+================================================================================
+Timestamp: 2025-10-30 00:42:47
+Attempt: 2
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.XSS (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:11,8-34)
+ERROR: could not resolve module semmle.python.web.flask.Templating (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:16,32-40)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:19,31-39)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:23,7-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:27,29-37)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:28,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:37,28-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:37,55-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_32e61fae/python-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 更新导入语句：
+   - 删除 `semmle.python.security.XSS` 和 `semmle.python.web.flask.Templating` 这些不再存在的模块导入
+   - 添加正确的数据流分析模块导入：`import DataFlow`
+
+2. 修正 `regexpMatch` 函数使用：
+   - 替换为CodeQL的新正则匹配函数 `matches`
+
+3. 修正语法错误：
+   - 确保所有对 `DataFlow` 模块的引用都使用正确的命名空间
+   - 确保 `MethodCall` 使用正确的类型 `Call`
+
+4. 保留核心逻辑：
+   - 保持源检测逻辑（模板中使用safe过滤器的情况）
+   - 保持sink检测逻辑（render_template调用的参数）
+   - 保持数据流分析配置的基本结构
+
+5. 合并配置类和方法定义中的重复 `DataFlow` 前缀：
+   - 修正未正确前缀化的DataFlow类型引用
+
+6. 移除无用警告：
+   - 确保 `isSource` 和 `isSink` 方法在配置类中被正确使用
+   - 检查配置类的方法是否被正确继承和实现
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,7-57)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,37-38)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,39-40)
+ERROR: token recognition error at: '?' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,43-44)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,44-45)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,46-47)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,54-55)
+ERROR: token recognition error at: '?' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,60-61)
+ERROR: unexpected input '/' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,36-37)
+ERROR: unexpected input '{' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,38-39)
+ERROR: extraneous input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,45-46)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,57-58)
+ERROR: unexpected input ')' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,59-60)
+ERROR: could not resolve module semmle.python.web.flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:14,8-31)
+ERROR: asExpr() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:19,23-29)
+ERROR: could not resolve predicate matches/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,7-14)
+ERROR: getValue() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,24-32)
+ERROR: could not resolve predicate safe/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,49-53)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: could not resolve variable s (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,45-48)
+ERROR: could not resolve variable s (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:20,55-56)
+ERROR: 'template' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:18,19-27)
+WARNING: unused class 'SafeFilter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f7b8e676/python-security-queries/queries/test-rule/TestRule.ql:16,7-17)
+Rule Content:
+/**
+ * @name Flask XSS in template with safe filter
+ * @kind problem
+ * @id flask.xss-template-unescaped-with-safe
+ * @severity warning
+ * @description Detected a segment of a Flask template where autoescaping is explicitly
+ *              disabled with '| safe' filter. This allows rendering of raw HTML in this
+ *              segment. Ensure no user data is rendered here, otherwise this is a
+ *              cross-site scripting (XSS) vulnerability.
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.web.flask
+
+class SafeFilter extends DataFlow::Node {
+  SafeFilter() {
+    exists(string template |
+      this = template.asExpr() and
+      matches(template.getValue(), /\{\{.*?\|\s*safe(\s*}})?/)
+    )
+  }
+}
+
+class FlaskRenderTemplate extends DataFlow::Node {
+  FlaskRenderTemplate() {
+    exists(Call renderCall |
+      renderCall = global("flask").getMember("templating").getMember("render_template").getACall() and
+      (this = renderCall.getArg(0) or this = renderCall.getArg(1))
+    )
+  }
+}
+
+class SafeFilterToRenderTemplateConfig extends DataFlow::Configuration {
+  SafeFilterToRenderTemplateConfig() { this = "SafeFilterToRenderTemplateConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SafeFilter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof FlaskRenderTemplate }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where
+  any(SafeFilterToRenderTemplateConfig config).hasFlow(source, sink)
+select sink, "Potential XSS vulnerability from unescaped template content with safe filter"
+================================================================================
+Timestamp: 2025-10-30 00:44:25
+Attempt: 3
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: flask.xss-template-unescaped-with-safe
+  kind: pattern
+  severity: WARNING
+  message: "Detected a segment of a Flask template where autoescaping is explicitly disabled with '| safe' filter. This allows rendering of raw HTML in this segment. Ensure no user data is rendered here, otherwise this is a cross-site scripting (XSS) vulnerability."
+
+sources:
+  - id: HTML_TEMPLATE_CONTENT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\{\{.*?\|\s*safe(\s*}})?"
+
+sinks: []
+
+sanitizers: []
+
+propagations: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98cc091c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.TemplateFiles (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98cc091c/python-security-queries/queries/test-rule/TestRule.ql:12,8-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98cc091c/python-security-queries/queries/test-rule/TestRule.ql:13,8-16)
+ERROR: could not resolve module TemplateExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98cc091c/python-security-queries/queries/test-rule/TestRule.ql:15,36-48)
+ERROR: getValueText() cannot be resolved for type SafeFilterInTemplate.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_98cc091c/python-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+Rule Content:
+/**
+ * @name Flask XSS Template Unescaped With Safe Filter
+ * @description Detected a segment of a Flask template where autoescaping is explicitly disabled with '| safe' filter.
+ *              This allows rendering of raw HTML in this segment. Ensure no user data is rendered here,
+ *              otherwise this is a cross-site scripting (XSS) vulnerability.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/flask/xss-template-unescaped-with-safe
+ */
+
+import python
+import semmle.python.web.flask.TemplateFiles
+import DataFlow::PathGraph
+
+class SafeFilterInTemplate extends TemplateExpr::Range {
+  SafeFilterInTemplate() {
+    exists(string content |
+      this.getValueText() = content and
+      content.regexpMatch("\\{\\{.*?\\|\\s*safe(\\s*\\}\\})?")
+    )
+  }
+}
+
+from SafeFilterInTemplate expr
+select expr, "Detected use of '| safe' filter in Flask template which disables autoescaping. " +
+    "This could lead to XSS if user-controlled data is rendered here.", expr,
+    "Flask template with disabled autoescaping"
+================================================================================

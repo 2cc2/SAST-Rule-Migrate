@@ -1,0 +1,696 @@
+Timestamp: 2025-10-28 22:30:26
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-interactive-code-run-audit
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+
+sources:
+  - id: DYNAMIC_CODE_INPUT
+    match:
+      node: LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+        - op: regex
+          left: methodFullName
+          right: ".*\\.(push|runsource|runcode|compile_command)"
+
+sinks:
+  - id: CODE_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: code.InteractiveConsole | code.InteractiveInterpreter
+        method: push | runsource | runcode
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+
+propagations:
+  - id: CODE_COMPILE_FLOW
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:31,9-17)
+ERROR: unexpected input '(' expecting one of: '::' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:31,16-17)
+ERROR: extraneous input ')' expecting one of: '}' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:34,5-6)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:18,12-30)
+ERROR: could not resolve type API::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:29,12-21)
+ERROR: could not resolve type  (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:31,9-17)
+ERROR: could not resolve predicate getName/0 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:31,45-52)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:38,45-58)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:51,41-59)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:51,68-86)
+ERROR: could not resolve variable call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:33,7-11)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:43,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_5b0256c4/python-security-queries/queries/test-rule/TestRule.ql:46,22-33)
+Rule Content:
+/**
+ * @name Dangerous interactive code run
+ * @description Dynamic content inside InteractiveConsole/InteractiveInterpreter method detected.
+ *              This is dangerous if external data can reach this function call because it allows
+ *              a malicious actor to run arbitrary Python code.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/dangerous-interactive-code-run
+ */
+
+import python
+import semmle.python.ApiGraphs
+import semmle.python.Concepts
+import DataFlow::PathGraph
+
+class DynamicCodeInput extends DataFlow::Node {
+  DynamicCodeInput() {
+    exists(DataFlow::CallNode call |
+      call.getAPIName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      // Exclude string literals that are safely quoted
+      not this.asExpr() instanceof StringLiteral and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+class CodeExecutionSink extends DataFlow::Node {
+  CodeExecutionSink() {
+    exists(API::Call call |
+      call.getReceiverType().(
+        getName() = "InteractiveConsole" or getName() = "InteractiveInterpreter"
+      ) and
+      call.getAPIName() in ["push", "runsource", "runcode"]
+    )
+  }
+}
+
+class DangerousInteractiveRunConfig extends TaintTracking::Configuration {
+  DangerousInteractiveRunConfig() { this = "DangerousInteractiveRunConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof DynamicCodeInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CodeExecutionSink }
+
+  // Exclude safe string literals from taint flow
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from DangerousInteractiveRunConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. " +
+       "This is dangerous if external data can reach this function call because it allows " +
+       "a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+================================================================================
+Timestamp: 2025-10-28 22:32:39
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-interactive-code-run-audit
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+
+sources:
+  - id: DYNAMIC_CODE_INPUT
+    match:
+      node: LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+        - op: regex
+          left: methodFullName
+          right: ".*\\.(push|runsource|runcode|compile_command)"
+
+sinks:
+  - id: CODE_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: code.InteractiveConsole | code.InteractiveInterpreter
+        method: push | runsource | runcode
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+
+propagations:
+  - id: CODE_COMPILE_FLOW
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.python.api.Api (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:14,8-34)
+ERROR: could not resolve type DataFlow::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:18,12-26)
+ERROR: asExpr() cannot be resolved for type DynamicCodeInput.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:20,16-22)
+ERROR: could not resolve module Api (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:28,12-15)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:44,15-21)
+ERROR: hasFlow(Node, Node) cannot be resolved for type DangerousInteractiveRunConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:49,11-18)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:26,7-24)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:27,3-20)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:41,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_73586c6b/python-security-queries/queries/test-rule/TestRule.ql:43,22-33)
+Rule Content:
+/**
+ * @name Dangerous interactive code run
+ * @description Dynamic content inside InteractiveConsole/InteractiveInterpreter method detected.
+ *              This is dangerous if external data can reach this function call because it allows
+ *              a malicious actor to run arbitrary Python code.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/dangerous-interactive-code-run
+ */
+
+import python
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
+import semmle.code.python.api.Api
+
+class DynamicCodeInput extends DataFlow::Node {
+  DynamicCodeInput() {
+    exists(DataFlow::Call call |
+      call.getMethodName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      not this.asExpr() instanceof StringLiteral and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+class CodeExecutionSink extends DataFlow::Node {
+  CodeExecutionSink() {
+    exists(Api::MethodAccess call |
+      call.getReceiver().getType().getName() = "InteractiveConsole" or
+      call.getReceiver().getType().getName() = "InteractiveInterpreter" and
+      call.getMethodName() in ["push", "runsource", "runcode"]
+    )
+  }
+}
+
+class DangerousInteractiveRunConfig extends TaintTracking::Configuration {
+  DangerousInteractiveRunConfig() { this = "DangerousInteractiveRunConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof DynamicCodeInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CodeExecutionSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof StringLiteral
+  }
+}
+
+from DangerousInteractiveRunConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. " +
+       "This is dangerous if external data can reach this function call because it allows " +
+       "a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+================================================================================
+Timestamp: 2025-10-28 22:34:51
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-interactive-code-run-audit
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+
+sources:
+  - id: DYNAMIC_CODE_INPUT
+    match:
+      node: LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+        - op: regex
+          left: methodFullName
+          right: ".*\\.(push|runsource|runcode|compile_command)"
+
+sinks:
+  - id: CODE_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: code.InteractiveConsole | code.InteractiveInterpreter
+        method: push | runsource | runcode
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+
+propagations:
+  - id: CODE_COMPILE_FLOW
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:17,32-40)
+ERROR: could not resolve module DataFlow::Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:17,32-48)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:21,12-18)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:23,37-43)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:28,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:33,33-41)
+ERROR: could not resolve module DataFlow::Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:33,33-49)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:37,12-18)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:44,12-18)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:52,31-57)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:56,29-53)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:60,34-58)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:61,50-56)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:65,41-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:65,41-59)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:65,68-76)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:65,68-86)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:18,31-37)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:34,32-38)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:36,22-28)
+WARNING: unused method 'getExpr' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:44,25-32)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:12,1-39)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:13,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1544aba0/python-security-queries/queries/test-rule/TestRule.ql:14,1-31)
+Rule Content:
+/**
+ * @name Dangerous interactive code run
+ * @description Dynamic content inside InteractiveConsole/InteractiveInterpreter method detected.
+ *              This is dangerous if external data can reach this function call because it allows
+ *              a malicious actor to run arbitrary Python code.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/dangerous-interactive-code-run
+ */
+
+import python
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
+import semmle.python.ApiGraphs
+import DataFlow::PathGraph
+
+class DynamicCodeInput extends DataFlow::Python::Node {
+  DynamicCodeInput() { this = result }
+
+  override predicate isSource() { 
+    exists(Python::Call call |
+      call.getMethodName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      not this.getExpr() instanceof Python::StringLiteral and
+      this = call.getArgument(0).asSource()
+    )
+  }
+
+  override Python::Expr getExpr() { result = this.getNode().asExpr() }
+
+  override string toString() { result = "Dynamic code input" }
+}
+
+class CodeExecutionSink extends DataFlow::Python::Node {
+  CodeExecutionSink() { this = result }
+
+  override predicate isSink() {
+    exists(Python::MethodAccess call |
+      (call.getReceiver().getType().getName() = "InteractiveConsole" or
+       call.getReceiver().getType().getName() = "InteractiveInterpreter") and
+      call.getMethodName() in ["push", "runsource", "runcode"]
+    )
+  }
+
+  override Python::Expr getExpr() { result = this.getNode().asExpr() }
+
+  override string toString() { result = "Code execution sink" }
+}
+
+class DangerousInteractiveRunConfig extends TaintTracking::Configuration {
+  DangerousInteractiveRunConfig() { this = "DangerousInteractiveRunConfig" }
+
+  override predicate isSource(TaintTracking::TaintSource source) { 
+    source.contains(any(DynamicCodeInput dci | dci = source.asSource())) 
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) { 
+    sink.contains(any(CodeExecutionSink ces | ces = sink.asSink()))
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer.asCandidate().getExpr() instanceof Python::StringLiteral
+  }
+}
+
+from DangerousInteractiveRunConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. " +
+       "This is dangerous if external data can reach this function call because it allows " +
+       "a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+================================================================================
+Timestamp: 2025-10-28 22:37:05
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-interactive-code-run-audit
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+
+sources:
+  - id: DYNAMIC_CODE_INPUT
+    match:
+      node: LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+        - op: regex
+          left: methodFullName
+          right: ".*\\.(push|runsource|runcode|compile_command)"
+
+sinks:
+  - id: CODE_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: code.InteractiveConsole | code.InteractiveInterpreter
+        method: push | runsource | runcode
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+
+propagations:
+  - id: CODE_COMPILE_FLOW
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,32-40)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:24,12-20)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:24,12-30)
+ERROR: asExpr() cannot be resolved for type DynamicCodeInput (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:26,16-22)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:26,36-44)
+ERROR: could not resolve type DataFlow::StringLiteralNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:26,36-63)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,33-41)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:39,12-20)
+ERROR: could not resolve type DataFlow::MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:39,12-32)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:58,34-58)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:59,35-43)
+ERROR: could not resolve type DataFlow::StringLiteralNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:59,35-62)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:63,41-49)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:63,64-72)
+ERROR: hasFlow(Node, Node) cannot be resolved for type DangerousInteractiveRunConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:64,11-18)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: DynamicCodeInput must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:20,7-23)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:21,24-30)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: CodeExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:35,7-24)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:36,25-31)
+ERROR: test is always false, as DynamicCodeInput is incompatible with the expression type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:51,23-39)
+ERROR: test is always false, as CodeExecutionSink is incompatible with the expression type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:55,21-38)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:23,13-21)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:38,13-19)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:12,1-39)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:13,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0953f309/python-security-queries/queries/test-rule/TestRule.ql:14,1-31)
+Rule Content:
+/**
+ * @name Dangerous interactive code run
+ * @description Dynamic content inside InteractiveConsole/InteractiveInterpreter method detected.
+ *              This is dangerous if external data can reach this function call because it allows
+ *              a malicious actor to run arbitrary Python code.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/dangerous-interactive-code-run
+ */
+
+import python
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
+import semmle.python.ApiGraphs
+
+
+/**
+ * @kind source
+ */
+class DynamicCodeInput extends DataFlow::Node {
+  DynamicCodeInput() { result = this }
+
+  predicate isSource() {
+    exists(DataFlow::CallNode call |
+      call.getMethod().getName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      not this.asExpr() instanceof DataFlow::StringLiteralNode and
+      this = call.getArgument(0)
+    )
+  }
+}
+
+/**
+ * @kind sink
+ */
+class CodeExecutionSink extends DataFlow::Node {
+  CodeExecutionSink() { result = this }
+
+  predicate isSink() {
+    exists(DataFlow::MethodCall call |
+      (call.getReceiverType().getName() = "InteractiveConsole" or
+       call.getReceiverType().getName() = "InteractiveInterpreter") and
+      call.getMethod().getName() in ["push", "runsource", "runcode"]
+    )
+  }
+}
+
+class DangerousInteractiveRunConfig extends TaintTracking::Configuration {
+  DangerousInteractiveRunConfig() { this = "DangerousInteractiveRunConfig" }
+
+  override predicate isSource(TaintTracking::Source source) {
+    source instanceof DynamicCodeInput
+  }
+
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof CodeExecutionSink
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer.asNode() instanceof DataFlow::StringLiteralNode
+  }
+}
+
+from DangerousInteractiveRunConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. " +
+       "This is dangerous if external data can reach this function call because it allows " +
+       "a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+================================================================================
+Timestamp: 2025-10-28 22:39:25
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: dangerous-interactive-code-run-audit
+  kind: taint
+  severity: WARNING
+  message: "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. This is dangerous if external data can reach this function call because it allows a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+
+sources:
+  - id: DYNAMIC_CODE_INPUT
+    match:
+      node: LITERAL | CALL
+      where:
+        - op: neq
+          left: value
+          right: "\"...\""
+        - op: regex
+          left: methodFullName
+          right: ".*\\.(push|runsource|runcode|compile_command)"
+
+sinks:
+  - id: CODE_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: code.InteractiveConsole | code.InteractiveInterpreter
+        method: push | runsource | runcode
+      arg_index: 0
+
+sanitizers:
+  - id: SAFE_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: value
+          right: "\"...\""
+
+propagations:
+  - id: CODE_COMPILE_FLOW
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::TrackedSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:19,32-60)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:21,12-18)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:23,51-57)
+ERROR: could not resolve type TaintTracking::TaintFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:28,33-57)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:29,12-18)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:36,12-18)
+ERROR: could not resolve type TaintTracking::TrackedSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:43,33-59)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve type TaintTracking::TaintFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:53,31-55)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:54,12-18)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:63,12-18)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:77,34-58)
+ERROR: could not resolve module Python (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:78,49-55)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:82,41-49)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:82,64-72)
+ERROR: hasFlow(Node, Node) cannot be resolved for type DangerousInteractiveRunConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:83,11-18)
+WARNING: unused method 'isSourceOf' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:28,22-32)
+WARNING: unused method 'asExpr' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:36,25-31)
+WARNING: unused method 'isSinkOf' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'asExpr' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:63,25-31)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:12,1-31)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_863198c2/python-security-queries/queries/test-rule/TestRule.ql:13,1-44)
+Rule Content:
+/**
+ * @name Dangerous interactive code run
+ * @description Dynamic content inside InteractiveConsole/InteractiveInterpreter method detected.
+ *              This is dangerous if external data can reach this function call because it allows
+ *              a malicious actor to run arbitrary Python code.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/dangerous-interactive-code-run
+ */
+
+import python
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.TaintTracking
+
+/**
+ * @kind source
+ * @description Source of potentially dangerous code input
+ */
+class DynamicCodeInput extends TaintTracking::TrackedSource {
+  DynamicCodeInput() { 
+    exists(Python::Call call |
+      call.getMethod().getName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      not call.getArgument(0).asExpr() instanceof Python::StringLiteral and
+      this = call.getArgument(0).asSource()
+    )
+  }
+
+  override predicate isSourceOf(TaintTracking::TaintFlow flow) {
+    exists(Python::Call call |
+      call.getMethod().getName().regexpMatch(".*\\.(push|runsource|runcode|compile_command)") and
+      flow.getSourceNode() = this and
+      this = call.getArgument(0).asSource()
+    )
+  }
+
+  override Python::Expr asExpr() { result = this.asSource().asExpr() }
+}
+
+/**
+ * @kind sink
+ * @description Dangerous code execution sink
+ */
+class CodeExecutionSink extends TaintTracking::TrackedSink {
+  CodeExecutionSink() {
+    exists(Python::MethodAccess call |
+      (call.getReceiver().getType().getName() = "InteractiveConsole" or
+       call.getReceiver().getType().getName() = "InteractiveInterpreter") and
+      call.getMethod().getName() in ["push", "runsource", "runcode"] and
+      this = call.asSink()
+    )
+  }
+
+  override predicate isSinkOf(TaintTracking::TaintFlow flow) {
+    exists(Python::MethodAccess call |
+      (call.getReceiver().getType().getName() = "InteractiveConsole" or
+       call.getReceiver().getType().getName() = "InteractiveInterpreter") and
+      call.getMethod().getName() in ["push", "runsource", "runcode"] and
+      flow.getSinkNode() = this and
+      this = call.asSink()
+    )
+  }
+
+  override Python::Expr asExpr() { result = this.asSink().asExpr() }
+}
+
+class DangerousInteractiveRunConfig extends TaintTracking::Configuration {
+  DangerousInteractiveRunConfig() { this = "DangerousInteractiveRunConfig" }
+
+  override predicate isSource(TaintTracking::Source source) {
+    source instanceof DynamicCodeInput
+  }
+
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof CodeExecutionSink
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer.asCandidate().asExpr() instanceof Python::StringLiteral
+  }
+}
+
+from DangerousInteractiveRunConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Found dynamic content inside InteractiveConsole/InteractiveInterpreter method. " +
+       "This is dangerous if external data can reach this function call because it allows " +
+       "a malicious actor to run arbitrary Python code. Ensure no external data reaches here."
+================================================================================

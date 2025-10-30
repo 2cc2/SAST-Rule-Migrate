@@ -1,0 +1,76 @@
+/**
+ * @name Hibernate SQL Injection
+ * @kind problem
+ * @id java/hibernate-sqli
+ * @severity Warning
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ *              if variables in the SQL statement are not properly sanitized. 
+ *              Use prepared statements (java.sql.PreparedStatement) instead.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate
+import semmle.code.java.StringFormat
+
+class HibernateSqlInjectionConfig extends TaintTracking::Configuration {
+  HibernateSqlInjectionConfig() { this = "HibernateSqlInjectionConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    // Source: String concatenation for SQL queries
+    exists(Variable v, Expr rhs |
+      v.getName().regexpMatch(".*SQL.*") and
+      rhs = v.getAnAssignedValue() and
+      rhs.getType().hasName("String") and
+      rhs.toString().matches("%+%") and
+      source.asExpr() = rhs
+    )
+    or
+    // Source: String.format calls
+    exists(Method m, MethodAccess ma |
+      m.hasName("format") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      ma.getMethod() = m and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    // Sink: Hibernate's sqlRestriction method
+    exists(Method m, MethodAccess ma |
+      (
+        m.hasName("sqlRestriction") and
+        m.getDeclaringType().hasQualifiedName("org.hibernate.criterion", "Restrictions")
+      ) and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+    or
+    // Sink: Hibernate's createQuery/createSQLQuery methods
+    exists(Method m, MethodAccess ma |
+      (
+        m.hasName("createQuery") or m.hasName("createSQLQuery") and
+        m.getDeclaringType().hasQualifiedName("org.hibernate", "Session")
+      ) and
+      ma.getMethod() = m and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Safe string literal concatenation
+    exists(Variable v, Expr rhs |
+      v.getName().regexpMatch(".*SQL.*") and
+      rhs = v.getAnAssignedValue() and
+      rhs.toString().matches("\"%\" + \"%\"") and
+      sanitizer.asExpr() = rhs
+    )
+  }
+}
+
+from HibernateSqlInjectionConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, 
+  "User input reaches SQL execution without sanitization. $@ flows from $@ to $@.",
+  source.getNode(), "source location",
+  sink.getNode(), "sink location"

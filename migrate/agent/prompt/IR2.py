@@ -282,7 +282,7 @@ sanitizers:
     effect: { remove: ["path(relative)"], add: ["path(absolute)"] }
 <example/>   
 <output>   
-请参照文档内容直接返回如下格式的yaml文件，不输出其他内容：
+请参照文档内容直接返回如下格式的yaml文件，不输出其他内容,要求不漏不缺严格正确：
 xcpgir_version: "1.0"
 rule:
   id: string

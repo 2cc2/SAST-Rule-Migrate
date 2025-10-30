@@ -1,0 +1,93 @@
+/**
+ * @name OGNL Injection
+ * @description An expression is built with a dynamic value. The source of the value(s) should
+ *              be verified to avoid that unfiltered values fall into this risky code evaluation.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision medium
+ * @id java/ognl-injection
+ * @tags security
+ *       external/cwe/cwe-094
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class OgnlReflectionProvider extends RefType {
+  OgnlReflectionProvider() {
+    this.hasQualifiedName("org.apache.commons.ognl", "OgnlReflectionProvider")
+  }
+}
+
+class ReflectionProvider extends RefType {
+  ReflectionProvider() {
+    this.hasQualifiedName("org.apache.commons.ognl", "ReflectionProvider")
+  }
+}
+
+class TextParseUtil extends RefType {
+  TextParseUtil() {
+    this.hasQualifiedName("org.apache.commons.ognl", "TextParseUtil")
+  }
+}
+
+class OgnlSink extends DataFlow::Node {
+  OgnlSink() {
+    exists(Method m, Call call |
+      ((m.getDeclaringType() instanceof OgnlReflectionProvider or
+        m.getDeclaringType() instanceof ReflectionProvider) and
+       m.getName() in ["getGetMethod", "getSetMethod", "getField", "setProperties", 
+                      "setProperty", "getValue", "setValue"] and
+       call.getCallee() = m and
+       this.asExpr() = call.getArgument(1))
+      or
+      (m.getDeclaringType() instanceof TextParseUtil and
+       m.getName() in ["translateVariables", "translateVariablesCollection", 
+                      "shallBeIncluded", "commaDelimitedStringToSet"] and
+       call.getCallee() = m and
+       this.asExpr() = call.getArgument(0))
+    )
+  }
+}
+
+class DynamicInputSource extends DataFlow::Node {
+  DynamicInputSource() {
+    exists(Parameter p | 
+      this.asParameter() = p and 
+      p.getType() instanceof TypeString and
+      not this.asParameter().getAnAssignedValue().toString() = "\"\""
+    )
+  }
+}
+
+class StringLiteralSanitizer extends DataFlow::Node {
+  StringLiteralSanitizer() {
+    exists(StringLiteral sl | this.asExpr() = sl)
+  }
+}
+
+class OgnlTaintTrackingConfig extends TaintTracking::Configuration {
+  OgnlTaintTrackingConfig() { this = "OgnlTaintTrackingConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof DynamicInputSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof OgnlSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof StringLiteralSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, OgnlTaintTrackingConfig config
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Potential OGNL injection detected: " + sink.getNode().toString() + 
+  " called with dynamic input",
+  source, sink

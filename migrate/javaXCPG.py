@@ -165,9 +165,9 @@ def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir
 
 if __name__ == "__main__":
     input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/java_classified_rules"
-    IR_directory = "/home/cbb/SAST-Rule-Migrate/java_XCPGIR5"
-    output_directory = "/home/cbb/SAST-Rule-Migrate/output/java_semgrep2codeql_XCPGIR_5cwe"
-    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/java_semgrep2codeql_XCPGIR_5cwe"
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/java555"
+    output_directory = "/home/cbb/SAST-Rule-Migrate/output/java555"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/java555"
 
     for d in [input_directory, IR_directory, output_directory, log_directory]:
         os.makedirs(d, exist_ok=True)

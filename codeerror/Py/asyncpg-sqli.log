@@ -1,0 +1,698 @@
+Timestamp: 2025-10-28 22:41:47
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: asyncpg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized."
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL | LITERAL | ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: ".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery }
+      arg_index: 0
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval }
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^SELECT \\$1"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:26,12-22)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:47,36-64)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:59,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:59,62-80)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:50,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:52,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6caa8784/python-security-queries/queries/test-rule/TestRule.ql:54,22-33)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. 
+ *              This could lead to SQL injection if the variable is user-controlled and not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ */
+
+import python
+import semmle.python.Concepts
+import semmle.python.dataflow.new.TaintTracking
+import semmle.python.ApiGraphs
+
+class AsyncpgSqlSource extends DataFlow::Node {
+  AsyncpgSqlSource() {
+    exists(string regex |
+      regex.matches(".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*") and
+      this.asExpr().toString() = regex
+    )
+  }
+}
+
+class AsyncpgSqlSink extends DataFlow::Node {
+  AsyncpgSqlSink() {
+    exists(MethodCall mc |
+      mc.getMethod().getName().matches("fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery") and
+      mc.getReceiver().getType().getName() = "Connection" and
+      mc.getReceiver().getType().getASourceDeclaration().getFile().getRelativePath().matches("asyncpg") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgSanitizer extends DataFlow::Node {
+  AsyncpgSanitizer() {
+    exists(MethodCall mc |
+      mc.getMethod().getName().matches("fetch|fetchrow|fetchval") and
+      mc.getReceiver().getType().getName() = "Connection" and
+      mc.getReceiver().getType().getASourceDeclaration().getFile().getRelativePath().matches("asyncpg") and
+      mc.getArgument(0).toString().matches("^SELECT \\$1") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgConfiguration extends TaintTracking::Configuration {
+  AsyncpgConfiguration() { this = "AsyncpgSqlInjecttion" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof AsyncpgSqlSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof AsyncpgSqlSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof AsyncpgSanitizer
+  }
+}
+
+from AsyncpgConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection using string concatenation in asyncpg query", source, 
+"User input flows into SQL query without proper sanitization"
+================================================================================
+Timestamp: 2025-10-28 22:43:48
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: asyncpg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized."
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL | LITERAL | ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: ".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery }
+      arg_index: 0
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval }
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^SELECT \\$1"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,32-40)
+ERROR: asExpr() cannot be resolved for type AsyncpgSqlSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:18,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,30-38)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:26,20-27)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:27,10-21)
+ERROR: asExpr() cannot be resolved for type AsyncpgSqlSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:28,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,32-40)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:36,20-27)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:37,10-21)
+ERROR: asExpr() cannot be resolved for type AsyncpgSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:39,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:47,31-39)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:49,29-37)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:51,34-42)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:56,35-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:56,35-53)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:56,62-70)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:56,62-80)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:15,7-23)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:23,7-21)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:33,7-23)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:47,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:51,22-33)
+ERROR: 'regex' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:17,19-24)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:12,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ad6ade1f/python-security-queries/queries/test-rule/TestRule.ql:13,1-31)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. 
+ *              This could lead to SQL injection if the variable is user-controlled and not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ */
+
+import python
+import semmle.python.Concepts
+import semmle.python.dataflow.TaintTracking
+import semmle.python.ApiGraphs
+
+class AsyncpgSqlSource extends DataFlow::Node {
+  AsyncpgSqlSource() {
+    exists(string regex |
+      this.asExpr().toString().matches(".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*")
+    )
+  }
+}
+
+class AsyncpgSqlSink extends DataFlow::Node {
+  AsyncpgSqlSink() {
+    exists(Call mc |
+      mc.getFunc().getName().matches("fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery") and
+      mc.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      this.asExpr() = mc.getArg(0)
+    )
+  }
+}
+
+class AsyncpgSanitizer extends DataFlow::Node {
+  AsyncpgSanitizer() {
+    exists(Call mc |
+      mc.getFunc().getName().matches("fetch|fetchrow|fetchval") and
+      mc.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      mc.getArg(0).toString().matches("^SELECT \\$1") and
+      this.asExpr() = mc.getArg(0)
+    )
+  }
+}
+
+class AsyncpgConfiguration extends TaintTracking::Configuration {
+  AsyncpgConfiguration() { this = "AsyncpgSqlInjecttion" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof AsyncpgSqlSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof AsyncpgSqlSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof AsyncpgSanitizer
+  }
+}
+
+from AsyncpgConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection using string concatenation in asyncpg query", source, 
+"User input flows into SQL query without proper sanitization"
+================================================================================
+Timestamp: 2025-10-28 22:45:54
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: asyncpg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized."
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL | LITERAL | ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: ".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery }
+      arg_index: 0
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval }
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^SELECT \\$1"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:16,32-40)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:25,30-38)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:28,9-18)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:29,9-20)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:30,25-36)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:35,32-40)
+ERROR: getTarget() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:38,9-18)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:39,9-20)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:40,9-20)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:41,25-36)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:49,31-57)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:53,29-53)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:57,34-58)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:62,32-40)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:62,32-50)
+ERROR: module DataFlow is ambiguous between: DataFlow::DataFlow, TaintTracking::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:62,59-67)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:62,59-77)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:13,1-31)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8952b147/python-security-queries/queries/test-rule/TestRule.ql:14,1-44)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. 
+ *              This could lead to SQL injection if the variable is user-controlled and not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ */
+
+import python
+import semmle.python.Concepts
+import DataFlow
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.TaintTracking
+
+class AsyncpgSqlSource extends DataFlow::Node {
+  AsyncpgSqlSource() {
+    this.asExpr().toString().matches(".*\\$USERINPUT.*") or
+    this.asExpr().toString().matches(".*\\+.*") or
+    this.asExpr().toString().matches(".*\\.format(.*)") or
+    this.asExpr().toString().matches(".*%.*")
+  }
+}
+
+class AsyncpgSqlSink extends DataFlow::Node {
+  AsyncpgSqlSink() {
+    exists(Call c | 
+      c.getTarget().getName().matches("fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery") and
+      c.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      this.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgSanitizer extends DataFlow::Node {
+  AsyncpgSanitizer() {
+    exists(Call c |
+      c.getTarget().getName().matches("fetch|fetchrow|fetchval") and
+      c.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      c.getArgument(0).toString().matches("^SELECT \\$1") and
+      this.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgConfiguration extends TaintTracking::Configuration {
+  AsyncpgConfiguration() { this = "AsyncpgSqlInjection" }
+
+  override predicate isSource(TaintTracking::TaintSource source) { 
+    source.asTaintNode() instanceof AsyncpgSqlSource 
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) { 
+    sink.asTaintNode() instanceof AsyncpgSqlSink 
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer.asTaintNode() instanceof AsyncpgSanitizer
+  }
+}
+
+from AsyncpgConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection using string concatenation in asyncpg query", source, 
+"User input flows into SQL query without proper sanitization"
+================================================================================
+Timestamp: 2025-10-28 22:48:03
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: asyncpg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized."
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL | LITERAL | ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: ".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery }
+      arg_index: 0
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval }
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^SELECT \\$1"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:18,5-73)
+ERROR: token recognition error at: '".*(\\$USERINPUT|\\+\\.format|\%' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:18,38-69)
+ERROR: token recognition error at: '")\n' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:18,73-75)
+ERROR: unexpected input '*' expecting one of: '(', Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:18,72-73)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:19,3-4)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,32-40)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,30-38)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:25,19-26)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:26,9-20)
+ERROR: asExpr() cannot be resolved for type AsyncpgSqlSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:27,12-18)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:27,25-36)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,32-40)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:35,19-26)
+ERROR: getReceiver() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:36,9-20)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:37,9-20)
+ERROR: asExpr() cannot be resolved for type AsyncpgSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:38,12-18)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:38,25-36)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:46,31-39)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:50,29-37)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:54,34-42)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:59,32-40)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:59,32-50)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:59,59-67)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:59,59-77)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+ERROR: AsyncpgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:16,7-23)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:17,3-19)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:22,7-21)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: AsyncpgSanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:32,7-23)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:54,22-33)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:12,1-39)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:13,1-31)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a198f347/python-security-queries/queries/test-rule/TestRule.ql:14,1-44)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. 
+ *              This could lead to SQL injection if the variable is user-controlled and not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ */
+
+import python
+import semmle.python.Concepts
+import semmle.python.dataflow.DataFlow
+import semmle.python.ApiGraphs
+import semmle.python.dataflow.TaintTracking
+
+class AsyncpgSqlSource extends DataFlow::Node {
+  AsyncpgSqlSource() {
+    this.asExpr().toString().matches(".*(\\$USERINPUT|\\+\\.format|\%).*")
+  }
+}
+
+class AsyncpgSqlSink extends DataFlow::Node {
+  AsyncpgSqlSink() {
+    exists(Call c | 
+      c.getFunc().getName().matches("fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery") and
+      c.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      this.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgSanitizer extends DataFlow::Node {
+  AsyncpgSanitizer() {
+    exists(Call c |
+      c.getFunc().getName().matches("fetch|fetchrow|fetchval") and
+      c.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      c.getArgument(0).toString().matches("^SELECT \\$1") and
+      this.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+class AsyncpgConfiguration extends TaintTracking::Configuration {
+  AsyncpgConfiguration() { this = "AsyncpgSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof AsyncpgSqlSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof AsyncpgSqlSink 
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof AsyncpgSanitizer
+  }
+}
+
+from AsyncpgConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection using string concatenation in asyncpg query", source, 
+"User input flows into SQL query without proper sanitization"
+================================================================================
+Timestamp: 2025-10-28 22:50:19
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: asyncpg-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized."
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL | LITERAL | ASSIGNMENT
+      where:
+        - op: regex
+          left: value
+          right: ".*\\$USERINPUT.*|.*\\+.*|.*\\.format(.*)|.*%.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery }
+      arg_index: 0
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { package: asyncpg, type: Connection, method: fetch|fetchrow|fetchval }
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^SELECT \\$1"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:13,8-27)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:24,12-32)
+ERROR: getBasicBlock() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:24,74-87)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:25,12-27)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:30,12-18)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:30,28-38)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:39,12-32)
+ERROR: getBasicBlock() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:39,74-87)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:40,12-27)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:45,28-38)
+ERROR: could not resolve type DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:58,12-32)
+ERROR: getBasicBlock() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:58,74-87)
+ERROR: could not resolve type DataFlow::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:59,12-27)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:62,36-49)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:78,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:78,59-77)
+ERROR: predicate 'getBasicBlock' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:24,3-91)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:25,28-36)
+ERROR: predicate 'getBasicBlock' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:39,3-91)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:40,28-36)
+ERROR: predicate 'getBasicBlock' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:58,3-91)
+ERROR: predicate 'getScope' has result type null, not matching the overridden predicate's Scope::Scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:59,28-36)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:65,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:69,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c02eb47e/python-security-queries/queries/test-rule/TestRule.ql:73,22-33)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. 
+ *              This could lead to SQL injection if the variable is user-controlled and not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ */
+
+import python
+import semmle.python.Concepts
+import semmle.python.ApiGraphs
+import DataFlow::PathGraph
+
+class AsyncpgSqlSource extends DataFlow::Node {
+  AsyncpgSqlSource() {
+    exists(string pattern |
+      pattern = "$USERINPUT" or pattern = "+" or pattern = ".format" or pattern = "%" |
+      this.asExpr().toString().matches(pattern)
+    )
+  }
+  
+  override string toString() { result = this.asExpr().toString() }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.asExpr().getBasicBlock() }
+  override DataFlow::Scope getScope() { result = this.asExpr().getScope() }
+}
+
+class AsyncpgSqlSink extends DataFlow::Node {
+  AsyncpgSqlSink() {
+    exists(Method getName, MethodCall mc |
+      mc.getMethod() = getName and
+      getName.getName().matches("fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery") and
+      mc.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+  
+  override string toString() { result = this.asExpr().toString() }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.asExpr().getBasicBlock() }
+  override DataFlow::Scope getScope() { result = this.asExpr().getScope() }
+}
+
+class AsyncpgSanitizer extends DataFlow::Node {
+  AsyncpgSanitizer() {
+    exists(Method getName, MethodCall mc |
+      mc.getMethod() = getName and
+      getName.getName().matches("fetch|fetchrow|fetchval") and
+      mc.getReceiver().getType().hasQualifiedName("asyncpg", "Connection") and
+      exists(string pattern |
+        pattern = "^SELECT \\$1" |
+        mc.getArgument(0).toString().matches(pattern)
+      ) and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+  
+  override string toString() { result = this.asExpr().toString() }
+  override DataFlow::BasicBlock getBasicBlock() { result = this.asExpr().getBasicBlock() }
+  override DataFlow::Scope getScope() { result = this.asExpr().getScope() }
+}
+
+class AsyncpgConfiguration extends TaintTracking::Configuration {
+  AsyncpgConfiguration() { this = "AsyncpgSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof AsyncpgSqlSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof AsyncpgSqlSink 
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof AsyncpgSanitizer
+  }
+}
+
+from AsyncpgConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), "Potential SQL injection using string concatenation in asyncpg query", 
+source.getNode(), "User input flows into SQL query without proper sanitization"
+================================================================================

@@ -1,0 +1,552 @@
+Timestamp: 2025-10-28 22:41:45
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: psycopg-sqli
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected string concatenation with a non-literal variable in a psycopg2
+    Python SQL statement. This could lead to SQL injection if the variable is user-controlled
+    and not properly sanitized. Use parameterized queries or prepared statements instead.
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: ".*USERINPUT.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      arg_index: 1
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^%s$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.injection.SqlInjectionLib (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:11,8-56)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:22,14-20)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:28,12-22)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:29,19-25)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:38,12-22)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:39,24-30)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:50,44-62)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:50,71-89)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d730bbbb/python-security-queries/queries/test-rule/TestRule.ql:37,22-33)
+Rule Content:
+/**
+ * @name psycopg-sqli
+ * @description Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement.
+ *              This could lead to SQL injection if the variable is user-controlled.
+ * @id psycopg-sqli
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import python
+import semmle.python.security.injection.SqlInjectionLib
+import semmle.python.dataflow.TaintTracking
+import semmle.python.Concepts
+
+class PsycopgSQLInjectionConfiguration extends TaintTracking::Configuration {
+  PsycopgSQLInjectionConfiguration() {
+    this = "psycopg-sqli"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(string name |
+      source.asExpr() = name and
+      name.regexpMatch(".*USERINPUT.*")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall call, string methodName |
+      call = sink.asExpr() and
+      methodName = call.getMethodName() and
+      methodName in ["execute", "executemany", "mogrify"] and
+      call.getReceiverType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      sink = call.getArgument(1)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(MethodCall call |
+      call = sanitizer.asExpr() and
+      call.getMethodName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiverType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      exists(string argValue |
+        argValue = call.getArgument(1).getStringValue() and
+        argValue.regexpMatch("^%s$")
+      )
+    )
+  }
+}
+
+from PsycopgSQLInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via unsafe string concatenation in psycopg2. Use parameterized queries instead.", source,
+  "User input reaches this SQL execution point"
+================================================================================
+Timestamp: 2025-10-28 22:43:44
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: psycopg-sqli
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected string concatenation with a non-literal variable in a psycopg2
+    Python SQL statement. This could lead to SQL injection if the variable is user-controlled
+    and not properly sanitized. Use parameterized queries or prepared statements instead.
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: ".*USERINPUT.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      arg_index: 1
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^%s$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:11,8-27)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:19,31-57)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:26,29-53)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:29,25-38)
+ERROR: getReceiverType() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:31,12-27)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:32,29-40)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:36,34-58)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:39,12-25)
+ERROR: getReceiverType() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:40,12-27)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:42,25-36)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:49,44-62)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fee9ebf7/python-security-queries/queries/test-rule/TestRule.ql:49,71-89)
+Rule Content:
+/**
+ * @name psycopg-sqli
+ * @description Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement.
+ *              This could lead to SQL injection if the variable is user-controlled.
+ * @id psycopg-sqli
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import python
+import DataFlow::PathGraph
+import semmle.python.dataflow.TaintTracking
+
+class PsycopgSQLInjectionConfiguration extends TaintTracking::Configuration {
+  PsycopgSQLInjectionConfiguration() {
+    this = "psycopg-sqli"
+  }
+
+  override predicate isSource(TaintTracking::TaintSource source) {
+    exists(string name |
+      source.asExpr().(Name).getId() = name and
+      name.regexpMatch(".*USERINPUT.*")
+    )
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) {
+    exists(Call call, string methodName |
+      call = sink.asExpr() and
+      methodName = call.getCalleeName() and
+      methodName in ["execute", "executemany", "mogrify"] and
+      call.getReceiverType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      sink.getNode() = call.getArgument(1)
+    )
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    exists(Call call |
+      call = sanitizer.asExpr() and
+      call.getCalleeName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiverType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      exists(string argValue |
+        argValue = call.getArgument(1).getStringValue() and
+        argValue.regexpMatch("^%s$")
+      )
+    )
+  }
+}
+
+from PsycopgSQLInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via unsafe string concatenation in psycopg2. Use parameterized queries instead.", source,
+  "User input reaches this SQL execution point"
+================================================================================
+Timestamp: 2025-10-28 22:45:42
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: psycopg-sqli
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected string concatenation with a non-literal variable in a psycopg2
+    Python SQL statement. This could lead to SQL injection if the variable is user-controlled
+    and not properly sanitized. Use parameterized queries or prepared statements instead.
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: ".*USERINPUT.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      arg_index: 1
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^%s$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asSource() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:22,14-22)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:28,12-30)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:29,19-25)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:37,12-30)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:38,24-30)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:49,44-62)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:49,71-89)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_91bdc95c/python-security-queries/queries/test-rule/TestRule.ql:36,22-33)
+Rule Content:
+/**
+ * @name psycopg-sqli
+ * @description Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement.
+ *              This could lead to SQL injection if the variable is user-controlled.
+ * @id psycopg-sqli
+ * @kind path-problem
+ * @problem.severity warning
+*/
+
+import python
+import DataFlow
+import semmle.python.dataflow.TaintTracking
+import semmle.python.dataflow.DataFlow
+
+class PsycopgSQLInjectionConfiguration extends TaintTracking::Configuration {
+  PsycopgSQLInjectionConfiguration() {
+    this = "psycopg-sqli"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(string name |
+      source.asSource().getExpr().(Name).getId() = name and
+      name.regexpMatch(".*USERINPUT.*")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(DataFlow::CallNode call |
+      call = sink.asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      sink = call.getArgument(1)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(DataFlow::CallNode call |
+      call = sanitizer.asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      exists(string argValue |
+        argValue = call.getArgument(1).getStringValue() and
+        argValue.regexpMatch("^%s$")
+      )
+    )
+  }
+}
+
+from PsycopgSQLInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via unsafe string concatenation in psycopg2. Use parameterized queries instead.", source,
+  "User input reaches this SQL execution point"
+================================================================================
+Timestamp: 2025-10-28 22:47:56
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: psycopg-sqli
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected string concatenation with a non-literal variable in a psycopg2
+    Python SQL statement. This could lead to SQL injection if the variable is user-controlled
+    and not properly sanitized. Use parameterized queries or prepared statements instead.
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: ".*USERINPUT.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      arg_index: 1
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^%s$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.dataflow.path (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:13,8-35)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:20,31-57)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:27,29-53)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:28,12-22)
+ERROR: could not resolve type TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:36,34-58)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:49,44-62)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_704ac24a/python-security-queries/queries/test-rule/TestRule.ql:49,71-89)
+Rule Content:
+/**
+ * @name psycopg-sqli
+ * @description Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement.
+ *              This could lead to SQL injection if the variable is user-controlled.
+ * @id psycopg-sqli
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.path
+
+class PsycopgSQLInjectionConfiguration extends TaintTracking::Configuration {
+  PsycopgSQLInjectionConfiguration() {
+    this = "psycopg-sqli"
+  }
+
+  override predicate isSource(TaintTracking::TaintSource source) {
+    exists(string name |
+      source.getNode().asExpr().(Name).getId() = name and
+      name.regexpMatch(".*USERINPUT.*")
+    )
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) {
+    exists(MethodCall call |
+      call = sink.getNode().asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      sink.getNode() = call.getArgument(1)
+    )
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    exists(MethodCall call |
+      call = sanitizer.getNode().asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      exists(string argValue |
+        argValue = call.getArgument(1).getStringValue() and
+        argValue.regexpMatch("^%s$")
+      )
+    )
+  }
+}
+
+from PsycopgSQLInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via unsafe string concatenation in psycopg2. Use parameterized queries instead.", source,
+  "User input reaches this SQL execution point"
+================================================================================
+Timestamp: 2025-10-28 22:50:25
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: psycopg-sqli
+  kind: taint
+  severity: WARNING
+  message: >-
+    Detected string concatenation with a non-literal variable in a psycopg2
+    Python SQL statement. This could lead to SQL injection if the variable is user-controlled
+    and not properly sanitized. Use parameterized queries or prepared statements instead.
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: IDENTIFIER
+      where:
+        - op: regex
+          left: name
+          right: ".*USERINPUT.*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      arg_index: 1
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api: { type: psycopg2.Cursor, method: execute | executemany | mogrify }
+      where:
+        - op: regex
+          left: arg[1].value
+          right: "^%s$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:22,14-20)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:28,12-30)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:29,19-25)
+ERROR: could not resolve type DataFlow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:37,12-30)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:38,24-30)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:49,44-62)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:49,71-89)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:27,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6b562efa/python-security-queries/queries/test-rule/TestRule.ql:36,22-33)
+Rule Content:
+/**
+ * @name psycopg-sqli
+ * @description Detected string concatenation with a non-literal variable in a psycopg2 Python SQL statement.
+ *              This could lead to SQL injection if the variable is user-controlled.
+ * @id psycopg-sqli
+ * @kind path-problem
+ * @problem.severity warning
+ */
+
+import python
+import DataFlow
+import semmle.python.dataflow.TaintTracking
+import semmle.python.dataflow.DataFlow
+
+class PsycopgSQLInjectionConfiguration extends TaintTracking::Configuration {
+  PsycopgSQLInjectionConfiguration() {
+    this = "psycopg-sqli"
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(string name |
+      source.asExpr().(Name).getId() = name and
+      name.regexpMatch(".*USERINPUT.*")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(DataFlow::CallNode call |
+      call = sink.asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      sink = call.getArgument(1)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(DataFlow::CallNode call |
+      call = sanitizer.asExpr() and
+      call.getTarget().getName() in ["execute", "executemany", "mogrify"] and
+      call.getReceiver().getType().getUnderlyingType().hasQualifiedName("psycopg2", "Cursor") and
+      exists(string argValue |
+        argValue = call.getArgument(1).getStringValue() and
+        argValue.regexpMatch("^%s$")
+      )
+    )
+  }
+}
+
+from PsycopgSQLInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via unsafe string concatenation in psycopg2. Use parameterized queries instead.", source,
+  "User input reaches this SQL execution point"
+================================================================================

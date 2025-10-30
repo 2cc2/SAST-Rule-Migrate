@@ -1,0 +1,1682 @@
+Timestamp: 2025-10-29 22:30:40
+Attempt: 1
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: exec-injection
+  kind: taint
+  severity: ERROR
+  message: "Detected user data flowing into exec. This is code injection and should be avoided."
+  metadata:
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+    references:
+      - "https://nedbatchelder.com/blog/201206/exec_really_is_dangerous.html"
+    category: security
+    technology:
+      - flask
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      api: { type: flask.request, method: $W }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__, __call__]
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "\$ROUTEVAR|\$INTERM"
+
+sinks:
+  - id: PYTHON_EXEC
+    match:
+      node: CALL
+      api: { type: builtins, method: exec }
+      arg_index: 0
+
+propagations:
+  - id: REQUEST_TO_PARAM
+    edge: arg->param
+    kind: taint
+  - id: PARAM_TO_EXEC
+    edge: arg->param
+    kind: taint
+
+sanitizers: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:15,8-37)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:17,34-50)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:19,12-26)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:22,12-18)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:27,32-48)
+ERROR: could not resolve type FunctionParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:29,12-29)
+ERROR: asExpr() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:31,12-18)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:36,30-44)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:38,12-26)
+ERROR: asExpr() cannot be resolved for type PythonExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:49,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:54,29-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:57,38-56)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:57,65-83)
+Rule Content:
+/**
+ * @name exec-injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @id python/exec-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+import semmle.python.web.flask.Flask
+
+class FlaskRequestSource extends DataFlow::Source {
+  FlaskRequestSource() {
+    exists(MethodCallExpr mc |
+      mc.getAPI() = "flask.request" and
+      mc.getMethodName().regexpMatch("get|__getitem__|__call__") and
+      this.asExpr() = mc
+    )
+  }
+}
+
+class RouteParamSource extends DataFlow::Source {
+  RouteParamSource() {
+    exists(FunctionParameter p |
+      p.getName().regexpMatch("ROUTEVAR|INTERM") and
+      this.asExpr() = p
+    )
+  }
+}
+
+class PythonExecSink extends DataFlow::Sink {
+  PythonExecSink() {
+    exists(MethodCallExpr mc |
+      mc.getAPI() = "builtins" and
+      mc.getMethodName() = "exec" and
+      this.asExpr() = mc.getArg(0)
+    )
+  }
+}
+
+class ExecInjectionConfiguration extends TaintTracking::Configuration {
+  ExecInjectionConfiguration() { this = "ExecInjection" }
+
+  override predicate isSource(DataFlow::Source source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Sink sink) { sink instanceof PythonExecSink }
+}
+
+from ExecInjectionConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided.",
+  source, sink, "Potential code injection vulnerability"
+================================================================================
+Timestamp: 2025-10-29 22:33:00
+Attempt: 2
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:15,8-37)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:17,34-50)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:19,12-26)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:22,12-18)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:27,32-48)
+ERROR: could not resolve type FunctionParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:29,12-29)
+ERROR: asExpr() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:31,12-18)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:36,30-44)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:38,12-26)
+ERROR: asExpr() cannot be resolved for type PythonExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:49,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:54,29-43)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:57,38-56)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_64868ff0/python-security-queries/queries/test-rule/TestRule.ql:57,65-83)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+
+1. 替换无效的模块导入：
+   - 将 `import semmle.python.web.flask.Flask` 改为 `import python.security.FlaskHelpers`
+
+2. 更正数据类型引用：
+   - 将所有 `DataFlow::Source` 改为 `DataFlow::SourceNode`
+   - 将所有 `DataFlow::Sink` 改为 `DataFlow::SinkNode`
+   - 将所有 `MethodCallExpr` 改为 `Call`
+   - 将 `FunctionParameter` 改为 `ParameterNode`
+
+3. 修正方法调用：
+   - 将 `getAPI()` 改为 `getReceiver()` 并相应调整判断逻辑
+   - 将 `getMethodName()` 改为 `getMethod()` 或 `getName()`
+   - 将 `asExpr()` 改为 `asDefiningNode()`
+
+4. 更新配置类定义：
+   - 确保 `TaintTracking::Configuration` 的子类正确实现了所有必需的方法
+
+5. 修正路径节点类型：
+   - 将所有 `DataFlow::PathNode` 改为 `DataFlow::PathGraph::PathNode`
+
+6. 调整流分析查询语法：
+   - 确保使用最新的CodeQL Python数据流分析API语法
+   - 更新`hasFlowPath`调用的参数类型
+
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:25,37-52)
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:36,37-50)
+ERROR: token recognition error at: '"\$' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:31,31-33)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:31,43-44)
+ERROR: token recognition error at: '$' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:31,44-45)
+ERROR: token recognition error at: '")\n' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:31,51-53)
+ERROR: no viable parse for input 'ROUTEVAR|', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:31,34-42)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '.', '}', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:37,1-2)
+ERROR: could not resolve module python.security.FlaskHelpers (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:14,8-36)
+ERROR: could not resolve type DataFlow::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:16,34-54)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:18,12-26)
+ERROR: could not resolve predicate globalValue/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:19,28-39)
+ERROR: asDefiningNode() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:22,19-33)
+ERROR: could not resolve type DataFlow::SourceNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:28,32-52)
+ERROR: could not resolve type ParameterNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:30,12-25)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:22,5-11)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:29,3-19)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:36,3-11)
+ERROR: The body of this 'TestRule::FlaskRequestSource::getSourceType' does not bind 'result' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:25,19-32)
+ERROR: The body of this 'TestRule::getSourceType' does not bind 'result' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:36,19-32)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:25,12-18)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:36,12-18)
+WARNING: unused class 'FlaskRequestSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:16,7-25)
+WARNING: unused class 'RouteParamSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6e56ae8f/python-security-queries/queries/test-rule/TestRule.ql:28,7-23)
+Rule Content:
+/**
+ * @name Exec Injection Vulnerability
+ * @description Detects user data flowing into exec, which can lead to code injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/exec-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import python.security.FlaskHelpers
+
+class FlaskRequestSource extends DataFlow::SourceNode {
+  FlaskRequestSource() {
+    exists(MethodCallExpr call |
+      call.getReceiver() = globalValue("flask", "request") and
+      call.getMethod() in ["get", "__getitem__", "__call__"]
+    ) and
+    result = this.asDefiningNode()
+  }
+
+  override string getSourceType() { "FLASK_REQUEST" }
+}
+
+class RouteParamSource extends DataFlow::SourceNode {
+  RouteParamSource() {
+    exists(ParameterNode param |
+      param.getName().matches("\$ROUTEVAR|\$INTERM")
+    ) and
+    result = this.asDefiningNode()
+  }
+
+  override string getSourceType() { "ROUTE_PARAM" }
+}
+
+class PythonExecSink extends DataFlow::SinkNode {
+  PythonExecSink() {
+    exists(Call call |
+      call.getReceiver() = globalValue("builtins", "") and
+      call.getMethod() = "exec" and
+      result = call.getArgument(0)
+    )
+  }
+
+  override string getSinkType() { "PYTHON_EXEC" }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjectionConfig" }
+
+  override predicate isSource(DataFlow::SourceNode source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::SinkNode sink) {
+    sink instanceof PythonExecSink
+  }
+}
+
+from ExecInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, source, sink,
+  "Detected user data flowing into exec. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:35:38
+Attempt: 3
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: exec-injection
+  kind: taint
+  severity: ERROR
+  message: "Detected user data flowing into exec. This is code injection and should be avoided."
+  metadata:
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+    references:
+      - "https://nedbatchelder.com/blog/201206/exec_really_is_dangerous.html"
+    category: security
+    technology:
+      - flask
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      api: { type: flask.request, method: $W }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__, __call__]
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "\$ROUTEVAR|\$INTERM"
+
+sinks:
+  - id: PYTHON_EXEC
+    match:
+      node: CALL
+      api: { type: builtins, method: exec }
+      arg_index: 0
+
+propagations:
+  - id: REQUEST_TO_FLOW
+    edge: arg->param|field-load|alias
+    kind: taint
+  - id: PARAM_TO_EXEC
+    edge: arg->param|field-load|alias
+    kind: taint
+
+sanitizers: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.FlaskRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:16,8-44)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:18,34-50)
+ERROR: could not resolve predicate apiCall/5 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:20,5-12)
+ERROR: asSource() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:21,38-46)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:25,28-44)
+ERROR: asParameter() cannot be resolved for type RequestParam.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:27,38-49)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:32,24-38)
+ERROR: could not resolve predicate apiCall/5 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:34,5-12)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:41,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:45,29-43)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:50,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:50,56-70)
+ERROR: hasFlow(<unknown>, <unknown>) cannot be resolved for type ExecInjectionConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:51,11-18)
+Rule Content:
+/**
+ * @name exec-injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind problem
+ * @problem.severity error
+ * @id python/exec-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ * @precision medium
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+import semmle.python.Concepts
+import semmle.python.web.flask.FlaskRequest
+
+class FlaskRequestSource extends DataFlow::Source {
+  FlaskRequestSource() {
+    apiCall("flask.request", _, _, _, _).getAMethodCall(["get", "__getitem__", "__call__"]) or
+    exists(RequestParam p | p = this.asSource())
+  }
+}
+
+class RequestParam extends DataFlow::Source {
+  RequestParam() {
+    exists(string name | name = this.asParameter().getName() |
+      name.regexpMatch("\\$ROUTEVAR|\\$INTERM"))
+  }
+}
+
+class ExecSink extends DataFlow::Sink {
+  ExecSink() {
+    apiCall("builtins", "exec", _, _, _).getAnArg(0) 
+  }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjectionConfig" }
+
+  override predicate isSource(DataFlow::Source source) {
+    source instanceof FlaskRequestSource or source instanceof RequestParam
+  }
+
+  override predicate isSink(DataFlow::Sink sink) {
+    sink instanceof ExecSink
+  }
+}
+
+from ExecInjectionConfig cfg, DataFlow::Source source, DataFlow::Sink sink
+where cfg.hasFlow(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:37:37
+Attempt: 4
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.FlaskRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:16,8-44)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:18,34-50)
+ERROR: could not resolve predicate apiCall/5 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:20,5-12)
+ERROR: asSource() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:21,38-46)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:25,28-44)
+ERROR: asParameter() cannot be resolved for type RequestParam.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:27,38-49)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:32,24-38)
+ERROR: could not resolve predicate apiCall/5 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:34,5-12)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:41,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:45,29-43)
+ERROR: could not resolve type DataFlow::Source (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:50,31-47)
+ERROR: could not resolve type DataFlow::Sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:50,56-70)
+ERROR: hasFlow(<unknown>, <unknown>) cannot be resolved for type ExecInjectionConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_6f75075d/python-security-queries/queries/test-rule/TestRule.ql:51,11-18)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入路径：
+   将 `import semmle.python.dataflow.TaintTracking` 替换为 `import DataFlow::PathGraph`
+   将 `import semmle.python.web.flask.FlaskRequest` 替换为 `import python`
+
+2. 修改基类引用：
+   将所有 `DataFlow::Source` 替换为 `DataFlow::Node`
+   将所有 `DataFlow::Sink` 替换为 `DataFlow::Node`
+
+3. 替换过时的apiCall语法：
+   使用 `API::getACall()` 替代 `apiCall()` 函数，并相应地调整参数匹配方式
+
+4. 修复source/sink转换方法：
+   对于Source类，使用`this.asParameter()`来获取参数
+   对于Sink类，使用`this.asExpr()`来处理表达式
+
+5. 更新配置类继承：
+   确保 `ExecInjectionConfig` 继承自 `TaintTracking::Configuration` 并正确实现相关方法
+
+6. 修复hasFlow调用：
+   将 `cfg.hasFlow(source, sink)` 改为 `cfg.hasFlowPath(source, sink)`
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:12,8-27)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:17,12-15)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:18,14-17)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: getAnnotatedName() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:28,9-25)
+ERROR: asParameter() cannot be resolved for type RequestParam.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:29,12-23)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:36,12-15)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:37,14-17)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:38,12-18)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+ERROR: TaintTracking::DataFlow::Node is not compatible with Implementation::TaintTrackingNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:57,7-36)
+Rule Content:
+/**
+ * @name Exec Injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/exec-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+import python
+import DataFlow::PathGraph
+import semmle.python.dataflow.TaintTracking
+
+class FlaskRequestSource extends DataFlow::Node {
+  FlaskRequestSource() {
+    exists(API::Call call |
+      call = API::getACall("flask.request", _, _, _) and
+      call.getMethodName() in ["get", "__getitem__", "__call__"] and
+      this.asExpr() = call
+    )
+  }
+}
+
+class RequestParam extends DataFlow::Node {
+  RequestParam() {
+    exists(Parameter p |
+      p.getAnnotatedName().regexpMatch("\\$ROUTEVAR|\\$INTERM") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ExecSink extends DataFlow::Node {
+  ExecSink() {
+    exists(API::Call call |
+      call = API::getACall("builtins.exec", _, _, _) and
+      this.asExpr() = call.getArg(0)
+    )
+  }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RequestParam
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecSink
+  }
+}
+
+from ExecInjectionConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:39:41
+Attempt: 5
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:12,8-27)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:17,12-15)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:18,14-17)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: getAnnotatedName() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:28,9-25)
+ERROR: asParameter() cannot be resolved for type RequestParam.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:29,12-23)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:36,12-15)
+ERROR: could not resolve module API (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:37,14-17)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:38,12-18)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:15,7-25)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: RequestParam must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:25,7-19)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:34,7-15)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+ERROR: TaintTracking::DataFlow::Node is not compatible with Implementation::TaintTrackingNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ba4ec780/python-security-queries/queries/test-rule/TestRule.ql:57,7-36)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 将 `DataFlow::PathGraph` 模块导入改为 `DataFlow::TaintTracking`，因为PathGraph已废弃而TaintTracking是新版本推荐的模块
+2. 移除错误的 `API` 模块导入，改为使用 `DataFlow` 内置的调用分析方法
+3. 修复 FlaskRequestSource 类的问题：
+   - 继承 `TaintTracking::TaintSource` 而不是 `DataFlow::Node`
+   - 使用 `DataFlow::CallNode` 分析 Flask 请求调用
+   - 实现所有要求的抽象方法
+4. 修复 RequestParam 类的问题：
+   - 继承 `TaintTracking::TaintSource` 而不是 `DataFlow::Node`
+   - 使用正确的参数属性检查方法
+   - 实现所有要求的抽象方法
+5. 修复 ExecSink 类的问题：
+   - 继承 `TaintTracking::TaintSink` 而不是 `DataFlow::Node`
+   - 使用正确的调用分析方法检查 exec 调用
+   - 实现所有要求的抽象方法
+6. 修改配置类中的 isSource 和 isSink 方法签名：
+   - isSource 的参数类型应为 `TaintTracking::TaintSource`
+   - isSink 的参数类型应为 `TaintTracking::TaintSink`
+7. 修改最终的查询语句，确保使用正确的节点类型匹配
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:12,8-31)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:15,34-60)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:17,12-26)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:24,12-26)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:25,14-20)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:32,28-54)
+ERROR: getAnnotatedName() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:35,9-25)
+ERROR: asParameter() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:41,14-25)
+ERROR: getAnnotatedName() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:42,9-25)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:47,24-48)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:49,12-26)
+ERROR: could not resolve type MethodCallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:56,12-26)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:57,12-18)
+ERROR: could not resolve type TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:67,31-57)
+ERROR: could not resolve type TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:71,29-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:76,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:76,61-79)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:16,3-21)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:33,3-15)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:48,3-11)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a5173b45/python-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+Rule Content:
+/**
+ * @name Exec Injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind path-problem
+ * @problem.severity error
+ * @id py/exec-injection
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+import python
+import DataFlow::TaintTracking
+import semmle.python.dataflow.DataFlow
+
+class FlaskRequestSource extends TaintTracking::TaintSource {
+  FlaskRequestSource() {
+    exists(MethodCallExpr call |
+      call.getMethod().getName().matches("get|__getitem__|__call__") and
+      call.getReceiver().getType().hasName("flask.request")
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodCallExpr call |
+      source.asExpr() = call and
+      call.getMethod().getName().matches("get|__getitem__|__call__") and
+      call.getReceiver().getType().hasName("flask.request")
+    )
+  }
+}
+
+class RequestParam extends TaintTracking::TaintSource {
+  RequestParam() {
+    exists(Parameter p | 
+      p.getAnnotatedName().matches("\\$ROUTEVAR|\\$INTERM")
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p |
+      source.asParameter() = p and
+      p.getAnnotatedName().matches("\\$ROUTEVAR|\\$INTERM")
+    )
+  }
+}
+
+class ExecSink extends TaintTracking::TaintSink {
+  ExecSink() {
+    exists(MethodCallExpr call |
+      call.getMethod().getName() = "exec" and
+      call.getReceiver().getType().hasName("builtins")
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCallExpr call |
+      sink.asExpr() = call and
+      call.getMethod().getName() = "exec" and
+      call.getReceiver().getType().hasName("builtins")
+    )
+  }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjectionConfig" }
+
+  override predicate isSource(TaintTracking::TaintSource source) {
+    source instanceof FlaskRequestSource or source instanceof RequestParam
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) {
+    sink instanceof ExecSink
+  }
+}
+
+from ExecInjectionConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:41:59
+Attempt: 6
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: exec-injection
+  kind: taint
+  severity: ERROR
+  message: "Detected user data flowing into exec. This is code injection and should be avoided."
+  metadata:
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+    references:
+      - "https://nedbatchelder.com/blog/201206/exec_really_is_dangerous.html"
+    category: security
+    technology:
+      - flask
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      api: { type: flask.request, method: $W }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__, __call__]
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "\$ROUTEVAR|\$INTERM"
+
+sinks:
+  - id: PYTHON_EXEC
+    match:
+      node: CALL
+      api: { type: builtins, method: exec }
+      arg_index: 0
+
+propagations:
+  - id: REQUEST_TO_FLOW
+    edge: arg->param|field-load|alias
+    kind: taint
+  - id: PARAM_TO_EXEC
+    edge: arg->param|field-load|alias
+    kind: taint
+
+sanitizers: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.App (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:17,8-35)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+ERROR: getType() cannot be resolved for type ObjectAPI::Value (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:25,33-40)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:26,12-18)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:35,12-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+ERROR: getType() cannot be resolved for type ObjectAPI::Value (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:44,33-40)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:67,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:67,33-51)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:58,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:62,22-33)
+Rule Content:
+/**
+ * @name Exec Injection via Flask Request
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind taint
+ * @id python/exec-injection
+ * @severity Error
+ * @precision medium
+ * @problem.severity error
+ * @security-severity 8.5
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ *       framework/flask
+ */
+
+import python
+import semmle.python.web.flask.App
+import semmle.python.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class FlaskRequestSource extends DataFlow::Node {
+  FlaskRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethodName() in ["get", "__getitem__", "__call__"] and
+      ma.getQualifier().(Value).getType().getName() = "flask.request" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Parameter p |
+      p.getName().regexpMatch("\\$ROUTEVAR|\\$INTERM") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ExecSink extends DataFlow::Node {
+  ExecSink() {
+    exists(MethodAccess ma |
+      ma.getMethodName() = "exec" and
+      ma.getQualifier().(Value).getType().getName() = "builtins" and
+      this.asExpr() = ma.getAnArgument(0)
+    )
+  }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjectionConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    none()
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, ExecInjectionConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, source, sink, "User data flows into exec call. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:44:21
+Attempt: 7
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.web.flask.App (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:17,8-35)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:23,12-24)
+ERROR: getType() cannot be resolved for type ObjectAPI::Value (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:25,33-40)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:26,12-18)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:35,12-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+ERROR: getType() cannot be resolved for type ObjectAPI::Value (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:44,33-40)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:67,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:67,33-51)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:21,7-25)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:31,7-23)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:40,7-15)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:58,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_086532eb/python-security-queries/queries/test-rule/TestRule.ql:62,22-33)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 替换已弃用/错误的模块导入:
+ - 将semmle.python.web.flask.App替换为正确的python flask模块路径，如import python.web.flask
+ - 移除错误的DataFlow::PathGraph导入，CodeQL已内置路径图支持无需单独导入
+
+2. 更新类型和方法引用:
+ - 将MethodAccess替换为标准AST节点类型NameExpr或CallExpr
+ - 使用正确的getUnderlyingType()代替getType()
+ - 使用asExpr()/asParameter()的正确调用方式(如DataFlow::parameterNode)
+
+3. 实现必要的抽象方法:
+ - 为所有自定义DataFlow::Node子类(FlaskRequestSource/RouteParamSource/ExecSink)实现:
+   * asCfgNode(): this = ...
+   * getLocation(): result = ...
+   * getBasicBlock(): none()
+   * toString(): result = ...
+   * getScope(): none()
+   * asVariable(): none()
+
+4. 修正类型继承关系:
+ - 将TaintTracking::Configuration相关方法参数类型改为对应的TaintSource/TaintSink类型
+ - 保持isSource()接收TaintSource, isSink()接收TaintSink
+
+5. 使用标准数据流库:
+ - 确保使用了正确的数据流库import，推荐:
+   import DataFlow
+   import TaintTracking
+   import DataFlow::PathGraph // 仅在使用可视化路径时需要
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:13,8-21)
+ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:16,34-47)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:24,31-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:29,32-45)
+ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:32,9-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:36,31-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:41,24-37)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:43,12-20)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:44,21-29)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:49,29-37)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:50,12-20)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:51,21-29)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:57,35-48)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:60,31-44)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:65,29-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:70,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:70,33-41)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:17,3-21)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:30,3-19)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:42,3-11)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:24,22-30)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:36,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:60,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:65,22-28)
+Rule Content:
+/**
+ * @name Exec Injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/exec-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+import python
+import DataFlow
+import TaintTracking
+import semmle.python.web.flask.Request
+
+class FlaskRequestSource extends TaintTracking::TaintSource {
+  FlaskRequestSource() { 
+    exists(MethodAccess ma | 
+      ma.getMethod().getName() in ["get", "__getitem__", "__call__"] and
+      ma.getMethod().getDeclaringType().getName() = "request"
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof FlaskRequestSource
+  }
+}
+
+class RouteParamSource extends TaintTracking::TaintSource {
+  RouteParamSource() {
+    exists(Parameter p | 
+      p.getType().getUnderlyingType().getName().matches("%ROUTEVAR%|%INTERM%")
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asParameter() instanceof RouteParamSource
+  }
+}
+
+class ExecSink extends TaintTracking::TaintSink {
+  ExecSink() {
+    exists(CallExpr ce | 
+      ce.getFunc().(NameExpr).getName() = "exec" and
+      ce.getFunc().getType().getUnderlyingType().getName() = "builtins"
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(CallExpr ce |
+      ce.getFunc().(NameExpr).getName() = "exec" and
+      sink.asExpr() = ce.getArgument(0)
+    )
+  }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "ExecInjection" }
+
+  override predicate isSource(TaintTracking::TaintSource source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(TaintTracking::TaintSink sink) {
+    sink instanceof ExecSink
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, ExecInjectionConfig conf
+where conf.hasFlowPath(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided.",
+  source, sink, "Potential exec injection vulnerability"
+================================================================================
+Timestamp: 2025-10-29 22:46:05
+Attempt: 8
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:12,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:13,8-21)
+ERROR: could not resolve module semmle.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:14,8-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:16,34-47)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:18,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:24,31-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:29,32-45)
+ERROR: getType() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:32,9-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:36,31-39)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:41,24-37)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:43,12-20)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:44,21-29)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:49,29-37)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:50,12-20)
+ERROR: could not resolve type NameExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:51,21-29)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:57,35-48)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:60,31-44)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:65,29-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:70,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:70,33-41)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:17,3-21)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:30,3-19)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:42,3-11)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:24,22-30)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:36,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:60,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_12ebb205/python-security-queries/queries/test-rule/TestRule.ql:65,22-28)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 更新模块导入语句：
+   - 将`import DataFlow`改为`import semmle.code.python.dataflow.DataFlow`
+   - 将`import TaintTracking`改为`import semmle.code.python.dataflow.TaintTracking`
+   - 将`import semmle.python.web.flask.Request`改为`import semmle.code.python.web.flask.Request`
+
+2. 修改参数类型检查：
+   - 在RouteParamSource类中，将`p.getType().getUnderlyingType()`改为`p.getAPrimaryQlClass()`
+
+3. 修正类定义问题：
+   - 在FlaskRequestSource、RouteParamSource和ExecSink类中添加`extends`声明继承相应的父类
+
+4. 修正方法调用：
+   - 将`MethodAccess`改为`Call`
+   - 将`NameExpr`改为`Name`
+   - 将`CallExpr`改为`Call`
+
+5. 解决this未绑定问题：
+   - 在ExecInjectionConfig类构造函数中，添加`super()`调用
+
+6. 移除未使用的方法：
+   - 删除所有被标记为未使用的isSource和isSink方法
+
+7. 更新类型检查：
+   - 确保所有类型检查使用正确的CodeQL Python库类型
+   - 例如将`getName()`方法调用调整为特定类型的正确访问方式
+
+8. 修正正则表达式匹配：
+   - 将路由参数匹配的正则表达式语法调整为CodeQL支持的格式
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.python.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:14,8-44)
+ERROR: could not resolve module semmle.code.python.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:15,8-49)
+ERROR: could not resolve module semmle.code.python.web.flask.Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:16,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:18,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type Request (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:22,31-38)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:23,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:27,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:30,32-40)
+ERROR: could not resolve module Function (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:32,12-20)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:34,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:38,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:41,24-32)
+ERROR: could not resolve type Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:43,12-16)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:46,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:50,29-37)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:53,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:56,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:61,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:65,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:68,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:68,57-65)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:27,22-30)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:38,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:61,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a700a6d3/python-security-queries/queries/test-rule/TestRule.ql:65,22-33)
+Rule Content:
+/**
+ * @name Exec Injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @id exec-injection
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @security-severity 8.0
+ * @tags security
+ *       external/cwe/cwe-095
+ *       external/owasp/a03
+ */
+
+import semmle.code.python.dataflow.DataFlow
+import semmle.code.python.dataflow.TaintTracking
+import semmle.code.python.web.flask.Request
+
+class FlaskRequestSource extends DataFlow::Node {
+  FlaskRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["get", "__getitem__", "__call__"]) and
+      ma.getQualifier() = any(Request r).getExpr() and
+      this.asExpr() = ma
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) { this = source }
+}
+
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Function::Parameter p |
+      p.getAPrimaryQlClass().matches("%ROUTEVAR%|%INTERM%") and
+      this.asParameter() = p
+    )
+  }
+
+  override predicate isSource(DataFlow::Node source) { this = source }
+}
+
+class ExecSink extends DataFlow::Node {
+  ExecSink() {
+    exists(Call call |
+      call.getCalleeName() = "exec" and
+      call.getImportedFrom() = "builtins" and
+      this.asExpr() = call.getArg(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) { this = sink }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "Exec Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FlaskRequestSource or
+    source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) { none() }
+}
+
+from ExecInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided.",
+  source, "User input originates here"
+================================================================================
+Timestamp: 2025-10-29 22:48:06
+Attempt: 9
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
+            </role>
+            <task>
+            理解Semgrep工具的规则中间表示的内容将其迁移到Codeql工具中,规则符合Codeql的语法规范。
+            PS:中间表示是对规则的高度抽象总结，包含规则的核心要素和逻辑。请生成规则过程中保证信息完整准确。
+            </task>
+            <origin_rule>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: exec-injection
+  kind: taint
+  severity: ERROR
+  message: "Detected user data flowing into exec. This is code injection and should be avoided."
+  metadata:
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+    references:
+      - "https://nedbatchelder.com/blog/201206/exec_really_is_dangerous.html"
+    category: security
+    technology:
+      - flask
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: FLASK_REQUEST
+    match:
+      node: CALL
+      api: { type: flask.request, method: $W }
+      where:
+        - op: in
+          left: method
+          right: [get, __getitem__, __call__]
+  - id: ROUTE_PARAM
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: name
+          right: "\$ROUTEVAR|\$INTERM"
+
+sinks:
+  - id: PYTHON_EXEC
+    match:
+      node: CALL
+      api: { type: builtins, method: exec }
+      arg_index: 0
+
+propagations:
+  - id: REQUEST_TO_FLOW
+    edge: arg->param|field-load|alias
+    kind: taint
+  - id: PARAM_TO_EXEC
+    edge: arg->param|field-load|alias
+    kind: taint
+
+sanitizers: []
+```
+            </origin_rule>
+            <example>
+            请仿照下面提供的例子进行规则的编写，
+            
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.WebFlask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:15,8-30)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:22,32-38)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:31,12-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:41,32-38)
+ERROR: could not resolve predicate localTaint/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:47,3-28)
+ERROR: could not resolve predicate globalTaint/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:48,3-29)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:55 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:51,1-53,99)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:51 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:55,1-57,99)
+Rule Content:
+/**
+ * @name exec-injection
+ * @description Detected user data flowing into exec. This is code injection and should be avoided.
+ * @kind taint
+ * @problem.severity error
+ * @id py/exec-injection
+ * @tags security
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ * @precision medium
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+import semmle.python.WebFlask
+
+class FlaskRequestSource extends DataFlow::Node {
+  FlaskRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getAPackage() = "flask.request" and
+      ma.getMethod().getName().matches("get|__getitem__|__call__") and
+      ma.getACallable() = this.asExpr()
+    )
+  }
+}
+
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Parameter p |
+      p.getName().matches("\\$ROUTEVAR|\\$INTERM") and
+      this.asParameter() = p
+    )
+  }
+}
+
+class ExecSink extends DataFlow::Node {
+  ExecSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().getAPackage() = "builtins" and
+      ma.getMethod().getName() = "exec" and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+predicate isTainted(DataFlow::Node source, DataFlow::Node sink) {
+  TaintTracking::localTaint(source, sink) or
+  TaintTracking::globalTaint(source, sink)
+}
+
+from FlaskRequestSource source, ExecSink sink
+where isTainted(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided."
+
+from RouteParamSource source, ExecSink sink
+where isTainted(source, sink)
+select sink, "Detected user data flowing into exec. This is code injection and should be avoided."
+================================================================================
+Timestamp: 2025-10-29 22:50:23
+Attempt: 10
+Prompt:
+
+            <error>
+            以下是代码在工具运行时工具捕捉的错误：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.WebFlask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:15,8-30)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:22,32-38)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:31,12-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:38,12-24)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:41,32-38)
+ERROR: could not resolve predicate localTaint/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:47,3-28)
+ERROR: could not resolve predicate globalTaint/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:48,3-29)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: FlaskRequestSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:17,7-25)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: RouteParamSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:27,7-23)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: ExecSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:36,7-15)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:55 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:51,1-53,99)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:51 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3f0f03cf/python-security-queries/queries/test-rule/TestRule.ql:55,1-57,99)
+            </error>
+            <advise>
+            请根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 移除无效的导入语句 semmle.python.WebFlask，改为导入 python.frameworks.Flask
+2. 将 MethodAccess 类型改为 DataFlow::CallNode 类型
+3. 将 asExpr() 改写为作为节点直接使用，因为 DataFlow::Node 已经表示表达式
+4. 将 asParameter() 改为使用全局变量 this.asParameter() 的方式
+5. 合并两个select子句为一个，可以通过使用 or 连接两个来源条件来实现
+6. 为所有继承 DataFlow::Node 的类添加缺失的抽象方法实现：
+   - 实现 asCfgNode() predicate
+   - 实现 getLocation() predicate  
+   - 实现 getBasicBlock() predicate
+   - 实现 toString() predicate
+   - 实现 getScope() predicate
+   - 实现 asVariable() predicate
+7. 替换 localTaint 和 globalTaint，改用 TaintTracking::localTaintStep 和 TaintTracking::globalTaintStep 结合的数据流分析
+"""
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module python.frameworks.Flask (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:10,8-31)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:12,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:14,12-24)
+ERROR: asExpr() cannot be resolved for type FlaskRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:16,17-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:24,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:25,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:27,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:28,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:31,32-40)
+ERROR: asParameter() cannot be resolved for type RouteParamSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:35,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:43,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:44,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:46,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:47,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:50,24-32)
+ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:53,12-21)
+ERROR: getArgument(int) cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:54,12-23)
+ERROR: asExpr() cannot be resolved for type ExecSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:54,34-40)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:62,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:63,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:65,12-20)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:66,12-20)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:69,35-63)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:72,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:76,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:80,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:85,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:85,29-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'asCfgNode' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:23,22-31)
+WARNING: unused method 'getBasicBlock' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:25,33-46)
+WARNING: unused method 'asVariable' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:28,31-41)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:39,22-30)
+WARNING: unused method 'asCfgNode' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:42,22-31)
+WARNING: unused method 'getBasicBlock' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:44,33-46)
+WARNING: unused method 'asVariable' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:47,31-41)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:58,22-28)
+WARNING: unused method 'asCfgNode' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:61,22-31)
+WARNING: unused method 'getBasicBlock' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:63,33-46)
+WARNING: unused method 'asVariable' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:66,31-41)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:72,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:76,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7be0/python-security-queries/queries/test-rule/TestRule.ql:80,22-33)
+Rule Content:
+/**
+ * @name Exec Injection
+ * @kind problem
+ * @id python/exec-injection
+ * @severity error
+ * @message Detected user data flowing into exec. This is code injection and should be avoided.
+ */
+import python
+import semmle.python.dataflow.new.TaintTracking
+import python.frameworks.Flask
+
+class FlaskRequestSource extends DataFlow::Node {
+  FlaskRequestSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasQualifiedName("flask.request", ["get", "__getitem__", "__call__"]) and
+      ma = this.asExpr()
+    )
+  }
+
+  override predicate isSource() { this = any(FlaskRequestSource f) }
+
+  // Implement required abstract predicates
+  override predicate asCfgNode() { none() }
+  override DataFlow::Location getLocation() { result = this.getLocation() }
+  override DataFlow::BasicBlock getBasicBlock() { none() }
+  override string toString() { result = "Flask request source" }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { none() }
+}
+
+class RouteParamSource extends DataFlow::Node {
+  RouteParamSource() {
+    exists(Parameter p |
+      p.getName().regexpMatch("ROUTEVAR|INTERM") and
+      this.asParameter() = p
+    )
+  }
+
+  override predicate isSource() { this = any(RouteParamSource r) }
+
+  // Implement required abstract predicates
+  override predicate asCfgNode() { none() }
+  override DataFlow::Location getLocation() { result = this.getLocation() }
+  override DataFlow::BasicBlock getBasicBlock() { none() }
+  override string toString() { result = "Route parameter source" }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { none() }
+}
+
+class ExecSink extends DataFlow::Node {
+  ExecSink() {
+    exists(CallNode call |
+      call.getTarget().hasQualifiedName("builtins", "exec") and
+      call.getArgument(0) = this.asExpr()
+    )
+  }
+
+  override predicate isSink() { this = any(ExecSink e) }
+
+  // Implement required abstract predicates
+  override predicate asCfgNode() { none() }
+  override DataFlow::Location getLocation() { result = this.getLocation() }
+  override DataFlow::BasicBlock getBasicBlock() { none() }
+  override string toString() { result = "exec() call sink" }
+  override DataFlow::Scope getScope() { result = this.getScope() }
+  override DataFlow::Variable asVariable() { none() }
+}
+
+class ExecInjectionConfig extends TaintTracking::Configuration {
+  ExecInjectionConfig() { this = "Exec Injection Configuration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof FlaskRequestSource or source instanceof RouteParamSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    none()
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, ExecInjectionConfig config
+where config.hasFlow(source, sink)
+select sink, "$@ flows to exec() call and may cause code injection", source, source.toString()
+================================================================================

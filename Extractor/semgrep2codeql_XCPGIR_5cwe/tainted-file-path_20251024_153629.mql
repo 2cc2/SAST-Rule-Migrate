@@ -1,0 +1,92 @@
+/**
+ * @name Tainted file path
+ * @kind path-problem
+ * @id java/tainted-file-path
+ * @description Detected user input controlling a file path. An attacker could control
+ * the location of this file, to include going backwards in the directory with '../'.
+ * To address this, ensure that user-controlled variables in file paths are sanitized.
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-023
+ *       external/cwe/cwe-036
+ *       external/cwe/cwe-073
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Call call |
+      call.getCallee().getDeclaringType().hasQualifiedName(["javax", "servlet", "http"], "HttpServletRequest") and
+      (
+        call.getCallee().getName() = "getParameter" or
+        call.getCallee().getName() = "getHeader" or
+        call.getCallee().getName() = "getCookie" or
+        call.getCallee().getName() = "getAttribute"
+      ) and
+      this.asExpr() = call
+    )
+    or
+    exists(Parameter p |
+      p.getAnAnnotation().getType().hasQualifiedName(
+        ["org", "springframework", "web", "bind", "annotation"],
+        ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "ModelAttribute"]
+      ) and
+      not p.getType() instanceof PrimitiveType and
+      not p.getType() instanceof BoxedType and
+      this.asParameter() = p
+    )
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "File") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileReader") or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") or
+        cc.getConstructedType().hasQualifiedName("org.springframework.core.io", "ClassPathResource")
+      ) and
+      this.asExpr() = cc.getArgument(0)
+    )
+    or
+    exists(MethodCall mc |
+      (
+        mc.getCallee().hasQualifiedName("java.nio.file", "Paths", "get") or
+        (
+          mc.getCallee().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+          (mc.getCallee().getName() = "getResourceAsStream" or mc.getCallee().getName() = "getResource")
+        )
+      ) and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+predicate isFilenameUtilsSanitizer(DataFlow::Node node) {
+  exists(MethodCall mc |
+    mc.getCallee().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+    mc.getCallee().getName() = "getName" and
+    node.asExpr() = mc
+  )
+}
+
+class TaintedFilePathConfig extends TaintTracking::Configuration {
+  TaintedFilePathConfig() { this = "TaintedFilePathConfig" }
+  
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInputSource }
+  
+  override predicate isSink(DataFlow::Node sink) { sink instanceof FileOperationSink }
+  
+  override predicate isSanitizer(DataFlow::Node node) {
+    isFilenameUtilsSanitizer(node)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFilePathConfig config
+where config.hasFlowPath(source, sink)
+select sink, "User input reaches file operation without sanitization", source, sink,
+  "User input $@ flows to file operation $@ without sanitization",
+  source.getNode(), "here", sink.getNode(), "here"

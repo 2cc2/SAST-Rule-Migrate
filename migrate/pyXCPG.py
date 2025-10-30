@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from sast_tools.muticodeql import validate_codeql_rule,ensure_dir
 from agent.llm_client import LLM
 from agent.prompt.codeql import IRTransformPrompt, RepairPrompt, AbstractPrompt
-from agent.prompt.IR import IRPrompt
+from agent.prompt.IR2 import IRPrompt
 
 
 lock = threading.Lock()  # 控制台输出锁，防止多线程日志混乱
@@ -66,7 +66,7 @@ def get_all_yaml_files(directory):
     return yaml_files
 
 
-def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 5):
+def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 20):
     llm = LLM(
         system_prompt="You are a skilled vulnerability detection rule designer.",
         model="deepseek-v3",
@@ -92,10 +92,15 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
     IR_prompt = IRPrompt().format(code=test_code)
     thread_print("⏳ 正在提取 IR ...")
     IR_content = llm.ExtIR(prompt=IR_prompt, max_tokens=3000)
-    prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast, example=example)
+    prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast,example=example)
         
     for attempt in range(1, max_retries + 1):
         thread_print(f"🔁 第 {attempt} 次尝试生成规则...")
+        if attempt % 5 ==0:
+            IR_prompt = IRPrompt().format(code=test_code)
+            thread_print("⏳ 正在提取 IR ...")
+            IR_content = llm.ExtIR(prompt=IR_prompt, max_tokens=3000)
+            prompt = IRTransformPrompt().format(IR=IR_content, language="python", sast=sast,example=example)
         thread_print(prompt)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
         thread_print(response)
@@ -119,7 +124,7 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log.write(f"Timestamp: {timestamp}\n")
                 log.write(f"Attempt: {attempt}\n")
-                log.write(f"IR Content:\n{IR_content}\n")
+                log.write(f"Prompt:\n{prompt}\n")
                 log.write(f"Error: {result['error']}\n")
                 log.write(f"Rule Content:\n{rule_content}\n")
                 log.write(f"{'=' * 80}\n")
@@ -134,7 +139,7 @@ def migrate_rule(input_file: str, IR_dir: str, output_dir: str, log_dir: str, sa
     llm.clear_context()
 
 
-def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir: str, max_workers: int = 1):
+def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir: str, max_workers: int = 10):
     output_files = os.listdir(output_dir)
     print(f"[📂] 输出目录已有 {len(output_files)} 个文件")
 
@@ -164,10 +169,10 @@ def process_multiple_files(directory: str, IR_dir: str, output_dir: str, log_dir
 
 
 if __name__ == "__main__":
-    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/python_classified_rules"
-    IR_directory = "/home/cbb/SAST-Rule-Migrate/Py_XCPGIR5"
-    output_directory = "/home/cbb/SAST-Rule-Migrate/output/Py_semgrep2codeql_XCPGIR_5cwe"
-    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/Py_semgrep2codeql_XCPGIR_5cwe"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/python_classified_rules/CWE-22"
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/Py22"
+    output_directory = "/home/cbb/SAST-Rule-Migrate/output/Py2"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/codeerror/Py22"
 
     for d in [input_directory, IR_directory, output_directory, log_directory]:
         os.makedirs(d, exist_ok=True)

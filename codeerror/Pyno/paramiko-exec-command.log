@@ -1,0 +1,564 @@
+Timestamp: 2025-10-28 22:40:14
+Attempt: 1
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: paramiko-exec-command
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+
+sources:
+  - id: SSH_CLIENT_INIT
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient }
+      where:
+        - op: eq
+          left: api.type
+          right: SSHClient
+
+sinks:
+  - id: EXEC_COMMAND_CALL
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient, method: exec_command }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '"..."'
+
+sanitizers: []
+
+propagations:
+  - id: CLIENT_TO_COMMAND
+    edge: receiver->call
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.ParamTaint (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:10,8-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:11,8-16)
+ERROR: could not resolve type Value::Definition (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:13,33-50)
+ERROR: could not resolve type Value::ModuleImport (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:15,12-31)
+ERROR: could not resolve type Value::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:22,31-42)
+ERROR: could not resolve type Value::Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:24,12-25)
+ERROR: getArg(int) cannot be resolved for type ExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:31,14-20)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:35,22-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:38,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:44,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:50,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:50,66-74)
+ERROR: could not resolve type Value::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:51,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:58,18-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:58,45-53)
+ERROR: could not resolve variable execMethod (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:26,7-17)
+ERROR: could not resolve variable execMethod (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:27,7-17)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:38,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:44,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_429953cc/python-security-queries/queries/test-rule/TestRule.ql:50,22-43)
+Rule Content:
+/**
+ * @name Unverified SSH context detected
+ * @description Using paramiko SSHClient.exec_command with unsanitized input may lead to command injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/paramiko-exec-command
+ */
+
+import python
+import semmle.python.security.ParamTaint
+import DataFlow::PathGraph
+
+class ParamikoSSHClient extends Value::Definition {
+  ParamikoSSHClient() {
+    exists(Value::ModuleImport mi |
+      mi.getName() = "paramiko.client" and
+      this = mi.getAPackage().getClass("SSHClient").getConstructor().getReturn()
+    )
+  }
+}
+
+class ExecCommandCall extends Value::Call {
+  ExecCommandCall() {
+    exists(Value::Method execCommand |
+      execCommand.hasName("exec_command") and
+      execMethod.getDeclaringType().hasName("SSHClient") and
+      execMethod.getDeclaringType().getAPackage().getName() = "paramiko.client" and
+      this = execCommand.getACall()
+    ) and
+    // Skip calls with literal strings "..."
+    not this.getArg(0).getConstantValue().toString() = "\"...\""
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "SSHCommandInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(ParamikoSSHClient sshClient |
+      source.asExpr() = sshClient
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ExecCommandCall call |
+      sink.asExpr() = call.getArg(0)
+    )
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(Value::Call call |
+      call.getQualifier() = node1.asExpr() and
+      node2.asExpr() = call
+    )
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Unverified SSH context detected. This will permit insecure connections without " +
+  "verifying SSL certificates. Use 'ssl.create_default_context()' instead.", source, sink
+================================================================================
+Timestamp: 2025-10-28 22:41:57
+Attempt: 2
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: paramiko-exec-command
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+
+sources:
+  - id: SSH_CLIENT_INIT
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient }
+      where:
+        - op: eq
+          left: api.type
+          right: SSHClient
+
+sinks:
+  - id: EXEC_COMMAND_CALL
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient, method: exec_command }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '"..."'
+
+sanitizers: []
+
+propagations:
+  - id: CLIENT_TO_COMMAND
+    edge: receiver->call
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type API::ReceiverCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:14,37-54)
+ERROR: could not resolve predicate package/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:17,13-25)
+ERROR: getTarget() cannot be resolved for type ParamikoSSHClientInit.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:18,12-21)
+ERROR: could not resolve predicate class_/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:18,36-47)
+ERROR: could not resolve type API::MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:23,34-49)
+ERROR: could not resolve predicate package/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:26,13-25)
+ERROR: could not resolve predicate class_/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:27,13-24)
+ERROR: getTarget() cannot be resolved for type SSHExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:28,12-21)
+ERROR: could not resolve predicate method/3 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:28,26-37)
+ERROR: getArg(int) cannot be resolved for type SSHExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:29,16-22)
+ERROR: hasFlow(TaintSource, TaintSink) cannot be resolved for type ParamikoSSHClientConfiguration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:47,11-18)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:10,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_dd57020c/python-security-queries/queries/test-rule/TestRule.ql:12,1-31)
+Rule Content:
+/**
+ * @name Unverified SSL context in Paramiko SSHClient exec_command
+ * @description Detects insecure SSL context usage in Paramiko's SSHClient exec_command calls
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/paramiko-exec-command
+ */
+
+import python
+import semmle.python.security.TaintTracking
+import semmle.python.Concepts
+import semmle.python.ApiGraphs
+
+class ParamikoSSHClientInit extends API::ReceiverCall {
+  ParamikoSSHClientInit() {
+    exists(API::Node pkg |
+      pkg = API::package("paramiko.client") and
+      this.getTarget().getType() = API::class_(pkg, "SSHClient")
+    )
+  }
+}
+
+class SSHExecCommandCall extends API::MethodCall {
+  SSHExecCommandCall() {
+    exists(API::Node pkg, API::Node cls |
+      pkg = API::package("paramiko.client") and
+      cls = API::class_(pkg, "SSHClient") and
+      this.getTarget() = API::method(cls, "exec_command", _) and
+      not this.getArg(0).getValueText() = "\"...\""
+    )
+  }
+}
+
+class ParamikoSSHClientConfiguration extends TaintTracking::Configuration {
+  ParamikoSSHClientConfiguration() { this = "ParamikoSSHClientConfiguration" }
+
+  override predicate isSource(TaintTracking::Source src) {
+    src instanceof ParamikoSSHClientInit
+  }
+
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof SSHExecCommandCall
+  }
+}
+
+from ParamikoSSHClientConfiguration cfg, TaintTracking::Source src, TaintTracking::Sink sink
+where cfg.hasFlow(src, sink)
+select sink, 
+  "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+================================================================================
+Timestamp: 2025-10-28 22:43:46
+Attempt: 3
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: paramiko-exec-command
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+
+sources:
+  - id: SSH_CLIENT_INIT
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient }
+      where:
+        - op: eq
+          left: api.type
+          right: SSHClient
+
+sinks:
+  - id: EXEC_COMMAND_CALL
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient, method: exec_command }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '"..."'
+
+propagations:
+  - id: CLIENT_TO_COMMAND
+    edge: receiver->call
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getPackage() cannot be resolved for type ObjectAPI::FunctionValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:15,9-19)
+ERROR: getType() cannot be resolved for type ObjectAPI::FunctionValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:16,9-16)
+ERROR: asExpr() cannot be resolved for type SSHClientInit.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:17,12-18)
+ERROR: getCall() cannot be resolved for type ObjectAPI::FunctionValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:17,25-32)
+ERROR: could not resolve type MethodValue (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:24,12-23)
+ERROR: asExpr() cannot be resolved for type ExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:28,12-18)
+ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:29,14-22)
+ERROR: asExpr() cannot be resolved for type ExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:30,30-36)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:32,44-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:50,18-36)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:50,45-63)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: SSHClientInit must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:12,7-20)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: ExecCommandCall must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:22,7-22)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_61910a4a/python-security-queries/queries/test-rule/TestRule.ql:45,22-28)
+Rule Content:
+/**
+ * @name paramiko-exec-command
+ * @description Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead.
+ * @kind path-problem
+ * @problem.severity error
+ * @id python/paramiko-exec-command
+ */
+
+import python
+import semmle.python.security.TaintTracking
+
+class SSHClientInit extends DataFlow::Node {
+  SSHClientInit() {
+    exists(FunctionValue f |
+      f.getPackage().getName() = "paramiko.client" and
+      f.getType().getName() = "SSHClient" and
+      this.asExpr() = f.getCall()
+    )
+  }
+}
+
+class ExecCommandCall extends DataFlow::Node {
+  ExecCommandCall() {
+    exists(MethodValue m |
+      m.getPackage().getName() = "paramiko.client" and
+      m.getType().getName() = "SSHClient" and
+      m.getName() = "exec_command" and
+      this.asExpr() = m.getCall() and
+      exists(Argument arg |
+        arg.getCall() = this.asExpr() and
+        arg.getPosition() = 0 and
+        not arg.getValue().(StringLiteral).getValue() = "..."
+      )
+    )
+  }
+}
+
+class Config extends TaintTracking::Configuration {
+  Config() { this = "paramiko_exec_command_taint_tracking" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SSHClientInit
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecCommandCall
+  }
+}
+
+from Config cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+================================================================================
+Timestamp: 2025-10-28 22:45:27
+Attempt: 4
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: paramiko-exec-command
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+
+sources:
+  - id: SSH_CLIENT_INIT
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient }
+      where:
+        - op: eq
+          left: api.type
+          right: SSHClient
+
+sinks:
+  - id: EXEC_COMMAND_CALL
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient, method: exec_command }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '"..."'
+
+propagations:
+  - id: CLIENT_TO_COMMAND
+    edge: receiver->call
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: token recognition error at: ''' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:30,48-49)
+ERROR: token recognition error at: ''' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:30,54-55)
+ERROR: could not resolve module semmle.python.security.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:10,8-53)
+ERROR: could not resolve type API::ModuleImport (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:15,12-29)
+ERROR: could not resolve type API::Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:17,14-24)
+ERROR: could not resolve predicate getConstructorCall/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:20,16-39)
+ERROR: could not resolve type API::MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:28,12-27)
+ERROR: could not resolve type API::Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:31,14-24)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:39,35-48)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:52,12-22)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:27,3-18)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:42,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:46,22-28)
+WARNING: unused method 'isExtension' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c8d4dc51/python-security-queries/queries/test-rule/TestRule.ql:50,22-33)
+Rule Content:
+/**
+ * @name paramiko-exec-command
+ * @description Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead.
+ * @kind taint
+ * @problem.severity ERROR
+ * @id py/paramiko-insecure-exec
+ */
+
+import python
+import semmle.python.security.dataflow.TaintTracking
+import semmle.python.ApiGraphs
+
+class ParamikoSSHClientInit extends DataFlow::Node {
+  ParamikoSSHClientInit() {
+    exists(API::ModuleImport mi |
+      mi.getName() = "paramiko.client" and
+      exists(API::Class c | 
+        c.getModuleImport() = mi and 
+        c.getName() = "SSHClient" and
+        this = API::getConstructorCall(c)
+      )
+    )
+  }
+}
+
+class ExecCommandCall extends DataFlow::Node {
+  ExecCommandCall() {
+    exists(API::MethodCall mc |
+      mc.getMethodName() = "exec_command" and
+      not mc.getArgument(0).getStringValue() = '"..."' and
+      exists(API::Class c |
+        c.getName() = "SSHClient" and
+        mc.getReceiver().getType() = c.getQualifiedName()
+      )
+    )
+  }
+}
+
+class ParamikoTaintConfig extends TaintTracking::Configuration {
+  ParamikoTaintConfig() { this = "ParamikoSSHClientTaintTracking" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ParamikoSSHClientInit
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ExecCommandCall
+  }
+
+  override predicate isExtension(DataFlow::Node node1, DataFlow::Node node2) {
+    // Propagate taint through receiver->call
+    exists(MethodCall mc | 
+      node1 = mc.getReceiver() and 
+      node2 = mc and
+      node2 instanceof ExecCommandCall
+    )
+  }
+}
+
+from ParamikoTaintConfig cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+================================================================================
+Timestamp: 2025-10-28 22:47:20
+Attempt: 5
+IR Content:
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: paramiko-exec-command
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+
+sources:
+  - id: SSH_CLIENT_INIT
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient }
+      where:
+        - op: eq
+          left: api.type
+          right: SSHClient
+
+sinks:
+  - id: EXEC_COMMAND_CALL
+    match:
+      node: CALL
+      api: { package: paramiko.client, type: SSHClient, method: exec_command }
+      where:
+        - op: neq
+          left: arg[0].value
+          right: '"..."'
+
+propagations:
+  - id: CLIENT_TO_COMMAND
+    edge: receiver->call
+    kind: taint
+```
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getString() cannot be resolved for type Exprs::Name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:15,52-61)
+ERROR: getTarget() cannot be resolved for type ParamikoClientInit.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:15,10-19)
+ERROR: could not resolve type NamedExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:15,23-32)
+ERROR: getTarget() cannot be resolved for type ParamikoClientInit.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:16,10-19)
+ERROR: getTarget() cannot be resolved for type ParamikoClientInit.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:17,10-19)
+ERROR: getTarget() cannot be resolved for type SSHClienExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:23,10-19)
+ERROR: getTarget() cannot be resolved for type SSHClienExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: getString() cannot be resolved for type Exprs::Name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:25,52-61)
+ERROR: getTarget() cannot be resolved for type SSHClienExecCommandCall.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: could not resolve type NamedExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:25,23-32)
+ERROR: getString() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:26,41-50)
+ERROR: getValue() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:26,24-32)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:35,14-20)
+ERROR: getReceiver() cannot be resolved for type ParamikoClientInit (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:35,27-38)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: getReceiver() cannot be resolved for type SSHClienExecCommandCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:41,25-36)
+ERROR: hasFlow(Node, Node) cannot be resolved for type SSHCientToExecCommand (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:47,11-18)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:26,36-39)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:33,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0f8bef40/python-security-queries/queries/test-rule/TestRule.ql:39,22-28)
+Rule Content:
+/**
+ * @name paramiko-exec-command
+ * @description Unverified SSL context detected. This will permit insecure connections 
+ *              without verifying SSL certificates. Use 'ssl.create_default_context()' instead.
+ * @kind taint
+ * @problem.severity ERROR
+ * @id python/paramiko-exec-command
+ */
+
+import python
+import semmle.python.security.TaintTracking
+
+class ParamikoClientInit extends Call {
+  ParamikoClientInit() {
+    this.getTarget().(NamedExpr).getValue().(Name).getString() = "SSHClient" and
+    this.getTarget().getAttr().getString() = "__init__" and
+    this.getTarget().getAnnType().(ImportExpr).getName() = "paramiko.client"
+  }
+}
+
+class SSHClienExecCommandCall extends Call {
+  SSHClienExecCommandCall() {
+    this.getTarget().getAttr().getString() = "exec_command" and
+    this.getTarget().getAnnType().(ImportExpr).getName() = "paramiko.client" and
+    this.getTarget().(NamedExpr).getValue().(Name).getString() = "SSHClient" and
+    not this.getArg(0).getValue().(Str).getString() = "\"...\""
+  }
+}
+
+class SSHCientToExecCommand extends TaintTracking::Configuration {
+  SSHCientToExecCommand() { this = "SSHCientToExecCommand" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    exists(ParamikoClientInit c |
+      source.asExpr() = c.getReceiver()
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(SSHClienExecCommandCall c |
+      sink.asExpr() = c.getReceiver()
+    )
+  }
+}
+
+from SSHCientToExecCommand cfg, DataFlow::Node source, DataFlow::Node sink
+where cfg.hasFlow(source, sink)
+select sink, "Unverified SSL context detected. This will permit insecure connections without " +
+             "verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+================================================================================
