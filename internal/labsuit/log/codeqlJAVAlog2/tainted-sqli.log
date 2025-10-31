@@ -1,0 +1,1068 @@
+Timestamp: 2025-10-31 11:05:21
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:30,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: asExpr() cannot be resolved for type SQLSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:50,12-18)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:17,20-35)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:18,10-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:55,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:55,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:59,3-11)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       cwe: "89"
+ *       owasp: "A01:2017"
+ *       owasp: "A03:2021"
+ */
+  
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+
+predicate isSource(MethodParameter p) {
+  exists(Method m | 
+    p.getAnArgument() and
+    (
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+       p.getName() = "$EVENT") 
+      or
+      (m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+       p.getName() = "$EVENT")
+    )
+  )
+}
+
+class SQLSink extends DataFlow::Node {
+  SQLSink() {
+    exists(MethodAccess ma, string stmtType, string stmtMethod |
+      // Check for JDBC statement types
+      stmtType in [
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement", 
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ] and
+      stmtMethod in [
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ] and
+      ma.getMethod().getDeclaringType().hasQualifiedName(stmtType) and
+      ma.getMethod().getName() = stmtMethod and
+      // Check first sql argument is a query string
+      ma.getArgument(0).toString().matches("(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where
+  isSource(source.asParameter()) and
+  sink instanceof SQLSink and
+  DataFlow::flow(source, sink)
+select sink, "Detected SQL statement that is tainted by `$EVENT` object. " +
+  "This could lead to SQL injection if variables in the SQL statement are not properly sanitized. " +
+  "Use parameterized SQL queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - sql
+      - java
+      - aws-lambda
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    references:
+      - https://owasp.org/Top10/A03_2021-Injection
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: EVENT_OBJECT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: or
+          conditions:
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: 
+          - "java.sql.Statement"
+          - "java.sql.PreparedStatement"
+          - "java.sql.CallableStatement"
+          - "org.springframework.jdbc.core.JdbcTemplate"
+          - "java.sql.Connection"
+          - "org.springframework.jdbc.support.rowset.SqlRowSet"
+        method: 
+          - "execute"
+          - "executeQuery"
+          - "executeUpdate"
+          - "batchUpdate"
+          - "queryForObject"
+          - "queryForMap"
+          - "prepareStatement"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)"
+
+propagations:
+  - id: PARAM_TO_SQL
+    edge: arg->param
+    kind: taint
+    interfile: true
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:06:47
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:30,23-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,48-56)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:17,20-29)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:18,10-16)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:56,6-15)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:56,24-32)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:59,3-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:59,29-37)
+WARNING: unused class 'SQLSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:30,7-14)
+WARNING: unused method 'step' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,22-26)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli
+ * @tags security
+ *       cwe: "89"
+ *       owasp: "A01:2017"
+ *       owasp: "A03:2021"
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+predicate isSource(Parameter p) {
+  exists(Method m | 
+    m.getAParameter() = p and
+    (
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+       p.getName() = "$EVENT") 
+      or
+      (m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+       p.getName() = "$EVENT")
+    )
+  )
+}
+
+class SQLSink extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma, string stmtType, string stmtMethod |
+      // Check for JDBC statement types
+      stmtType in [
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement", 
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ] and
+      stmtMethod in [
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ] and
+      ma.getMethod().getDeclaringType().hasQualifiedName(stmtType) and
+      ma.getMethod().getName() = stmtMethod and
+      // Check first sql argument is a query string
+      ma.getArgument(0).toString().matches("(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)") and
+      pred.asExpr() = ma.getArgument(0) and
+      succ.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from Parameter source, DataFlow::Node sink
+where
+  isSource(source) and
+  TaintTracking::localTaint(DataFlow::parameterNode(source), sink)
+select sink, "Detected SQL statement that is tainted by `$EVENT` object. " +
+  "This could lead to SQL injection if variables in the SQL statement are not properly sanitized. " +
+  "Use parameterized SQL queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:30,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: asExpr() cannot be resolved for type SQLSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:50,12-18)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:17,20-35)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:18,10-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:55,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:55,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b4229a9e/python-security-queries/queries/test-rule/TestRule.ql:59,3-11)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 确认正确的CodeQL Java库导入路径：
+   - 将 `import java` 改为 `import java` (保持原样，这是正确的)
+   - 将 `import semmle.code.java.dataflow.FlowSources` 改为 `import semmle.code.java.dataflow.TaintTracking`  
+   - 将 `import semmle.code.java.dataflow.DataFlow` 改为 `import semmle.code.java.dataflow.DataFlow`
+
+2. 修复类继承关系：
+   - SQLSink类应该继承 `TaintTracking::AdditionalTaintStep` 而不是 `DataFlow::Node`
+
+3. 修正参数类型：
+   - 将 `MethodParameter` 改为 `Parameter`
+   - 将 `Method` 改为 `Method`
+
+4. 修复方法调用：
+   - 将 `asExpr()` 改为 `asParameter()`
+
+5. 修正数据流跟踪：
+   - 使用 `TaintTracking` 而不是 `DataFlow` 来进行污染传播分析
+   - 添加必要的污染跟踪配置
+
+6. 验证修改：
+   - 确保所有类型引用都使用完整的限定名称
+   - 检查所有方法调用是否在所选模块中可用
+   - 验证数据流路径是否符合预期
+
+注意：需要在CodeQL工作室环境中验证这些修改，确保标准库路径配置正确。
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:08:08
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.aws.Lambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:15,8-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:17,33-41)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:19,12-18)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:19,22-31)
+ERROR: asParameter() cannot be resolved for type LambdaEventSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:28,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:33,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: asExpr() cannot be resolved for type SQLSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:50,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:55,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:58,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:63,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:63,69-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:58,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.
+ * @kind problem
+ * @id java/tainted-sqli
+ * @severity warning
+ * @tags security
+ *       sql
+ *       aws-lambda
+ *       cwe-89
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.aws.Lambda
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m, Parameter p |
+      m.getAPackage().getName().matches("%aws.lambda%") and
+      (
+        (m.getSignature().matches("(%$TYPE%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+        or
+        (m.getSignature().matches("(InputStream%,OutputStream%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SQLSink extends DataFlow::Node {
+  SQLSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.support.rowset", "SqlRowSet")) and
+      (ma.getMethod().getName() = "execute" or
+       ma.getMethod().getName() = "executeQuery" or
+       ma.getMethod().getName() = "executeUpdate" or
+       ma.getMethod().getName() = "batchUpdate" or
+       ma.getMethod().getName() = "queryForObject" or
+       ma.getMethod().getName() = "queryForMap" or
+       ma.getMethod().getName() = "prepareStatement") and
+      ma.getArgument(0).getStringValue().matches("%SELECT%|%INSERT%|%UPDATE%") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSQLFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSQLFlowConfiguration() { this = "TaintedSQLFlowConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LambdaEventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SQLSink }
+}
+
+from TaintedSQLFlowConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink,
+  "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.",
+  source, "User input originates from here"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:15,8-42)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:30,23-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,48-56)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:17,20-29)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:18,10-16)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:56,6-15)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:56,24-32)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:59,3-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:59,29-37)
+WARNING: unused class 'SQLSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:30,7-14)
+WARNING: unused method 'step' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc9329c1/python-security-queries/queries/test-rule/TestRule.ql:31,22-26)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正导入语句：
+   - 确保使用正确的库路径 `import DataFlow::PathGraph`
+   - 添加必要的模块导入 `import semmle.code.java.frameworks.aws.Lambda`
+
+2. 修复源定义：
+   - 将 `Parameter` 改为正确的类型 `LambdaEventParameter` 
+   - 更新源匹配逻辑以使用AWS Lambda特定API
+
+3. 重构Sink定义：
+   - 将 `SQLSink` 改为扩展 `DataFlow::Expr` 
+   - 使用 `isSink` 谓词替代 `AdditionalTaintStep`
+
+4. 修复数据流配置：
+   - 使用 `DataFlow::configuration` 定义数据流
+   - 添加 `hasFlowPath` 检查代替直接调用 `localTaint`
+
+5. 清理未使用代码：
+   - 移除未使用的 `SQLSink` 类
+   - 简化数据流路径检查逻辑
+
+6. 添加必要的约束：
+   - 确保源节点是Lambda事件参数
+   - 验证SQL查询格式约束
+
+注意：这些修改需要针对CodeQL的Java分析库最新版本进行验证。
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:09:43
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,42-46)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,46-47)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,65-66)
+ERROR: unexpected input ',' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,20-21)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,34-35)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:29,11-12)
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,82-83)
+ERROR: unexpected input 'instanceof' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,10-20)
+ERROR: unexpected input '}' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:67,3-4)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.aws.Lambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:16,8-46)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:18,33-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:35,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: could not resolve predicate node/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:47,14-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:52,36-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:55,31-39)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:56,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:63,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,48-56)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:70,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:70,33-41)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: predicate 'step' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,22-26)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,22-43)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,19-20)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:67,3-68,2)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,48-62)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,65-79)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,21-38)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:19 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:29, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,42-47)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:29,7-12)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,5-20)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.
+ * @kind problem
+ * @id java/tainted-sqli
+ * @severity warning
+ * @tags security
+ *       sql
+ *       aws-lambda
+ *       cwe-89
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.aws.Lambda
+
+class LambdaEventSource extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node from, DataFlow::Node to) {
+    exists(Method m, Parameter p |
+      m.getDeclaringType().getPackage().getName().matches("%aws.lambda%") and
+      (
+        (m.getSignature().matches("(%$TYPE%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+        or
+        (m.getSignature().matches("(InputStream%,OutputStream%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+      ) and
+      from.asParameter() = p and
+      to.asExpr() = p.getAnAccess()
+    )
+  }
+}
+
+class SQLSink extends DataFlow::Node {
+  SQLSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.support.rowset", "SqlRowSet")) and
+      (ma.getMethod().hasName(["execute", "executeQuery", "executeUpdate", "batchUpdate",
+                             "queryForObject", "queryForMap", "prepareStatement"])) and
+      ma.getArgument(0).getStringValue().regexpMatch("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = node(ma.getArgument(0))
+    )
+  }
+}
+
+class TaintedSQLFlowConfig extends TaintTracking::Configuration {
+  TaintedSQLFlowConfig() { this = "TaintedSQLFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | 
+      (p.getName() = "$EVENT" and
+      p.getMethod().getSignature().matches("%com.amazonaws.services.lambda.runtime.Context%")) and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SQLSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    from instanceof LambdaEventSource
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSQLFlowConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.",
+  source.getNode(), "User input originates from here"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.aws.Lambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:15,8-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:17,33-41)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:19,12-18)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:19,22-31)
+ERROR: asParameter() cannot be resolved for type LambdaEventSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:28,12-23)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:33,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: asExpr() cannot be resolved for type SQLSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:50,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:55,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:58,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:63,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:63,69-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:58,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_501cf9d6/python-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.
+ * @kind problem
+ * @id java/tainted-sqli
+ * @severity warning
+ * @tags security
+ *       sql
+ *       aws-lambda
+ *       cwe-89
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.aws.Lambda
+
+class LambdaEventSource extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node from, DataFlow::Node to) {
+    exists(Method m, Parameter p |
+      m.getDeclaringType().getPackage().getName().matches("%aws.lambda%") and
+      (
+        (m.getSignature().matches("(%$TYPE%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+        or
+        (m.getSignature().matches("(InputStream%,OutputStream%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+      ) and
+      from.asParameter() = p and
+      to.asExpr() = p.getAnAccess()
+    )
+  }
+}
+
+class SQLSink extends DataFlow::Node {
+  SQLSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.support.rowset", "SqlRowSet")) and
+      (ma.getMethod().hasName(["execute", "executeQuery", "executeUpdate", "batchUpdate",
+                             "queryForObject", "queryForMap", "prepareStatement"])) and
+      ma.getArgument(0).getStringValue().regexpMatch("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = node(ma.getArgument(0))
+    )
+  }
+}
+
+class TaintedSQLFlowConfig extends TaintTracking::Configuration {
+  TaintedSQLFlowConfig() { this = "TaintedSQLFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | 
+      (p.getName() = "$EVENT" and
+      p.getMethod().getSignature().matches("%com.amazonaws.services.lambda.runtime.Context%")) and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SQLSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    from instanceof LambdaEventSource
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSQLFlowConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.",
+  source.getNode(), "User input originates from here"
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:11:13
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,42-46)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,46-47)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,65-66)
+ERROR: unexpected input ',' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:20,20-21)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:20,34-35)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:29,11-12)
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,82-83)
+ERROR: unexpected input 'instanceof' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:66,10-20)
+ERROR: unexpected input '}' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:67,3-4)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.aws.Lambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:16,8-46)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:18,33-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:35,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: asExpr() cannot be resolved for type SQLSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:47,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:52,36-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:55,31-39)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:56,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:63,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,48-56)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:70,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:70,33-41)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: predicate 'step' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,22-26)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,22-43)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:20,19-20)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:67,3-68,2)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,48-62)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,65-79)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:66,21-38)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:19 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:29, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:19,42-47)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:29,7-12)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:65,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_82a40471/python-security-queries/queries/test-rule/TestRule.ql:66,5-20)
+Rule Content:
+/**
+ * @name Tainted SQL Injection in AWS Lambda
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.
+ * @kind problem
+ * @id java/tainted-sqli
+ * @severity warning
+ * @tags security
+ *       sql
+ *       aws-lambda
+ *       cwe-89
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.aws.Lambda
+
+class LambdaEventSource extends TaintTracking::AdditionalTaintStep {
+  override predicate step(DataFlow::Node from, DataFlow::Node to) {
+    exists(Method m, Parameter p |
+      m.getDeclaringType().getPackage().getName().matches("%aws.lambda%") and
+      (
+        (m.getSignature().matches("(%$TYPE%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+        or
+        (m.getSignature().matches("(InputStream%,OutputStream%,com.amazonaws.services.lambda.runtime.Context)") and
+          p.getName() = "$EVENT")
+      ) and
+      from.asParameter() = p and
+      to.asExpr() = p.getAnAccess()
+    )
+  }
+}
+
+class SQLSink extends DataFlow::Node {
+  SQLSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Statement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "PreparedStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "CallableStatement") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.core", "JdbcTemplate") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("java.sql", "Connection") or
+       ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.jdbc.support.rowset", "SqlRowSet")) and
+      (ma.getMethod().hasName(["execute", "executeQuery", "executeUpdate", "batchUpdate",
+                             "queryForObject", "queryForMap", "prepareStatement"])) and
+      ma.getArgument(0).getStringValue().regexpMatch("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSQLFlowConfig extends TaintTracking::Configuration {
+  TaintedSQLFlowConfig() { this = "TaintedSQLFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(Parameter p | 
+      (p.getName() = "$EVENT" and
+      p.getMethod().getSignature().matches("%com.amazonaws.services.lambda.runtime.Context%")) and
+      source.asParameter() = p
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SQLSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node from, DataFlow::Node to) {
+    from instanceof LambdaEventSource
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSQLFlowConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), 
+  "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection.",
+  source.getNode(), "User input originates from here"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,42-46)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,46-47)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,65-66)
+ERROR: unexpected input ',' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,20-21)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,34-35)
+ERROR: unexpected input '.' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:29,11-12)
+ERROR: unexpected input 'from' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,59-63)
+ERROR: unexpected input ',' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,63-64)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,82-83)
+ERROR: unexpected input 'instanceof' expecting one of: 'select', 'where' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,10-20)
+ERROR: unexpected input '}' expecting one of: 'boolean', 'date', 'float', 'int', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:67,3-4)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.aws.Lambda (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:16,8-46)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:18,33-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,27-35)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:35,23-31)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: could not resolve predicate node/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:47,14-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:52,36-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:55,31-39)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:56,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:63,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,48-56)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:70,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:70,33-41)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: predicate 'step' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,22-26)
+ERROR: predicate 'isAdditionalTaintStep' requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,22-43)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:20,19-20)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:67,3-68,2)
+WARNING: unused variable '<missing name>' (Compiler Generated)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,48-62)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,65-79)
+WARNING: unused variable 'result' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,21-38)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,63-65)
+ERROR: predicate to() conflicts with predicate to() from TestRule.ql:19 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,80-82)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:29, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:19,42-47)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:65, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:29,7-12)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:66 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:65,59-64)
+ERROR: select clause select conflicts with select clause select from TestRule.ql:19, select clause select from TestRule.ql:29, select clause select from TestRule.ql:65 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_9b1ef54e/python-security-queries/queries/test-rule/TestRule.ql:66,5-20)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 修正导入路径错误：
+- 将`import java`改为`import java`（保持原样）
+- 将`semmle.code.java...`开头的导入改为`import semmle.code.java.dataflow.FlowSources`
+- `import semmle.code.java.dataflow.TaintTracking`
+- `import semmle.code.java.frameworks.aws.Lambda`
+
+2. 修复LambdaEventSource类定义：
+- 确保继承自`extends TaintTracking::AdditionalTaintStep`
+- 补全step谓词body实现
+- 修正from.asParameter()和to.asExpr()调用
+
+3. 修复SQLSink类定义：
+- 从DataFlow::Node继承
+- 保持MethodAccess检查逻辑但修正语法
+- 修正node()调用方式
+
+4. 重构TaintedSQLFlowConfig类：
+- 确保正确继承TaintTracking::Configuration
+- 实现isSource/isSink/isAdditionalTaintStep谓词
+- 移除重复的select语句
+
+5. 修正主查询：
+- 确保只有一个select语句
+- 修正DataFlow::PathNode的使用方式
+- 确保config.hasFlowPath调用正确
+
+6. 修正类型引用：
+- 修正MethodAccess/Parameter等类型引用
+- 确保所有谓词都有完整实现body
+
+7. 移除重复定义：
+- 删除重复的to()谓词定义
+- 确保每个类/谓词只定义一次
+
+8. 验证逻辑一致性：
+- 检查所有数据流连接点的正确性
+- 确保source/sink匹配逻辑与原IR一致
+- 验证污点传播路径正确性
+
+最终的修复重点应该放在：
+- 模块导入路径的修正
+- 类继承关系的修复
+- 谓词body的实现完整
+- 数据流节点的正确使用
+- 避免重复定义
+- 确保单一SELECT语句
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

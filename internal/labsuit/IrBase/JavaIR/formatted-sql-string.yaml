@@ -1,0 +1,89 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-string
+  kind: taint
+  severity: ERROR
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  metadata:
+    language: java
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+    references:
+      - "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      - "https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html#create_ps"
+      - "https://software-security.sans.org/developer-how-to/fix-sql-injection-in-java-using-prepared-callable-statement"
+sources:
+  - id: INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: name
+          right: "$INPUT"
+  - id: CONCAT
+    match:
+      node: CALL
+      where:
+        - op: or
+          clauses:
+            - op: eq
+              left: methodFullName
+              right: java.lang.String.concat
+            - op: eq
+              left: methodFullName
+              right: java.lang.StringBuilder.append
+            - op: eq
+              left: methodFullName
+              right: java.lang.StringBuffer.append
+            - op: eq
+              left: methodFullName
+              right: java.lang.String.format
+            - op: eq
+              left: methodFullName
+              right: java.lang.String.join
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.sql.Statement
+        method: "execute|executeQuery|createQuery|query|addBatch|nativeSQL|create|prepare"
+      arg_index: 0
+      where:
+        - op: not
+          clause:
+            op: regex
+            left: code
+            right: ".*TABLE *$"
+        - op: not
+          clause:
+            op: regex
+            left: code
+            right: ".*TABLE %s$"
+propagations:
+  - id: STRING_BUFFER_PROP
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      api:
+        type: java.lang.StringBuffer
+        method: append
+  - id: STRING_BUILDER_PROP
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      api:
+        type: java.lang.StringBuilder
+        method: append
+sanitizers:
+  - id: CRITERIA_BUILDER
+    match:
+      node: CALL
+      api:
+        type: javax.persistence.criteria.CriteriaBuilder
+    effect: neutralize
+```

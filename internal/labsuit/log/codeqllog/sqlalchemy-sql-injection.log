@@ -1,0 +1,677 @@
+Timestamp: 2025-10-31 00:03:02
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:29,12-22)
+ERROR: could not resolve type DataFlow::BarrierNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:39,35-56)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:41,12-22)
+ERROR: could not resolve predicate parameterNode/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:49,3-26)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:55,5-19)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:55,43-57)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:18,3-18)
+ERROR: could not resolve variable self (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:22,11-15)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:28,3-19)
+ERROR: could not resolve variable self (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:34,7-11)
+Rule Content:
+/**
+ * @name SQLAlchemy SQL Injection
+ * @description Distinct, Having, Group_by, Order_by, and Filter in SQLAlchemy can cause sql injections if the developer inputs raw SQL into the before-mentioned clauses. This pattern captures relevant cases in which the developer inputs raw SQL into the distinct, having, group_by, order_by or filter clauses and injects user-input into the raw SQL with any function besides 'bindparams'. Use bindParams to securely bind user-input to SQL statements.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/sqlalchemy-sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.ApiGraphs
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Function f, Parameter p |
+      f.getName().regexpMatch("^$FUNC$") and
+      p.getName() = "$VAR" and
+      p = self.asParameter()
+    )
+  }
+}
+
+class SqlInjectionSink extends DataFlow::Node {
+  SqlInjectionSink() {
+    exists(MethodCall mc |
+      mc.getMethod().getName().regexpMatch("(group_by|order_by|distinct|having|filter)") and
+      mc.getQualifier().getType().getName() = "sqlalchemy.orm.query" and
+      not mc.getMethod().getName() = "bindparams" and
+      mc.getAnArg().getValue().getMethod().getName().regexpMatch("$FORMATFUNC$") and
+      self = mc.getAnArg()
+    )
+  }
+}
+
+class BindParamsSanitizer extends DataFlow::BarrierNode {
+  BindParamsSanitizer() {
+    exists(MethodCall mc |
+      mc.getMethod().getName() = "bindparams" and
+      this = mc
+    )
+  }
+}
+
+query predicate edges(DataFlow::Node pred, DataFlow::Node succ) {
+  DataFlow::parameterNode(pred, succ)
+}
+
+from UserInputSource source, SqlInjectionSink sink
+where DataFlow::flow(source, sink) and
+  not exists(BindParamsSanitizer sanitizer |
+    DataFlow::flow(source, sanitizer) and DataFlow::flow(sanitizer, sink)
+  )
+select sink, "Potential SQL injection vulnerability in SQLAlchemy operation", source,
+  "User input reaches potentially unsafe SQL operation $@.", source, "here"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "sqlalchemy-sql-injection"
+  kind: taint
+  severity: WARNING
+  message: "Distinct, Having, Group_by, Order_by, and Filter in SQLAlchemy can cause sql injections if the developer inputs raw SQL into the before-mentioned clauses. This pattern captures relevant cases in which the developer inputs raw SQL into the distinct, having, group_by, order_by or filter clauses and injects user-input into the raw SQL with any function besides 'bindparams'. Use bindParams to securely bind user-input to SQL statements."
+  metadata:
+    language: python
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+    technology:
+      - sqlalchemy
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: context.method.name
+          right: "^$FUNC$"
+        - op: eq
+          left: name
+          right: "$VAR"
+
+sinks:
+  - id: SQL_INJECTION
+    match:
+      node: CALL
+      api:
+        package: sqlalchemy.orm.query
+        method: "$SQLFUNC"
+      where:
+        - op: regex
+          left: method
+          right: "(group_by|order_by|distinct|having|filter)"
+        - op: regex
+          left: receiver.method
+          right: "(?!bindparams)"
+        - op: regex
+          left: arg[0].value.method
+          right: "$FORMATFUNC$"
+
+sanitizers:
+  - id: BIND_PARAMS
+    match:
+      node: CALL
+      api:
+        method: bindparams
+    effect: neutralize
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 00:04:37
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.security.injection.SqlInjection (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:17,8-53)
+ERROR: could not resolve module semmle.python.web.HttpRequest (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:18,8-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:19,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:45,39-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+ERROR: could not resolve predicate isSource/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:46,47-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:47,20-28)
+ERROR: could not resolve predicate isSink/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:47,43-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:48,25-33)
+ERROR: could not resolve predicate isSanitizer/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:48,53-64)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:21,20-28)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:28,18-26)
+ERROR: getAUse() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:34,7-14)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:31,12-25)
+ERROR: getQualifier() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:32,16-28)
+ERROR: getAnArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:33,12-25)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:38,23-31)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:40,10-23)
+ERROR: getAUse() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:41,22-29)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:51,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:51,33-41)
+ERROR: could not resolve type TaintTrackingConfig (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:51,58-77)
+ERROR: 'methodName' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:29,17-27)
+WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:46,13-21)
+WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:47,13-19)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:48,13-24)
+WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:21,11-19)
+WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:28,11-17)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8549b758/python-security-queries/queries/test-rule/TestRule.ql:38,11-22)
+Rule Content:
+/**
+ * @name SQL Injection in SQLAlchemy queries
+ * @description Detects SQL injection vulnerabilities in SQLAlchemy distinct, 
+ *              having, group_by, order_by, and filter clauses with raw SQL
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @id py/sqlalchemy-sql-injection
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.security.injection.SqlInjection
+import semmle.python.web.HttpRequest
+import DataFlow::PathGraph
+
+predicate isSource(DataFlow::Node source) {
+  exists(string funcName, string paramName |
+    source.asParameter().getFunction().getName() = funcName and
+    source.asParameter().getName() = paramName
+  )
+}
+
+predicate isSink(DataFlow::Node sink) {
+  exists(string methodName |
+    sink = any(Call call |
+      call.getCalleeName().regexpMatch("(group_by|order_by|distinct|having|filter)") and
+      not call.getQualifier().getCalleeName().regexpMatch("bindparams") and
+      call.getAnArgument(0).getCalleeName().matches("%FORMATFUNC%")
+    ).getAUse()
+  )
+}
+
+predicate isSanitizer(DataFlow::Node sanitizer) {
+  exists(Call call |
+    call.getCalleeName() = "bindparams" and
+    sanitizer = call.getAUse()
+  )
+}
+
+module TaintTrackingConfig implements TaintTracking::Config {
+  predicate isSource(DataFlow::Node source) { isSource(source) }
+  predicate isSink(DataFlow::Node sink) { isSink(sink) }
+  predicate isSanitizer(DataFlow::Node sanitizer) { isSanitizer(sanitizer) }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintTrackingConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potentially unsafe SQL injection in SQLAlchemy query"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:29,12-22)
+ERROR: could not resolve type DataFlow::BarrierNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:39,35-56)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:41,12-22)
+ERROR: could not resolve predicate parameterNode/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:49,3-26)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:53,7-21)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:55,5-19)
+ERROR: could not resolve predicate flow/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:55,43-57)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:18,3-18)
+ERROR: could not resolve variable self (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:22,11-15)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:28,3-19)
+ERROR: could not resolve variable self (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ae0dda5d/python-security-queries/queries/test-rule/TestRule.ql:34,7-11)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 将`MethodCall`替换为CodeQL Python库中正确的调用表达式类型`Call`，因为CodeQL Python分析中使用的是`Call`而不是`MethodCall`
+2. 将`DataFlow::BarrierNode`替换为CodeQL Python数据流库中正确的屏障节点类型`DataFlow::BarrierGuardNode`
+3. 将`parameterNode`替换为CodeQL Python数据流中正确的参数传递谓词`DataFlow::parameterToArgument`
+4. 确保所有数据流谓词使用正确的模块路径`DataFlow`或`TaintTracking`，并正确导入相关库
+5. 在所有类定义中正确绑定`this`变量，将`self`替换为`this`并确保在谓词体中正确引用
+6. 修正获取方法名的调用方式，使用`getCalleeName()`而非`getMethod().getName()`
+7. 修正参数节点的处理逻辑，使用`this.asParameter()`而不是`self.asParameter()`
+8. 确保所有正则表达式匹配使用正确的语法`regexpMatch`
+9. 修正获取参数值的逻辑，使用`getAnArgument()`而不是`getAnArg()`
+10. 检查并确保所有类属性访问使用CodeQL Python库提供的正确API
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:05:28
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:48,44-49,46)
+ERROR: no viable parse for input '[BindParamsSanitizer]', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:48,43-44)
+ERROR: no viable parse for input '[]', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'false', 'float', 'int', 'max', 'min', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '(', '[', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:49,43-44)
+ERROR: asParameter() cannot be resolved for type UserInputSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:23,12-23)
+ERROR: asParameter() cannot be resolved for type UserInputSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:24,12-23)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:31,12-22)
+ERROR: asExpr() cannot be resolved for type SqlInjectionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:36,12-18)
+ERROR: could not resolve type DataFlow::BarrierNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:41,35-56)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:43,12-22)
+ERROR: asExpr() cannot be resolved for type BindParamsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:43,71-77)
+ERROR: could not resolve predicate flow/3 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:48,7-21)
+ERROR: query module contains multiple select clauses (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: UserInputSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: SqlInjectionSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:29,7-23)
+ERROR: could not resolve variable sink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:50,8-12)
+WARNING: unused class 'BindParamsSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_25ccd4fd/python-security-queries/queries/test-rule/TestRule.ql:41,7-26)
+Rule Content:
+/**
+ * @name SQLAlchemy SQL Injection
+ * @description Distinct, Having, Group_by, Order_by, and Filter in SQLAlchemy can cause 
+ *   SQL injections if the developer inputs raw SQL into the before-mentioned clauses.
+ * @kind problem
+ * @problem.severity warning
+ * @id python/sqlalchemy-sql-injection
+ * @security-severity 8.8
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       frameworks/sqlalchemy
+ */
+
+import python
+import semmle.python.security.TaintTracking
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Function f | 
+      f.getName().regexpMatch("^$FUNC$") and
+      this.asParameter().getName() = "$VAR" and
+      this.asParameter().getFunction() = f
+    )
+  }
+}
+
+class SqlInjectionSink extends DataFlow::Node {
+  SqlInjectionSink() {
+    exists(MethodCall mc |
+      mc.getMethodName().regexpMatch("(group_by|order_by|distinct|having|filter)") and
+      not mc.getQualifier().getMethodName().regexpMatch("bindparams") and
+      mc.getArgument(0).getValue().getMethodName().regexpMatch("$FORMATFUNC$") and
+      mc.getTarget().getQualifiedName().matches("sqlalchemy.orm.query.%") and
+      this.asExpr() = mc
+    )
+  }
+}
+
+class BindParamsSanitizer extends DataFlow::BarrierNode {
+  BindParamsSanitizer() {
+    exists(MethodCall mc | mc.getMethodName() = "bindparams" and this.asExpr() = mc)
+  }
+}
+
+from UserInputSource source, SqlInjectionSink sink
+where DataFlow::flow(source, sink, false, [BindParamsSanitizer]) and
+  not DataFlow::flow(source, sink, false, [])
+select sink, "Potential SQL injection vulnerability in SQLAlchemy clause. " +
+  "Use bindparams to securely bind user-input to SQL statements."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "sqlalchemy-sql-injection"
+  kind: taint
+  severity: WARNING
+  message: "Distinct, Having, Group_by, Order_by, and Filter in SQLAlchemy can cause sql injections if the developer inputs raw SQL into the before-mentioned clauses. This pattern captures relevant cases in which the developer inputs raw SQL into the distinct, having, group_by, order_by or filter clauses and injects user-input into the raw SQL with any function besides 'bindparams'. Use bindParams to securely bind user-input to SQL statements."
+  metadata:
+    language: python
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+    technology:
+      - sqlalchemy
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: PARAM
+      where:
+        - op: regex
+          left: context.method.name
+          right: "^$FUNC$"
+        - op: eq
+          left: name
+          right: "$VAR"
+
+sinks:
+  - id: SQL_INJECTION
+    match:
+      node: CALL
+      api:
+        package: sqlalchemy.orm.query
+        method: "$SQLFUNC"
+      where:
+        - op: regex
+          left: method
+          right: "(group_by|order_by|distinct|having|filter)"
+        - op: regex
+          left: receiver.method
+          right: "(?!bindparams)"
+        - op: regex
+          left: arg[0].value.method
+          right: "$FORMATFUNC$"
+
+sanitizers:
+  - id: BIND_PARAMS
+    match:
+      node: CALL
+      api:
+        method: bindparams
+    effect: neutralize
+
+propagations:
+  - id: METHOD_ARG
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

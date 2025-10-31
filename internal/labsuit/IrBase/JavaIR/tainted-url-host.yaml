@@ -1,0 +1,86 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-url-host"
+  kind: taint
+  severity: ERROR
+  message: "User data flows into the host portion of this manually-constructed URL. This could allow an attacker to send data to their own server, potentially exposing sensitive data such as cookies or authorization information sent with this request. They could also probe internal servers or other resources that the server running this code can access. (This is called server-side request forgery, or SSRF.) Do not allow arbitrary hosts. Instead, create an allowlist for approved hosts, hardcode the correct host, or ensure that the user data can only affect the path or parameters."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - java
+      - spring
+    cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+    owasp: "A10:2021 - Server-Side Request Forgery (SSRF)"
+    tags:
+      - SSRF
+      - web-security
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: java.lang.String
+      where:
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+        - op: not_regex
+          left: type.name
+          right: "^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)$"
+
+sinks:
+  - id: URL_CONSTRUCTION
+    match:
+      node: CALL
+      api:
+        type: java.net.URL
+        method: <init>
+        signature: ["(String)"]
+      arg_index: 0
+  - id: STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "(java.lang.String.concat|java.lang.String.format)"
+      arg_index: 0
+  - id: STRING_BUILDER_APPEND
+    match:
+      node: CALL
+      api:
+        type: java.lang.StringBuilder
+        method: append
+      where:
+        - op: regex
+          left: receiver.code
+          right: "http(s?)://%(v|s|q).*"
+  - id: STRING_PLUS_ASSIGN
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "^\\$\\w+ \\+=.*"
+        - op: regex
+          left: type.name
+          right: "http(s?)://%(v|s|q).*"
+
+sanitizers:
+  - id: URL_VALIDATION
+    match: { node: CALL, api: { type: java.net.URL, method: getHost } }
+    effect: neutralize
+    scope: { sinks: [URL_CONSTRUCTION, STRING_CONCAT, STRING_BUILDER_APPEND, STRING_PLUS_ASSIGN] }
+
+propagations:
+  - id: STRING_PROPAGATION
+    edge: arg->param
+    kind: taint
+    where:
+      - op: eq
+        left: type.name
+        right: java.lang.String
+```

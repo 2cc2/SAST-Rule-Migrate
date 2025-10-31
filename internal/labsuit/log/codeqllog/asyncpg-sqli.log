@@ -1,0 +1,461 @@
+Timestamp: 2025-10-31 00:02:58
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:14,8-42)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:18,33-47)
+ERROR: asStringLiteral() cannot be resolved for type AsyncPgSqlSources.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:20,10-25)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:24,30-44)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:26,12-22)
+ERROR: asString() cannot be resolved for type AsyncPgSqlSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:30,12-20)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:35,43-57)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: asString() cannot be resolved for type ParameterizedQuerySanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:41,12-20)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:46,43-56)
+ERROR: could not resolve type FunctionArgument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:58,12-28)
+ERROR: getFunction() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:59,33-44)
+ERROR: getNode() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:61,20-27)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:53,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:57,22-43)
+Rule Content:
+/**
+ * @name asyncpg-sqli
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries or prepared statements instead.
+ * @kind taint
+ * @problem.severity warning
+ * @id py/asyncpg-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.dataflow.FlowSources
+import semmle.python.ApiGraphs
+import semmle.python.Concepts
+
+class AsyncPgSqlSources extends DataFlow::Node::Range {
+  AsyncPgSqlSources() {
+    this.asStringLiteral()
+  }
+}
+
+class AsyncPgSqlSink extends DataFlow::Node::Range {
+  AsyncPgSqlSink() {
+    exists(MethodCall call |
+      call.getMethodName().regexpMatch("(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)") and
+      call.getQualifier().getStrippedQualifiedName() = "asyncpg" and
+      call.getAnArgument() = this and
+      this.asString().regexpMatch(".*\\+.*|.*\\..*format\\(.*\\)|.*%.*\\(.*\\)|f'.*\\{.*\\}.*'")
+    )
+  }
+}
+
+class ParameterizedQuerySanitizer extends DataFlow::Node::Range {
+  ParameterizedQuerySanitizer() {
+    exists(MethodCall call |
+      call.getMethodName().regexpMatch("(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)") and
+      call.getQualifier().getStrippedQualifiedName() = "asyncpg" and
+      call.getAnArgument() = this and
+      this.asString().regexpMatch("^\\$[0-9]+$")
+    )
+  }
+}
+
+class AsyncPgSqlFlowConfiguration extends TaintTracking::Configuration {
+  AsyncPgSqlFlowConfiguration() { this = "AsyncPgSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof AsyncPgSqlSources }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof AsyncPgSqlSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof ParameterizedQuerySanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(FunctionArgument arg, Parameter param |
+      arg.getFunction() = param.getFunction() and
+      succ = arg.getNode() and
+      pred = param.getNode()
+    )
+  }
+}
+
+from AsyncPgSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential SQL injection through string concatenation in asyncpg call. $@", source,
+  "User input flows into SQL query here"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "asyncpg-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement. This could lead to SQL injection if the variable is user-controlled and not properly sanitized. In order to prevent SQL injection, use parameterized queries or prepared statements instead."
+  metadata:
+    language: python
+    category: security
+    references:
+      - "https://github.com/MagicStack/asyncpg"
+      - "https://magicstack.github.io/asyncpg/current/"
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: ".*"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        package: asyncpg
+        method: "(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: ".*\\+.*|.*\\..*format\\(.*\\)|.*%.*\\(.*\\)|f'.*\\{.*\\}.*'"
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        package: asyncpg
+        method: "(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)"
+    effect: neutralize
+    scope:
+      sinks: [SQL_EXEC]
+    where:
+      - op: regex
+        left: arg[0].value
+        right: "^\\$[0-9]+$"
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 00:04:43
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+ERROR: could not resolve module semmle.python.CallGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:16,8-31)
+ERROR: asStringLiteral() cannot be resolved for type AsyncPgSqlSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:20,30-45)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:26,12-22)
+ERROR: asExpr() cannot be resolved for type AsyncPgSqlSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:30,12-18)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: asExpr() cannot be resolved for type ParameterizedQuerySanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:41,12-18)
+ERROR: could not resolve type FunctionArgument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:58,12-28)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:59,18-24)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:60,49-55)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:65,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:65,62-80)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:18,7-23)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: AsyncPgSqlSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:24,7-21)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: ParameterizedQuerySanitizer must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:35,7-34)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:53,22-33)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3bf7a6a4/python-security-queries/queries/test-rule/TestRule.ql:57,3-62,4)
+Rule Content:
+/**
+ * @name AsyncPG SQL injection vulnerability
+ * @description Detected string concatenation with a non-literal variable in a asyncpg Python SQL statement.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/asyncpg-sqli
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.security.TaintTracking
+import DataFlow::PathGraph
+import semmle.python.CallGraph
+
+class AsyncPgSqlSource extends DataFlow::Node {
+  AsyncPgSqlSource() {
+    exists(string val | this.asStringLiteral().getValue() = val)
+  }
+}
+
+class AsyncPgSqlSink extends DataFlow::Node {
+  AsyncPgSqlSink() {
+    exists(MethodCall call |
+      call.getMethodName().regexpMatch("(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)") and
+      call.getTarget().getQualifiedName() = "asyncpg" and
+      this = call.getArgument(0) and
+      this.asExpr().toString().regexpMatch(".*\\+.*|.*\\..*format\\(.*\\)|.*%.*\\(.*\\)|f'.*\\{.*\\}.*'")
+    )
+  }
+}
+
+class ParameterizedQuerySanitizer extends DataFlow::Node {
+  ParameterizedQuerySanitizer() {
+    exists(MethodCall call |
+      call.getMethodName().regexpMatch("(fetch|fetchrow|fetchval|execute|executemany|prepare|cursor|copyfromquery)") and
+      call.getTarget().getQualifiedName() = "asyncpg" and
+      this = call.getArgument(0) and
+      this.asExpr().toString().regexpMatch("^\\$[0-9]+$")
+    )
+  }
+}
+
+class AsyncPgSqlTaintTracking extends TaintTracking::Configuration {
+  AsyncPgSqlTaintTracking() { this = "AsyncPgSqlTaintTracking" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof AsyncPgSqlSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof AsyncPgSqlSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof ParameterizedQuerySanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(FunctionArgument arg |
+      arg = succ.asExpr() and
+      arg.getParentCall().getArgument(0) = pred.asExpr()
+    )
+  }
+}
+
+from AsyncPgSqlTaintTracking cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Detected string concatenation with a non-literal variable in " +
+"asyncpg SQL statement. This could lead to SQL injection if the variable is user-controlled."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:14,8-42)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:18,33-47)
+ERROR: asStringLiteral() cannot be resolved for type AsyncPgSqlSources.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:20,10-25)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:24,30-44)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:26,12-22)
+ERROR: asString() cannot be resolved for type AsyncPgSqlSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:30,12-20)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:35,43-57)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:37,12-22)
+ERROR: asString() cannot be resolved for type ParameterizedQuerySanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:41,12-20)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:46,43-56)
+ERROR: could not resolve type FunctionArgument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:58,12-28)
+ERROR: getFunction() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:59,33-44)
+ERROR: getNode() cannot be resolved for type Function::Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:61,20-27)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:51,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:53,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e06b8513/python-security-queries/queries/test-rule/TestRule.ql:57,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 将 `import semmle.python.dataflow.FlowSources` 替换为正确的导入语句 `import DataFlow`
+2. 确保所有 `DataFlow::Node` 引用都来自正确的模块，使用正确的命名空间，如 `DataFlow::Node`
+3. 将 `asStringLiteral()` 替换为正确的字符串字面量检查方法：
+   - 改为 `exists(MethodCall call | this = call.getArgument(0) and call.getMethodName() = "getParameter")`
+4. 将 `asString()` 方法调用替换为正确的字符串处理方法：
+   - 改为 `this = call.getArgument(0)` 并配合正则匹配
+5. 正确导入 `MethodCall` 类型：
+   - 添加 `import semmle.python.CallGraph`
+
+6. 修正扩展类声明：
+   - 将 `extends DataFlow::Node::Range` 改为正确的扩展方式 `extends DataFlow::Node`
+
+7. 修正 `TaintTracking::Configuration` 的导入：
+   - 确保导入 `import semmle.python.security.TaintTracking`
+
+8. 修正传播步骤 (`isAdditionalTaintStep`)：
+   - 使用正确的参数传递方式：
+   ```ql
+   exists(DataFlow::FunctionInput input |
+     input.getCall() = succ.asExpr().(Call).getCallee() and
+     input.getParameter() = pred.asParameter()
+   )
+   ```
+
+9. 确保所有引用方法的正确性：
+   - 检查并替换所有无效的方法调用为CodeQL标准库中提供的等效方法
+
+10. 解决所有未使用方法警告：
+    - 确保所有定义的`isSource`、`isSink`等方法都在配置中被正确调用
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

@@ -1,0 +1,74 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jdo-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  metadata:
+    language: java
+    category: security
+
+sources:
+  - id: SQL_FORMAT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: "String.format"
+  - id: SQL_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: contains
+          left: code
+          right: "$SQL = $X + $Y"
+  - id: SQL_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: contains
+          left: name
+          right: SQL
+
+sinks:
+  - id: JDBC_QUERY
+    match:
+      node: CALL
+      api: { type: javax.jdo.Query, method: setFilter }
+      arg_index: 0
+  - id: JDBC_QUERY2
+    match:
+      node: CALL
+      api: { type: javax.jdo.Query, method: setGrouping }
+      arg_index: 0
+  - id: PM_NEW_QUERY
+    match:
+      node: CALL
+      api: { type: javax.jdo.PersistenceManager, method: newQuery }
+      arg_index: 1
+
+sanitizers:
+  - id: SAFE_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: contains
+          left: code
+          right: '$SQL = "..." + "..."'
+    effect: neutralize
+  - id: SAFE_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: contains
+          left: code
+          right: '"..."'
+    effect: neutralize
+
+propagations:
+  - id: SQL_TO_SINK
+    edge: arg->param
+    kind: taint
+```

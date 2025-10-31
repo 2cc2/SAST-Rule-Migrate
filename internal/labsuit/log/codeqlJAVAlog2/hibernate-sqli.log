@@ -1,0 +1,1168 @@
+Timestamp: 2025-10-31 11:11:00
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:18,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.StringFormat (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:20,8-37)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:22,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:25,31-39)
+ERROR: could not resolve type StringFormatSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:26,23-41)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:27,12-26)
+ERROR: could not resolve type Variable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:29,14-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:44,34-42)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:45,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:51,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:51,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:25,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+Rule Content:
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. Vulnerable to SQL injection.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @id java/hibernate-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ *       java
+ *       hibernate
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringFormat
+
+class HibernateSqliConfig extends TaintTracking::Configuration {
+  HibernateSqliConfig() { this = "HibernateSqliConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof StringFormatSource or
+    exists(AssignmentExpr assign | source.asExpr() = assign |
+      assign.getRight().toString().matches("%.*\\+.*") and
+      exists(Variable v | assign.getLeft() = v.getAnAccess())
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma | sink.asExpr() = ma |
+      ma.getMethod().getName().matches("sqlRestriction|createQuery|createSQLQuery") and
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.hibernate.criterion", "Restrictions") or
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.hibernate", "Session")
+      ) and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(AssignmentExpr assign | sanitizer.asExpr() = assign |
+      assign.getRight().toString().matches("\".*\" *\\+ *\".*\"")
+    )
+  }
+}
+
+from HibernateSqliConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements instead."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: hibernate-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  tags:
+    - java
+    - hibernate
+  metadata:
+    language: java
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+
+sources:
+  - id: SQL_FORMATTED_STRING
+    match:
+      node: CALL
+      api:
+        type: java.lang.String
+        method: format
+  - id: SQL_STRING_CONCAT
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: "String.*=.*\\+.*"
+
+sinks:
+  - id: SQL_RESTRICTION
+    match:
+      node: CALL
+      api:
+        type: org.hibernate.criterion.Restrictions
+        method: sqlRestriction
+      arg_index: 0
+  - id: SESSION_METHOD
+    match:
+      node: CALL
+      api:
+        type: org.hibernate.Session
+        method:
+          regex: "^(createQuery|createSQLQuery)$"
+      arg_index: 0
+
+sanitizers:
+  - id: STRING_CONCAT_LITERAL
+    match:
+      node: ASSIGNMENT
+      where:
+        - op: regex
+          left: code
+          right: 'String.*=.*".*" *\+ *".*"'
+
+propagations:
+  - id: STRING_TO_SQL
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:12:16
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:18,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:19,8-16)
+ERROR: could not resolve module semmle.code.java.StringFormatter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:20,8-40)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:22,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:25,31-39)
+ERROR: could not resolve type FormatMethod (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:27,12-22)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:29,14-28)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:44,34-42)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:45,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:51,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:51,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:25,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+Rule Content:
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. Vulnerable to SQL injection.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @id java/hibernate-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ *       java
+ *       hibernate
+ */
+
+import java
+import DataFlow::PathGraph
+import DataFlow::TaintTracking
+import semmle.code.java.StringFormatter
+
+class HibernateSqliConfig extends TaintTracking::Configuration {
+  HibernateSqliConfig() { this = "HibernateSqliConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(FormatMethod format | source.asExpr() = format.getACall()) or
+    exists(AssignExpr assign | source.asExpr() = assign |
+      assign.getRValue().getText().matches("%.*\\+.*") and
+      exists(VariableAccess va | assign.getLValue() = va)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc | sink.asExpr() = mc |
+      mc.getMethod().getName().matches("sqlRestriction|createQuery|createSQLQuery") and
+      (
+        mc.getMethod().getDeclaringType().hasQualifiedName("org.hibernate.criterion", "Restrictions") or
+        mc.getMethod().getDeclaringType().hasQualifiedName("org.hibernate", "Session")
+      ) and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(AssignExpr assign | sanitizer.asExpr() = assign |
+      assign.getRValue().getText().matches("\".*\" *\\+ *\".*\"")
+    )
+  }
+}
+
+from HibernateSqliConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use prepared statements instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:18,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.StringFormat (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:20,8-37)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:22,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:25,31-39)
+ERROR: could not resolve type StringFormatSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:26,23-41)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:27,12-26)
+ERROR: could not resolve type Variable (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:29,14-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:44,34-42)
+ERROR: could not resolve type AssignmentExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:45,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:51,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:51,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:25,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_b93b9641/python-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入路径：将 `semmle.code.java` 开头的导入语句改为 `semmle.code.java` 的新路径格式（CodeQL标准库结构调整后）
+2. 替换过期的数据类型：
+   - 将 `StringFormatSource` 改为 `FormatMethod` 或类似的格式化字符串检测类
+   - 将 `AssignmentExpr` 改为 `AssignExpr`
+   - 将 `Variable` 改为 `VariableAccess`
+3. 更新基础类引用路径：
+   - 确保 `TaintTracking` 从正确的模块导入（可能是 `DataFlow::TaintTracking`）
+   - 修正 `DataFlow` 模块的引用路径
+4. 修正方法签名匹配：
+   - 使用 `getCompilationUnit().getFile().getAbsolutePath().matches()` 替代直接的字符串匹配
+5. 重构配置类：
+   - 确保继承自正确的 `TaintTracking::Configuration` 类
+   - 修正 `this = "HibernateSqliConfig"` 的初始化语法
+6. 修复方法参数类型：
+   - 确保 `isSource/isSink/isSanitizer` 方法的参数类型与父类一致
+7. 检查表达式匹配逻辑：
+   - 使用 `getRight().getText()` 替代 `toString()`
+   - 修正正则表达式匹配逻辑
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:13:37
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Hibernate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:20,8-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:22,31-43)
+ERROR: getMethod() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: getMethod() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:29,34-38)
+ERROR: could not resolve type Assignment (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:31,12-22)
+ERROR: could not resolve type LocalVariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:32,32-51)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:38,34-46)
+ERROR: getMethod() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:40,10-19)
+ERROR: getMethod() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:41,10-19)
+ERROR: getArgument(int) cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:42,10-21)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:42,36-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:46,33-45)
+ERROR: getMethod() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:48,10-19)
+ERROR: getMethod() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:49,10-19)
+ERROR: getArgument(int) cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:50,10-21)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:50,36-40)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:54,38-42)
+ERROR: could not resolve type Assignment (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:56,12-22)
+ERROR: could not resolve type LocalVariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:57,32-51)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:63,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:66,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:71,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:76,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,65-73)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:81,12-21)
+ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:81,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:88,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:88,65-73)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:30,3-21)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:55,3-25)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:66,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:71,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:76,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,22-43)
+Rule Content:
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ * if variables in the SQL statement are not properly sanitized.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       java
+ *       hibernate
+ */
+
+import java
+import semmle.code.java.Strings
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate
+
+class SqlFormatSource extends MethodAccess {
+  SqlFormatSource() {
+    this.getMethod().hasName("format") and
+    this.getMethod().getDeclaringType().getName() = "String"
+  }
+}
+
+class StringConcatSource extends Expr {
+  StringConcatSource() {
+    exists(Assignment a |
+      a.getTarget() instanceof LocalVariableAccess and
+      a.getExpr().toString().matches("%String%.*\\+.*")
+    )
+  }
+}
+
+class SqlRestrictionSink extends MethodAccess {
+  SqlRestrictionSink() {
+    this.getMethod().getName() = "sqlRestriction" and
+    this.getMethod().getDeclaringType().getName() = "Restrictions" and
+    this.getArgument(0) instanceof Expr
+  }
+}
+
+class SessionMethodSink extends MethodAccess {
+  SessionMethodSink() {
+    this.getMethod().getName().matches("createQuery|createSQLQuery") and
+    this.getMethod().getDeclaringType().getName() = "Session" and
+    this.getArgument(0) instanceof Expr
+  }
+}
+
+class LiteralConcatSanitizer extends Expr {
+  LiteralConcatSanitizer() {
+    exists(Assignment a |
+      a.getTarget() instanceof LocalVariableAccess and
+      a.getExpr().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+    )
+  }
+}
+
+class HibernateSqlInjectionConfig extends TaintTracking::Configuration {
+  HibernateSqlInjectionConfig() { this = "HibernateSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof SqlFormatSource or
+    source.asExpr() instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof SqlRestrictionSink or
+    sink.asExpr() instanceof SessionMethodSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof LiteralConcatSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Argument a |
+      pred = a.getNode() and
+      succ = p.getNode()
+    )
+  }
+}
+
+from HibernateSqlInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+  "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+  "(java.sql.PreparedStatement) instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:18,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:19,8-16)
+ERROR: could not resolve module semmle.code.java.StringFormatter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:20,8-40)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:22,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:25,31-39)
+ERROR: could not resolve type FormatMethod (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:27,12-22)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:29,14-28)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:33,29-37)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:44,34-42)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:45,12-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:51,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:51,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:25,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:33,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_78628abd/python-security-queries/queries/test-rule/TestRule.ql:44,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入结构：
+   - 替换所有失效的DataFlow模块导入为正确的import语句
+   - 确保正确导入java基础库
+   - 确认并修正格式化字符串检测类的导入路径
+
+2. 更新类和方法引用：
+   - 将FormatMethod替换为正确的格式化字符串检测类，如StringUtilities::FormatMethod
+   - 确保AssignExpr和VariableAccess从正确的模块导入
+   - 修正MethodCall为MethodAccess或Call表达式类
+
+3. 修复配置类定义：
+   - 确保TaintTracking配置类正确继承
+   - 修正构造函数中this赋值的语法问题
+   - 添加必要的重写注解
+
+4. 修正数据流分析表达式：
+   - 替换getText()等过时方法调用
+   - 确保asExpr()转换的正确性
+   - 修正正则表达式匹配逻辑
+
+5. 重构查询主体部分：
+   - 确保PathGraph相关类型正确引用
+   - 修正hasFlowPath方法调用
+   - 优化select语句的输出格式
+
+6. 验证类型系统：
+   - 检查所有表达式节点的类型转换
+   - 验证方法调用和参数索引访问的正确性
+   - 确保类型限定符匹配逻辑准确
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:15:33
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Hibernate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:20,8-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+ERROR: getTarget() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:32,34-42)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:35,30-47)
+ERROR: getNode() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:38,10-17)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:38,31-41)
+ERROR: getNode() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:39,10-17)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:43,34-42)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: getTarget() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:48,12-21)
+ERROR: getArgument(int) cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:49,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:49,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:54,33-41)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:56,12-18)
+ERROR: getTarget() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:59,12-21)
+ERROR: getArgument(int) cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:60,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:60,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:65,38-46)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:67,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:68,30-47)
+ERROR: getNode() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:71,10-17)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:71,31-41)
+ERROR: getNode() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:72,10-17)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:76,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:79,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:84,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:89,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,65-73)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:94,12-24)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:94,29-38)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:101,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:101,65-73)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:84,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:89,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,22-43)
+Rule Content:
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ * if variables in the SQL statement are not properly sanitized.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       java
+ *       hibernate
+ */
+
+import java
+import semmle.code.java.Strings
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate
+
+class SqlFormatSource extends DataFlow::CallNode {
+  SqlFormatSource() {
+    exists(Method m |
+      m.hasName("format") and
+      m.getDeclaringType().getName() = "String" and
+      this.getTarget() = m
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*\\+.*")
+    ) or
+    this.getNode() instanceof AssignExpr and
+    this.getNode().getSrc().toString().matches("%String%.*\\+.*")
+  }
+}
+
+class SqlRestrictionSink extends DataFlow::CallNode {
+  SqlRestrictionSink() {
+    exists(Method m |
+      m.hasName("sqlRestriction") and
+      m.getDeclaringType().getName() = "Restrictions" and
+      this.getTarget() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class SessionMethodSink extends DataFlow::CallNode {
+  SessionMethodSink() {
+    exists(Method m |
+      m.getName().matches("createQuery|createSQLQuery") and
+      m.getDeclaringType().getName() = "Session" and
+      this.getTarget() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class LiteralConcatSanitizer extends DataFlow::Node {
+  LiteralConcatSanitizer() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+    ) or
+    this.getNode() instanceof AssignExpr and
+    this.getNode().getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+  }
+}
+
+class HibernateSqlInjectionConfig extends TaintTracking::Configuration {
+  HibernateSqlInjectionConfig() { this = "HibernateSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource or
+    source instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlRestrictionSink or
+    sink instanceof SessionMethodSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof LiteralConcatSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma, Parameter p |
+      pred.asExpr() = ma.getAnArgument() and
+      succ.asParameter() = p
+    )
+  }
+}
+
+from HibernateSqlInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+  "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+  "(java.sql.PreparedStatement) instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Hibernate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:20,8-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:22,31-43)
+ERROR: getMethod() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: getMethod() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:29,34-38)
+ERROR: could not resolve type Assignment (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:31,12-22)
+ERROR: could not resolve type LocalVariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:32,32-51)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:38,34-46)
+ERROR: getMethod() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:40,10-19)
+ERROR: getMethod() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:41,10-19)
+ERROR: getArgument(int) cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:42,10-21)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:42,36-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:46,33-45)
+ERROR: getMethod() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:48,10-19)
+ERROR: getMethod() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:49,10-19)
+ERROR: getArgument(int) cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:50,10-21)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:50,36-40)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:54,38-42)
+ERROR: could not resolve type Assignment (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:56,12-22)
+ERROR: could not resolve type LocalVariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:57,32-51)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:63,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:66,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:71,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:76,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,65-73)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:81,12-21)
+ERROR: could not resolve type Argument (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:81,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:88,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:88,65-73)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:30,3-21)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:55,3-25)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:66,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:71,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:76,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ff4fddc4/python-security-queries/queries/test-rule/TestRule.ql:80,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+ql
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ * if variables in the SQL statement are not properly sanitized.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       java
+ *       hibernate
+ */
+
+import java
+import semmle.code.java.Strings
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate
+
+class SqlFormatSource extends DataFlow::CallNode {
+  SqlFormatSource() {
+    exists(Method m |
+      m.hasName("format") and
+      m.getDeclaringType().getName() = "String" and
+      this.getTarget() = m
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*\\+.*")
+    ) or
+    this.getNode() instanceof AssignExpr and
+    this.getNode().getSrc().toString().matches("%String%.*\\+.*")
+  }
+}
+
+class SqlRestrictionSink extends DataFlow::CallNode {
+  SqlRestrictionSink() {
+    exists(Method m |
+      m.hasName("sqlRestriction") and
+      m.getDeclaringType().getName() = "Restrictions" and
+      this.getTarget() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class SessionMethodSink extends DataFlow::CallNode {
+  SessionMethodSink() {
+    exists(Method m |
+      m.getName().matches("createQuery|createSQLQuery") and
+      m.getDeclaringType().getName() = "Session" and
+      this.getTarget() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class LiteralConcatSanitizer extends DataFlow::Node {
+  LiteralConcatSanitizer() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+    ) or
+    this.getNode() instanceof AssignExpr and
+    this.getNode().getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+  }
+}
+
+class HibernateSqlInjectionConfig extends TaintTracking::Configuration {
+  HibernateSqlInjectionConfig() { this = "HibernateSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource or
+    source instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlRestrictionSink or
+    sink instanceof SessionMethodSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof LiteralConcatSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma, Parameter p |
+      pred.asExpr() = ma.getAnArgument() and
+      succ.asParameter() = p
+    )
+  }
+}
+
+from HibernateSqlInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+  "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+  "(java.sql.PreparedStatement) instead."
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:16:55
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:18,8-31)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Hibernate.Hibernate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:20,8-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+ERROR: getCallee() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:32,34-42)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:35,30-47)
+ERROR: asExpr() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:38,10-16)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:38,30-40)
+ERROR: asExpr() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:39,10-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:43,34-42)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: getCallee() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:48,12-21)
+ERROR: getArgument(int) cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:49,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:49,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:54,33-41)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:56,12-18)
+ERROR: getCallee() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:59,12-21)
+ERROR: getArgument(int) cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:60,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:60,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:65,38-46)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:67,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:68,30-47)
+ERROR: asExpr() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:71,10-16)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:71,30-40)
+ERROR: asExpr() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:72,10-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:76,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:79,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:84,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:89,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:94,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:94,65-73)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:84,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a704b198/python-security-queries/queries/test-rule/TestRule.ql:89,22-33)
+Rule Content:
+/**
+ * @name Hibernate SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection 
+ * if variables in the SQL statement are not properly sanitized.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ *       java
+ *       hibernate
+ */
+
+import java
+import semmle.code.java.String
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Hibernate.Hibernate
+
+class SqlFormatSource extends DataFlow::CallNode {
+  SqlFormatSource() {
+    exists(Method m |
+      m.hasName("format") and
+      m.getDeclaringType().getName() = "String" and
+      this.getCallee() = m
+    )
+  }
+}
+
+class StringConcatSource extends DataFlow::Node {
+  StringConcatSource() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*\\+.*")
+    ) or
+    this.asExpr() instanceof AssignExpr and
+    this.asExpr().getSrc().toString().matches("%String%.*\\+.*")
+  }
+}
+
+class SqlRestrictionSink extends DataFlow::CallNode {
+  SqlRestrictionSink() {
+    exists(Method m |
+      m.hasName("sqlRestriction") and
+      m.getDeclaringType().getName() = "Restrictions" and
+      this.getCallee() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class SessionMethodSink extends DataFlow::CallNode {
+  SessionMethodSink() {
+    exists(Method m |
+      m.getName().matches("createQuery|createSQLQuery") and
+      m.getDeclaringType().getName() = "Session" and
+      this.getCallee() = m and
+      this.getArgument(0) instanceof Expr
+    )
+  }
+}
+
+class LiteralConcatSanitizer extends DataFlow::Node {
+  LiteralConcatSanitizer() {
+    exists(AssignExpr a |
+      a.getDest() instanceof LocalVariableExpr and
+      a.getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+    ) or
+    this.asExpr() instanceof AssignExpr and
+    this.asExpr().getSrc().toString().matches("%String%.*=\\s*\".*\"\\s*\\+\\s*\".*\"")
+  }
+}
+
+class HibernateSqlInjectionConfig extends TaintTracking::Configuration {
+  HibernateSqlInjectionConfig() { this = "HibernateSqlInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource or
+    source instanceof StringConcatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlRestrictionSink or
+    sink instanceof SessionMethodSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof LiteralConcatSanitizer
+  }
+}
+
+from HibernateSqlInjectionConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected a formatted string in a SQL statement. This could lead to SQL injection " +
+  "if variables in the SQL statement are not properly sanitized. Use prepared statements " +
+  "(java.sql.PreparedStatement) instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Hibernate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:20,8-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:22,31-39)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+ERROR: getTarget() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:27,12-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:32,34-42)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:34,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:35,30-47)
+ERROR: getNode() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:38,10-17)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:38,31-41)
+ERROR: getNode() cannot be resolved for type StringConcatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:39,10-17)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:43,34-42)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: getTarget() cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:48,12-21)
+ERROR: getArgument(int) cannot be resolved for type SqlRestrictionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:49,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:49,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:54,33-41)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:56,12-18)
+ERROR: getTarget() cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:59,12-21)
+ERROR: getArgument(int) cannot be resolved for type SessionMethodSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:60,12-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:60,38-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:65,38-46)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:67,12-22)
+ERROR: could not resolve type LocalVariableExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:68,30-47)
+ERROR: getNode() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:71,10-17)
+ERROR: could not resolve type AssignExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:71,31-41)
+ERROR: getNode() cannot be resolved for type LiteralConcatSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:72,10-17)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:76,43-56)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:79,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:84,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:89,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,65-73)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:94,12-24)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:94,29-38)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:101,42-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:101,65-73)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:84,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:89,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cfc71c7c/python-security-queries/queries/test-rule/TestRule.ql:93,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入路径：将Python路径的模块导入改为正确的路径格式：
+   - 将 `semmle.code.java.Strings` 改为 `semmle.code.java.String`
+   - 将 `semmle.code.java.frameworks.Hibernate` 改为 `semmle.code.java.frameworks.Hibernate.Hibernate`
+   - 确保所有导入使用正确的Java模块路径
+
+2. 修正类型引用：
+   - 将 `DataFlow` 改为正确的完全限定名 `DataFlow::`
+   - 将 `Method` 改为 `Method`
+   - 将 `AssignExpr` 改为 `AssignExpr`
+   - 将 `LocalVariableExpr` 改为 `LocalVariableExpr`
+   - 将 `Expr` 改为 `Expr`
+   - 将 `MethodAccess` 改为 `MethodAccess`
+   - 将 `Parameter` 改为 `Parameter`
+
+3. 修正方法调用：
+   - 将 `getTarget()` 改为 `getCallee()`
+   - 将 `getArgument(int)` 改为 `getArgument(int)`
+   - 将 `getNode()` 改为 `asExpr()`
+   - 确保所有方法调用符合CodeQL Java库规范
+
+4. 修正TaintTracking配置：
+   - 确保 `extends TaintTracking::Configuration` 语法正确
+   - 修正 `isSource`, `isSink`, `isSanitizer` 等方法的结构
+
+5. 修正查询语句：
+   - 确保最终的 `select` 语句使用正确的语法和数据流配置
+   - 移除警告中提示的未使用方法
+
+6. 验证修改：
+   - 确保所有类和方法的继承关系正确
+   - 检查每个谓词的条件表达式是否符合语法
+   - 验证数据流跟踪逻辑是否正确实现
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

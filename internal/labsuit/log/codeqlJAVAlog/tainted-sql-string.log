@@ -1,0 +1,913 @@
+Timestamp: 2025-10-31 10:32:15
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:20,34-42)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:22,12-27)
+ERROR: asParameter() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:23,16-27)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:25,14-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:33,35-43)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:35,12-18)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:35,22-34)
+ERROR: asExpr() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:36,17-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:44,14-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:53,32-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:56,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:65,28-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:65,55-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+Rule Content:
+/**
+ * @id tainted-sql-string
+ * @kind path-problem
+ * @severity error
+ * @name Tainted SQL string
+ * @description User data flows into this manually-constructed SQL string. User data can be safely
+ *              inserted into SQL strings using prepared statements or an object-relational mapper (ORM).
+ *              Manually-constructed SQL strings is a possible indicator of SQL injection, which could
+ *              let an attacker steal or manipulate data from the database. Instead, use prepared statements
+ *              (`connection.PreparedStatement`) or a safe library.
+ * @tags security
+ * @tags spring
+ * @problem.decimal CWE-89
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class UserInputParameter extends DataFlow::Node {
+  UserInputParameter() {
+    exists(MethodParameter p |
+      p = this.asParameter() and
+      not p.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      exists(Annotation a |
+        a = p.getAnAnnotation() and
+        a.getType().getName().matches("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue)")
+      )
+    )
+  }
+}
+
+class StringConcatenation extends DataFlow::Node {
+  StringConcatenation() {
+    exists(Method m, MethodAccess ma |
+      ma = this.asExpr() and
+      (
+        m.getName().matches("%\\.concat%") or
+        m.getName().matches("%\\.append%") or
+        m.getName().matches("String\\.format%")
+      ) and
+      m = ma.getMethod() and
+      ma.getQualifier().getType().toString() = "java.lang.String" and
+      exists(Expr arg |
+        arg = ma.getArgument(0) and
+        arg.toString().matches("(?i)(select|delete|insert|create|update|alter|drop)\\b")
+      ) and
+      not m.getName().matches("%(System\\.out\\.println|LOG\\.(info|warn|warning|debug|debugging|error)|Exception)%")
+    )
+  }
+}
+
+class TaintedSQLConfig extends TaintTracking::Configuration {
+  TaintedSQLConfig() { this = "TaintedSQLConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof StringConcatenation
+  }
+}
+
+from TaintedSQLConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "User data flows into this manually-constructed SQL string. This could lead to SQL injection vulnerabilities ($@).",
+  source.getNode(), "User input"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: tainted-sql-string
+  kind: taint
+  severity: ERROR
+  message: User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection, which could let an attacker steal or manipulate data from the database. Instead, use prepared statements (`connection.PreparedStatement`) or a safe library.
+  metadata:
+    language: java
+    category: security
+    tags:
+      - spring
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: typeFullName
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+        - op: regex
+          left: annotationFullName
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue)
+
+sinks:
+  - id: SQL_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: or
+          clauses:
+            - left: methodFullName
+              op: regex
+              right: "\\.concat"
+            - left: methodFullName
+              op: regex
+              right: "\\.append"
+            - left: methodFullName
+              op: regex
+              right: "String\\.format"
+        - op: regex
+          left: receiver.typeFullName
+          right: java.lang.String
+        - op: regex
+          left: argument(0).code
+          right: (?i)(select|delete|insert|create|update|alter|drop)\b
+      not:
+        - op: regex
+          left: methodFullName
+          right: (System\\.out\\.println|LOG\\.(info|warn|warning|debug|debugging|error)|Exception)
+
+sanitizers: []
+
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:33:33
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,5-45)
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,44-45)
+ERROR: unexpected input 'select' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,45-51)
+ERROR: extraneous input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,51-52)
+ERROR: unexpected input '|' expecting one of: <EOF>, 'and', 'as', 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'implies', 'import', 'in', 'instanceof', 'int', 'module', 'or', 'order', 'predicate', 'select', 'string', 'where', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', '*', '%', '+', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,58-59)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:18,34-49)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:20,12-16)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:20,26-33)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:23,14-24)
+ERROR: getAnAnnotation() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:26,18-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:32,35-47)
+ERROR: getMethod() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:34,10-19)
+ERROR: getQualifier() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:35,10-22)
+ERROR: getArgument(int) cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,10-21)
+ERROR: could not resolve variable delete (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,51-58)
+WARNING: unused class 'UserInputParameter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:18,7-25)
+WARNING: unused class 'StringConcatenation' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:32,7-26)
+Rule Content:
+/**
+ * @name Tainted SQL string
+ * @description User data flows into this manually-constructed SQL string. Use prepared statements instead.
+ * @kind problem
+ * @id java/tainted-sql-string
+ * @security-severity 8.8
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class UserInputParameter extends MethodParameter {
+  UserInputParameter() {
+    exists(Type t | this.getType() = t |
+      not t.hasName(["Integer", "Long", "Float", "Double", "Char", "Boolean",
+                    "int", "long", "float", "double", "char", "boolean"]) and
+      exists(Annotation a |
+        a.getType().hasQualifiedName(["javax.servlet", "org.springframework.web.bind.annotation"],
+                                    ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue"]) and
+        a = this.getAnAnnotation()
+      )
+    )
+  }
+}
+
+class StringConcatenation extends MethodAccess {
+  StringConcatenation() {
+    this.getMethod().hasName(["concat", "append", "format"]) and
+    this.getQualifier().getType().hasName("String") and
+    this.getArgument(0).toString().matches(/select|delete|insert|create|update|alter|drop/i) and
+    not this.getMethod().getDeclaringType().hasQualifiedName(["java.lang.System", "org.slf4j.Logger"],
+                                                           ["out", "LOG"])
+  }
+}
+
+class TaintedSQLConfig extends TaintTracking::Configuration {
+  TaintedSQLConfig() { this = "TaintedSQLConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asParameter() instanceof UserInputParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(StringConcatenation sc | sink.asExpr() = sc)
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSQLConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "User data flows into this manually-constructed SQL string. Use prepared statements instead.",
+  source.getNode(), "User input source"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:20,34-42)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:22,12-27)
+ERROR: asParameter() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:23,16-27)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:25,14-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:33,35-43)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:35,12-18)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:35,22-34)
+ERROR: asExpr() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:36,17-23)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:44,14-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:53,32-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:56,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:60,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:65,28-36)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:65,55-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a254009a/python-security-queries/queries/test-rule/TestRule.ql:60,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正语言配置：将规则从Java转换为Python，修改文件扩展名为`.py`或`.ql`时指定Python语言
+2. 更换导入模块：替换Java专用的导入语句到Python专用模块：
+   - `import java` → 删除或替换为Python相关模块
+   - `import semmle.code.java.dataflow.FlowSources` → 替换为Python的数据流分析模块
+   - `import semmle.code.java.dataflow.TaintTracking` → 替换为Python的污点跟踪模块
+3. 替换类型定义：
+   - `DataFlow::Node` → Python数据流节点类型
+   - `MethodParameter` → Python函数参数类型
+   - `Annotation` → Python装饰器类型
+   - `Method/MethodAccess` → Python函数/方法调用类型
+   - `Expr` → Python表达式类型
+4. 修改方法实现：
+   - 更新`asParameter()`为Python获取参数的方式
+   - 更新`asExpr()`为Python获取表达式的方式
+   - 修正注解匹配逻辑为Python装饰器检查
+5. 修正正则表达式匹配语法以适应Python规则语法
+6. 确保配置文件使用Python语言标识而非Java
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:34:58
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,9-35)
+ERROR: token recognition error at: '^' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,33-34)
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,32-33)
+ERROR: token recognition error at: '?' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:37,45-46)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:37,95-96)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,51-52)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,56-57)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,69-70)
+ERROR: no viable parse for input '(Integer|', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,34-35)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:26,1-2)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:14,8-12)
+ERROR: could not resolve module codeql.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:15,8-40)
+ERROR: could not resolve module codeql.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:16,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:17,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:19,34-42)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,14-21)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused class 'UserInputParameter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:19,7-25)
+Rule Content:
+/**
+ * @name Tainted SQL string
+ * @description User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM).
+ * @kind problem
+ * @id java/tainted-sql-string
+ * @tags security
+ *   spring
+ *   external/cwe/cwe-89
+ *   external/owasp/a01:2017
+ *   external/owasp/a03:2021
+ * @severity error
+ */
+
+import java
+import codeql.java.dataflow.FlowSources
+import codeql.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class UserInputParameter extends DataFlow::ParameterNode {
+  UserInputParameter() {
+    not this.getType().hasName(/^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)/) and
+    exists(Annotation a | a = this.getAnAnnotation() |
+      a.getType().hasName(["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue"])
+    )
+  }
+}
+
+class StringConcatenation extends DataFlow::Node {
+  StringConcatenation() {
+    exists(Expr e | e = this.asExpr() |
+      (
+        e.getTarget().getName().matches("%concat%") or
+        e.getTarget().getName().matches("%append%") or
+        e.getTarget().getName().matches("String%.format%")
+      ) and
+      e.getQualifier().getType().hasName("java.lang.String") and
+      e.getArgument(0).toString().matches(/(?i)(select|delete|insert|create|update|alter|drop)\b/) and
+      not e.getTarget().getName().matches(/(System\.out\.println|LOG\.(info|warn|warning|debug|debugging|error)|Exception)/)
+    )
+  }
+}
+
+class TaintedSQLFlowConfig extends TaintTracking::Configuration {
+  TaintedSQLFlowConfig() { this = "TaintedSQLFlowConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof UserInputParameter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof StringConcatenation }
+}
+
+from TaintedSQLFlowConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper.", 
+  source.getNode(), "User input"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,5-45)
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,44-45)
+ERROR: unexpected input 'select' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,45-51)
+ERROR: extraneous input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,51-52)
+ERROR: unexpected input '|' expecting one of: <EOF>, 'and', 'as', 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'implies', 'import', 'in', 'instanceof', 'int', 'module', 'or', 'order', 'predicate', 'select', 'string', 'where', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', '*', '%', '+', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,58-59)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:14,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:15,8-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:18,34-49)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:20,12-16)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:20,26-33)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:23,14-24)
+ERROR: getAnAnnotation() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:26,18-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:32,35-47)
+ERROR: getMethod() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:34,10-19)
+ERROR: getQualifier() cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:35,10-22)
+ERROR: getArgument(int) cannot be resolved for type StringConcatenation.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,10-21)
+ERROR: could not resolve variable delete (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:36,51-58)
+WARNING: unused class 'UserInputParameter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:18,7-25)
+WARNING: unused class 'StringConcatenation' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_d70f8917/python-security-queries/queries/test-rule/TestRule.ql:32,7-26)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正模块导入路径：将所有`semmle.code.java.dataflow`开头的导入语句改为`codeql.java.dataflow`，这是CodeQL的标准库路径
+2. 添加缺失的DataFlow模块导入：确保正确导入`DataFlow`模块的所有必要内容
+3. 修正类继承关系：
+   - 将`MethodParameter`改为`DataFlow::ParameterNode`
+   - 将`MethodAccess`改为`Expr`
+4. 修正方法调用：
+   - 替换`getType()`为`getType()`
+   - 替换`getAnAnnotation()`为`getAnAnnotation()`
+   - 替换`getMethod()`为`getTarget()`
+   - 替换`getQualifier()`为`getQualifier()`
+5. 修正正则表达式语法：
+   - 将`matches(/select|delete|insert|create|update|alter|drop/i)`改为正则表达式字符串匹配形式
+6. 确保类的使用：
+   - 确保定义的所有类都被Configuration类正确引用
+7. 修正TaintTracking配置：
+   - 确保Configuration类正确实现了isSource和isSink谓词
+8. 验证类型检查：
+   - 修正类型检查语法，确保类型比较正确
+9. 修复查询语句：
+   - 确保select语句符合CodeQL语法规范
+10. 清理未使用警告：
+    - 移除或使用所有定义的类，消除未使用警告
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:36:33
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:19,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:21,34-42)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:23,14-21)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:24,12-22)
+ERROR: getAnAnnotation() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:24,36-51)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:34,39-47)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:37,18-30)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:56,32-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:59,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:63,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:68,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:68,58-66)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:59,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+Rule Content:
+/**
+ * @name Tainted SQL String
+ * @description User data flows into this manually-constructed SQL string. User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM). 
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision high
+ * @id java/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-564
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class UserInputParameter extends DataFlow::ParameterNode {
+  UserInputParameter() {
+    not this.getType().getName().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+    exists(Annotation a | a = this.getAnAnnotation() |
+      a.getType().hasName("RequestBody") or
+      a.getType().hasName("PathVariable") or
+      a.getType().hasName("RequestParam") or
+      a.getType().hasName("RequestHeader") or
+      a.getType().hasName("CookieValue")
+    )
+  }
+}
+
+class StringConcatenationCall extends DataFlow::Node {
+  StringConcatenationCall() {
+    exists(MethodAccess ma |
+      ma = this.(MethodAccess).getMethod() and
+      (
+        ma.getName().matches("concat") or
+        ma.getName().matches("append") or
+        (ma.getDeclaringType().hasName("String") and ma.getName().matches("format"))
+      ) and
+      ma.getArgument(0).toString().matches("select%") or
+      ma.getArgument(0).toString().matches("delete%") or
+      ma.getArgument(0).toString().matches("insert%") or
+      ma.getArgument(0).toString().matches("create%") or
+      ma.getArgument(0).toString().matches("update%") or
+      ma.getArgument(0).toString().matches("alter%") or
+      ma.getArgument(0).toString().matches("drop%") and
+      not ma.getDeclaringType().getPackage().getName().matches("System") and
+      not ma.getDeclaringType().getPackage().getName().matches("LOG")
+    )
+  }
+}
+
+class TaintedSQLConfig extends TaintTracking::Configuration {
+  TaintedSQLConfig() { this = "TaintedSQLConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof StringConcatenationCall
+  }
+}
+
+from TaintedSQLConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "User data flows into this manually-constructed SQL string.", source,
+  "User data can be safely inserted into SQL strings using prepared statements or an object-relational mapper (ORM)."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,9-35)
+ERROR: token recognition error at: '^' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,33-34)
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,32-33)
+ERROR: token recognition error at: '?' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:37,45-46)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:37,95-96)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,51-52)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,56-57)
+ERROR: token recognition error at: '\' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:38,69-70)
+ERROR: no viable parse for input '(Integer|', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,34-35)
+ERROR: unexpected input '}' expecting one of: <EOF>, 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:26,1-2)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:14,8-12)
+ERROR: could not resolve module codeql.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:15,8-40)
+ERROR: could not resolve module codeql.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:16,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:17,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:19,34-42)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:21,14-21)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused class 'UserInputParameter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f23a8dce/python-security-queries/queries/test-rule/TestRule.ql:19,7-25)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 修复模块导入问题：
+- 确保导入语句使用正确的QL模块路径：
+  ```ql
+  import java
+  import semmle.code.java.dataflow.FlowSources
+  import semmle.code.java.dataflow.TaintTracking
+  import semmle.code.java.dataflow.DataFlow
+  ```
+
+2. 修复类型检查语法：
+- 将正则表达式检查改为使用CodeQL的matches方法格式：
+  ```ql
+  not this.getType().getName().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)")
+  ```
+
+3. 修复注解检查语法：
+- 修正注解检查的语法：
+  ```ql
+  exists(Annotation a | a = this.getAnAnnotation() |
+    a.getType().hasName("RequestBody") or
+    a.getType().hasName("PathVariable") or
+    a.getType().hasName("RequestParam") or
+    a.getType().hasName("RequestHeader") or
+    a.getType().hasName("CookieValue")
+  )
+  ```
+
+4. 修复字符串检查语法：
+- 修改regex模式为CodeQL匹配语法：
+  ```ql
+  e.getTarget().getName().matches("%concat%") or
+  e.getTarget().getName().matches("%append%") or
+  e.getTarget().getName().matches("String%.format%")
+  ```
+
+5. 修复SQL关键字检查：
+- 修改SQL模式检查为：
+  ```ql
+  e.getArgument(0).toString().matches("select%") or
+  e.getArgument(0).toString().matches("delete%") or
+  e.getArgument(0).toString().matches("insert%") or
+  // 其他SQL关键字
+  ```
+
+6. 修复类继承语法：
+- 确保正确继承DataFlow::ParameterNode：
+  ```ql
+  class UserInputParameter extends DataFlow::ParameterNode {
+    UserInputParameter() {
+      // 属性检查
+    }
+  }
+  ```
+
+7. 确保查询语句完整：
+- 检查最后的select语句是否完整包含所有必需的字段和信息
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:37:52
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:27,52-53)
+ERROR: extraneous input ')' expecting one of: '}' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:30,3-4)
+ERROR: unexpected input '|' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:38,61-62)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:44,1-2)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:18,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:19,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:20,8-47)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:21,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:33,39-47)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:35,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:36,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:37,5-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:38,12-20)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:23,32-36)
+ERROR: could not resolve type Parameter (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: could not resolve type PrimitiveType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:26,32-45)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:28,7-18)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused class 'StringConcatenationCall' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:33,7-30)
+WARNING: unused predicate 'isUserInputParameter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_99aa6375/python-security-queries/queries/test-rule/TestRule.ql:23,11-31)
+Rule Content:
+/**
+ * @name Tainted SQL string
+ * @description User data flows into this manually-constructed SQL string. User data can be safely 
+ *              inserted into SQL strings using prepared statements or an object-relational mapper 
+ *              (ORM). Manually-constructed SQL strings is a possible indicator of SQL injection, 
+ *              which could let an attacker steal or manipulate data from the database.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @precision high
+ * @id java/tainted-sql-string
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+predicate isUserInputParameter(Expr exp) {
+  exists(Parameter p |
+    exp = p.getAnAccess() and
+    not p.getType() instanceof PrimitiveType and
+    exists(p.getAnAnnotation().getType().getName() |
+      regexpMatch("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue)", _)
+    )
+  )
+}
+
+class StringConcatenationCall extends DataFlow::CallNode {
+  StringConcatenationCall() {
+    getTarget().getName().matches("concat|append") or
+    getTarget().getName() = "format" and
+    getTarget().getDeclaringType().hasQualifiedName("java.lang", "String") and
+    exists(DataFlow::DataFlow::argument(0).getStringValue() |
+      regexpMatch("(?i)(select|delete|insert|create|update|alter|drop)\\b", _)
+    ) and
+    not getTarget().getDeclaringType().hasQualifiedName("java.lang.System", "out") and
+    not getTarget().getDeclaringType().getName().matches("LOG|Exception")
+  }
+}
+
+class TaintedSQLStringConfig extends TaintTracking::Configuration {
+  TaintedSQLStringConfig() { this = "TaintedSQLStringConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isUserInputParameter(source.asExpr())
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(StringConcatenationCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedSQLStringConfig config
+where config.hasFlowPath(source, sink)
+select sink, "User data flows into this manually-constructed SQL string, potential SQL injection.", 
+  source, "User input"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:19,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:21,34-42)
+ERROR: getType() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:23,14-21)
+ERROR: could not resolve type Annotation (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:24,12-22)
+ERROR: getAnAnnotation() cannot be resolved for type UserInputParameter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:24,36-51)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:34,39-47)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:37,18-30)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:56,32-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:59,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:63,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:68,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:68,58-66)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:59,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69118959/python-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改导入语句，使用正确的Java标准库路径：将原先的java导入改为完整的路径import java，并将其他dataflow相关导入改为正确的路径格式import semmle.code.java.dataflow.*
+
+2. 修复UserInputParameter类中的方法调用：
+   - 将getType()改为正确的获取参数类型的方法调用getParameter().getType()
+   - 将getAnAnnotation()改为正确的获取注解的方法调用getAnAnnotation()
+   - 确保Annotation类型路径正确，使用java.Annotation
+
+3. 修正StringConcatenationCall类中的类型引用：
+   - 确保MethodAccess的正确导入和使用
+   - 修复方法链式调用，正确获取方法和参数信息
+
+4. 修正TaintTracking配置类：
+   - 确保Configuration类的正确继承
+   - 修复isSource和isSink方法的实现，确保它们被正确使用
+
+5. 修复查询主体部分：
+   - 确保DataFlow::PathNode的正确引用
+   - 验证config.hasFlowPath调用的正确性
+
+6. 最终验证：
+   - 检查所有类型引用是否已正确定义
+   - 确认所有方法调用符合CodeQL Java语法规范
+   - 确保没有未使用的警告出现
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

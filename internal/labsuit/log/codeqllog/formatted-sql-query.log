@@ -1,0 +1,1240 @@
+Timestamp: 2025-10-31 00:03:01
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:56,5-10)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:19,12-20)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:23,12-20)
+ERROR: getCode() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:28,11-18)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:36,12-20)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:43,30-58)
+WARNING: unused variable 'sanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:54,49-58)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:54,22-33)
+Rule Content:
+/**
+ * @name Formatted SQL query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/formatted-sql-query
+ * @tags security
+ *       owasp-a01
+ *       owasp-a03
+ *       cwe-89
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.dataflow.new.TaintTracking
+
+class SqlFormatSource extends DataFlow::Node {
+  SqlFormatSource() {
+    exists(CallExpr call |
+      call.getCode().regexpMatch("\\.\\.\\.\\s*%\\.\\.\\.") and
+      this.asExpr() = call
+    ) or
+    exists(CallExpr call |
+      call.getFunc().getQualifiedName().regexpMatch(".*\\.format") and
+      this.asExpr() = call
+    ) or
+    exists(StringLiteral str |
+      str.getCode().matches("%f\"%") and
+      this.asExpr() = str
+    )
+  }
+}
+
+class SqlExecuteSink extends DataFlow::Node {
+  SqlExecuteSink() {
+    exists(CallExpr call|
+      call.getFunc().getName() = "execute" and
+      this.asExpr() = call.getArg(0)
+    )
+  }
+}
+
+class SqlTaintConfig extends TaintTracking::Configuration {
+  SqlTaintConfig() { this = "SqlTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecuteSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // No sanitizers in this rule
+    false
+  }
+}
+
+from SqlTaintConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Possible SQL injection from formatted string", source,
+  "This $@ may contain formatted SQL input.", source, "user input"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-query
+  kind: taint
+  severity: WARNING
+  message: "Detected possible formatted SQL query. Use parameterized queries instead."
+  metadata:
+    language: python
+    category: security
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    references:
+      - "https://stackoverflow.com/questions/775296/mysql-parameterized-queries"
+    technology:
+      - "python"
+    subcategory:
+      - "audit"
+    likelihood: "LOW"
+    impact: "HIGH"
+    confidence: "LOW"
+
+sources:
+  - id: SQL_FORMAT_PERCENT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: '\\.\\.\\.\\s*%\\.\\.\\.'
+  - id: SQL_FORMAT_FUNC
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: '.*\\.format'
+  - id: SQL_FORMAT_FSTRING
+    match:
+      node: LITERAL
+      where:
+        - op: contains
+          left: code
+          right: 'f\"'
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        method: execute
+      arg_index: 0
+
+sanitizers: []
+
+propagations:
+  - id: STRING_FORMAT_TO_SQL
+    edge: arg->param
+    kind: taint
+    where:
+      - op: in
+        left: srcNode.kind
+        right: ["SQL_FORMAT_PERCENT", "SQL_FORMAT_FUNC", "SQL_FORMAT_FSTRING"]
+      - op: eq
+        left: dstNode.id
+        right: "SQL_EXEC"
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 00:04:33
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:21,31-39)
+ERROR: getCode() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:23,12-19)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:24,14-20)
+ERROR: getText() cannot be resolved for type Exprs::Name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:27,29-36)
+ERROR: getFunc() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:27,12-19)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:28,14-20)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:30,12-20)
+ERROR: could not resolve type DataFlow::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:30,12-35)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:32,14-20)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:36,29-37)
+ERROR: getText() cannot be resolved for type Exprs::Name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:38,29-36)
+ERROR: getFunc() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:38,12-19)
+ERROR: asExpr() cannot be resolved for type TaintTracking::DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:39,12-18)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:44,30-38)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:44,30-48)
+ERROR: module DataFlow is ambiguous between: TaintTracking::DataFlow, DataFlow::DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:44,57-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:44,57-75)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:21,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:36,22-28)
+ERROR: 'pattern' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:22,42-49)
+ERROR: module TaintTracking::DataFlow from this import conflicts with module DataFlow::DataFlow from DataFlow.qll:24 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:15,1-44)
+ERROR: module DataFlow::DataFlow from this import conflicts with module TaintTracking::DataFlow from TaintTracking.qll:606 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_cbdc5e6d/python-security-queries/queries/test-rule/TestRule.ql:16,1-31)
+Rule Content:
+/**
+ * @name Formatted SQL Query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision low
+ * @id python/formatted-sql-query
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+import python
+import semmle.python.dataflow.TaintTracking
+import semmle.python.ApiGraphs
+
+class FormattedSqlConfig extends TaintTracking::Configuration {
+  FormattedSqlConfig() { this = "FormattedSqlConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(CallNode call | exists(string pattern |
+      call.getCode().regexpMatch(".*\\.\\.\\..*%.*\\.\\.\\..*") and
+      source.asExpr() = call
+    )) or
+    exists(CallNode call |
+      call.getFunc().(Name).getText() = "format" and
+      source.asExpr() = call
+    ) or
+    exists(DataFlow::StringLiteral literal |
+      literal.getStringValue().regexpMatch("f\".*") and
+      source.asExpr() = literal
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(CallNode call |
+      call.getFunc().(Name).getText() = "execute" and
+      sink.asExpr() = call.getArg(0)
+    )
+  }
+}
+
+from FormattedSqlConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Possible formatted SQL query. Use parameterized queries instead.", source,
+  "User-provided value flows into SQL query formatting."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected a term but found an expression instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:56,5-10)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:19,12-20)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:23,12-20)
+ERROR: getCode() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:28,11-18)
+ERROR: could not resolve type CallExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:36,12-20)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:43,30-58)
+WARNING: unused variable 'sanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:54,49-58)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:46,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_79ace015/python-security-queries/queries/test-rule/TestRule.ql:54,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 导入正确的模块路径：使用 `import python` 和 `import semmle.python.dataflow.TaintTracking` 替换现有的导入语句，因为 `semmle.python.dataflow.new` 路径可能不正确或被弃用
+
+2. 修正 CallExpr 的使用：将 `CallExpr` 替换为 `DataFlow::CallNode`，因为这是正确的类型名称
+
+3. 修正 StringLiteral 的处理：使用 `Expr::getStringValue()` 替代 `getCode()` 来获取字符串字面量内容
+
+4. 修改 TaintTracking 配置类：确保继承正确的基类并使用正确的语法定义配置类
+
+5. 移除未使用的方法参数：从 `isSanitizer` 方法中移除未使用的 `sanitizer` 参数
+
+6. 确保所有定义的谓词都被使用：检查并确认所有定义的谓词(`isSource`, `isSink`, `isSanitizer`)都被正确调用
+
+7. 修正字符串匹配模式：将 `matches("%f\"%")` 改为更精确的正则表达式匹配方式
+
+8. 检查 DataFlow 节点赋值语法：确保使用 `= any(CallNode call | ...)` 格式正确赋值 DataFlow 节点
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 09:50:33
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+ERROR: getCode() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:22,12-19)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:26,12-25)
+ERROR: getCode() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:30,15-22)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:39,12-25)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:40,12-23)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:55,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:55,62-80)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:20,3-18)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:23,7-13)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:27,7-13)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:31,7-13)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:37,3-19)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:40,29-35)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:52,22-33)
+Rule Content:
+/**
+ * @name Formatted SQL query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind problem
+ * @id python/formatted-sql-query
+ * @problem.severity warning
+ * @security-severity 8.0
+ * @precision low
+ * @tags security
+ *       external/cwe/cwe-089
+ *       owasp-a01
+ *       owasp-a03
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SqlFormatSource extends DataFlow::Node {
+  SqlFormatSource() {
+    exists(Call call |
+      call.getCode().regexpMatch("\\.\\.\\.\\s*%\\.\\.\\.") and
+      result.asExpr() = call
+    ) or
+    exists(Call call |
+      call.getMethodName().regexpMatch(".*\\.format") and
+      result.asExpr() = call
+    ) or
+    exists(StringLiteral literal |
+      literal.getCode().matches("%f\"%") and
+      result.asExpr() = literal
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Call call |
+      call.getMethodName() = "execute" and
+      call.getArgument(0) = result.asExpr()
+    )
+  }
+}
+
+class SQLInjectionTaintConfig extends TaintTracking::Configuration {
+  SQLInjectionTaintConfig() { this = "SQLInjectionTaintConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SqlFormatSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlExecutionSink }
+
+  override predicate isSanitizer(DataFlow::Node node) { none() }
+}
+
+from SQLInjectionTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(),
+  "Detected possible formatted SQL query. Use parameterized queries instead.",
+  source.getNode(), "User input flows to SQL query here"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: formatted-sql-query
+  kind: taint
+  severity: WARNING
+  message: "Detected possible formatted SQL query. Use parameterized queries instead."
+  metadata:
+    language: python
+    category: security
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    references:
+      - "https://stackoverflow.com/questions/775296/mysql-parameterized-queries"
+    technology:
+      - "python"
+    subcategory:
+      - "audit"
+    likelihood: "LOW"
+    impact: "HIGH"
+    confidence: "LOW"
+
+sources:
+  - id: SQL_FORMAT_PERCENT
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: code
+          right: '\\.\\.\\.\\s*%\\.\\.\\.'
+  - id: SQL_FORMAT_FUNC
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: methodFullName
+          right: '.*\\.format'
+  - id: SQL_FORMAT_FSTRING
+    match:
+      node: LITERAL
+      where:
+        - op: contains
+          left: code
+          right: 'f\"'
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        method: execute
+      arg_index: 0
+
+sanitizers: []
+
+propagations:
+  - id: STRING_FORMAT_TO_SQL
+    edge: arg->param
+    kind: taint
+    where:
+      - op: in
+        left: srcNode.kind
+        right: ["SQL_FORMAT_PERCENT", "SQL_FORMAT_FUNC", "SQL_FORMAT_FSTRING"]
+      - op: eq
+        left: dstNode.id
+        right: "SQL_EXEC"
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 09:51:59
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getArg() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:22,19-25)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:25,29-42)
+ERROR: getArg() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:26,19-25)
+ERROR: could not resolve predicate stringLiteral/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:30,14-37)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:37,29-42)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:55,38-56)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:55,65-83)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::TaintSource.isSourceOf(TaintKind kind) (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::TaintSink.sinks(TaintKind taint) (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:35,7-23)
+ERROR: SqlExecutionSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:38,12-13)
+Rule Content:
+/**
+ * @name Formatted SQL query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind problem
+ * @id python/formatted-sql-query
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision medium
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.dataflow.DataFlow
+import semmle.python.dataflow.TaintTracking
+
+class SqlFormatSource extends TaintTracking::Source {
+  SqlFormatSource() {
+    exists(Call call | call.toString().regexpMatch("\\.\\.\\.\\s*%\\.\\.\\.") |
+      this = call.getArg()
+    )
+    or
+    exists(Call call | call.getCalleeName().toString().regexpMatch(".*\\.format") |
+      this = call.getArg()
+    )
+    or
+    exists(string val | val.regexpMatch("f\\\"") |
+      this = DataFlow::stringLiteral(val)
+    )
+  }
+}
+
+class SqlExecutionSink extends TaintTracking::Sink {
+  SqlExecutionSink() {
+    exists(Call call | call.getCalleeName() = "execute" |
+      this = call.getArg(0)
+    )
+  }
+}
+
+class FormattedSqlQueryConfig extends TaintTracking::Configuration {
+  FormattedSqlQueryConfig() { this = "FormattedSqlQueryConfig" }
+
+  override predicate isSource(TaintTracking::Source source) {
+    source instanceof SqlFormatSource
+  }
+
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof SqlExecutionSink
+  }
+}
+
+from FormattedSqlQueryConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Possible formatted SQL query. Use parameterized queries instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:17,8-27)
+ERROR: getCode() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:22,12-19)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:26,12-25)
+ERROR: getCode() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:30,15-22)
+ERROR: getMethodName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:39,12-25)
+ERROR: getArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:40,12-23)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:55,35-53)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:55,62-80)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:20,3-18)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:23,7-13)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:27,7-13)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:31,7-13)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asCfgNode() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getLocation() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getBasicBlock() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.toString() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.getScope() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::DataFlow::Node.asVariable() (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:36,7-23)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:37,3-19)
+ERROR: 'result' cannot be used in this context (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:40,29-35)
+ERROR: predicate 'isSource' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSource (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+ERROR: predicate 'isSink' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::TaintSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:50,22-28)
+ERROR: predicate 'isSanitizer' has relational type TaintTracking::DataFlow::Node at position 0, not matching the overridden predicate's TaintTracking::Sanitizer (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a6467930/python-security-queries/queries/test-rule/TestRule.ql:52,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 导入路径修正：
+   - 将 `import DataFlow::PathGraph` 改为正确的导入语句 `import semmle.python.dataflow.DataFlow`
+   - 确保所有相关模块都已正确导入
+
+2. 方法调用修正：
+   - 将 `getCode()` 方法改为 `toString()` 方法用于获取代码字符串
+   - 将 `getMethodName()` 方法改为 `getCalleeName().toString()`
+   - 将 `getArgument(0)` 改为 `getArg(0)`
+
+3. 类继承修正：
+   - 将 `SqlFormatSource` 和 `SqlExecutionSink` 继承自 `TaintTracking::Source` 和 `TaintTracking::Sink` 而非 `DataFlow::Node`
+   - 移除所有抽象方法实现的需求
+
+4. 结果绑定修正：
+   - 将 `result.asExpr()` 改为直接绑定到 `this` 或者使用正确的绑定语法
+
+5. 配置类修正：
+   - 确保 `isSource`、`isSink` 和 `isSanitizer` 方法的参数类型与基类定义一致
+   - 将参数类型改为 `TaintTracking::Source` 和 `TaintTracking::Sink`
+
+6. 路径节点修正：
+   - 将 `DataFlow::PathNode` 改为 `DataFlow::PathNode` 的正确用法或使用正确的类型
+
+7. 特性谓词修正：
+   - 在特征谓词中添加 `this = ...` 绑定
+   - 修复所有未绑定的 `result` 用法
+
+8. 字符串匹配修正：
+   - 将 `.matches("%f`\"%")` 改为正确的正则表达式语法 `regexpMatch("f\\\"")`
+
+9. 类型系统修正：
+   - 确保所有类型转换和方法调用都符合CodeQL的Python库规范
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 09:53:14
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:5,39-53)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:9,11-20)
+ERROR: getAnArgument() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:10,11-24)
+ERROR: asExpr() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:12,12-18)
+ERROR: could not resolve module DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:16,14-34)
+ERROR: asExpr() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:19,14-20)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:29,40-54)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:32,9-18)
+ERROR: asExpr() cannot be resolved for type SqlExecutionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:33,12-18)
+ERROR: getAnArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:33,25-38)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:42,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:54,36-54)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:54,63-81)
+WARNING: unused method 'isSourceOf' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:24,22-32)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:37,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+Rule Content:
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.dataflow.new.TaintTracking
+
+private class SqlFormatSource extends DataFlow::Node::Source {
+  SqlFormatSource() {
+    exists(Call c |
+      (
+        c.getCallee().toString().regexpMatch(".*\\.format") or
+        c.getAnArgument().regexpMatch("\\%\\.\\.\\.")
+      ) and
+      this.asExpr() = c
+    )
+    or
+    (
+      exists(DataFlow::BasicBlock::Expr e |
+        e instanceof StringLiteral and
+        e.toString().matches("%f\"%") and
+        this.asExpr() = e
+      )
+    )
+  }
+
+  override predicate isSourceOf(DataFlow::Node node) {
+    this = node
+  }
+}
+
+private class SqlExecutionSink extends DataFlow::Node::Sink {
+  SqlExecutionSink() {
+    exists(Call c |
+      c.getCallee().toString() = "execute" and
+      this.asExpr() = c.getAnArgument(0)
+    )
+  }
+
+  override predicate isSink(DataFlow::Node node) {
+    this = node
+  }
+}
+
+class SqlTaintConfiguration extends TaintTracking::Configuration {
+  SqlTaintConfiguration() { this = "SqlTaintConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+}
+
+from SqlTaintConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Detected possible formatted SQL query. Use parameterized queries instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getArg() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:22,19-25)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:25,29-42)
+ERROR: getArg() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:26,19-25)
+ERROR: could not resolve predicate stringLiteral/1 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:30,14-37)
+ERROR: getCalleeName() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:37,29-42)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:55,38-56)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:55,65-83)
+ERROR: SqlFormatSource must implement abstract predicate TaintTracking::TaintSource.isSourceOf(TaintKind kind) (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:19,7-22)
+ERROR: SqlExecutionSink must implement abstract predicate TaintTracking::TaintSink.sinks(TaintKind taint) (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:35,7-23)
+ERROR: SqlExecutionSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a36861ef/python-security-queries/queries/test-rule/TestRule.ql:38,12-13)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. Source/Sink类需要继承自正确的基类：SqlFormatSource应extends DataFlow::Node::Source，SqlExecutionSink应extends DataFlow::Node::Sink
+
+2. 修改Call方法调用：
+   - 将getArg()改为getAnArgument()
+   - 将getCalleeName()改为getCallee().toString()
+   - 将DataFlow::stringLiteral(val)改为DataFlow::stringNode(val)
+
+3. 实现必须的抽象方法：
+   - 在SqlFormatSource中添加override predicate isSourceOf(DataFlow::Node node)
+   - 在SqlExecutionSink中添加override predicate isSink(DataFlow::Node node)
+
+4. 修正Configuration类：
+   - 确保Configuration扩展自TaintTracking::Configuration
+   - 修改isSource/isSink谓词以接受DataFlow::Node参数
+
+5. 修正查询部分：
+   - 将DataFlow::PathNode改为DataFlow::PathNode
+   - 确保正确导入数据流相关模块
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 09:54:42
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:24,9-17)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:33,19-26)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:39,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:51,33-51)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:51,60-78)
+ERROR: could not resolve variable c (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:21,18-19)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:23,12-15)
+ERROR: test is always false, as SqlFormatSource is incompatible with the expression type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:43,32-47)
+ERROR: test is always false, as SqlExecutionSink is incompatible with the expression type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:47,30-46)
+ERROR: SqlFormatSource.extends is incompatible with Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:25,12-13)
+ERROR: SqlExecutionSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:34,12-13)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:42,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:46,22-28)
+Rule Content:
+/**
+ * @name Formatted SQL query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id python/security/formatted-sql-query
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.dataflow.new.TaintTracking
+
+class SqlFormatSource extends DataFlow::ExprNode {
+  SqlFormatSource() {
+    exists(Call c |
+      c.getFunc().toString().regexpMatch(".*\\.format") or
+      c.toString().regexpMatch("\\.\\.\\.\\s*%\\.\\.\\.")
+    ) and this = c
+    or
+    exists(Str s |
+      s.getValue().regexpMatch("f\"") and
+      this = s
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::ExprNode {
+  SqlExecutionSink() {
+    exists(Call c |
+      c.getFunc().getName() = "execute" and
+      this = c.getArg(0)
+    )
+  }
+}
+
+class SqlTaintConfiguration extends TaintTracking::Configuration {
+  SqlTaintConfiguration() { this = "SqlTaintConfiguration" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof SqlFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof SqlExecutionSink
+  }
+}
+
+from SqlTaintConfiguration cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Detected possible formatted SQL query. Use parameterized queries instead.", 
+  source, "This formatted string flows here"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:5,39-53)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:9,11-20)
+ERROR: getAnArgument() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:10,11-24)
+ERROR: asExpr() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:12,12-18)
+ERROR: could not resolve module DataFlow::BasicBlock (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:16,14-34)
+ERROR: asExpr() cannot be resolved for type SqlFormatSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:19,14-20)
+ERROR: could not resolve module DataFlow::Node (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:29,40-54)
+ERROR: getCallee() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:32,9-18)
+ERROR: asExpr() cannot be resolved for type SqlExecutionSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:33,12-18)
+ERROR: getAnArgument(int) cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:33,25-38)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:42,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:54,36-54)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:54,63-81)
+WARNING: unused method 'isSourceOf' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:24,22-32)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:37,22-28)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_e1413ced/python-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正模块导入路径错误：
+   - 将 `import semmle.python.dataflow.new.DataFlow` 改为 `import python.DataFlow`
+   - 将 `import semmle.python.dataflow.new.TaintTracking` 改为 `import python.TaintTracking`
+
+2. 修正方法调用错误：
+   - 将 `c.getCallee()` 改为 `c.getFunc()`
+   - 将 `c.getAnArgument()` 改为 `c.getArg()`
+   - 将 `c.getAnArgument(0)` 改为 `c.getArg(0)`
+   - 将 `this.asExpr()` 改为 `this.asExpr()` 保留不变（实际上CodeQL不需要这个调用）
+
+3. 修正类型引用错误：
+   - 将 `DataFlow::BasicBlock::Expr` 改为 `Expr`
+   - 将 `DataFlow::Node::Source` 改为 `DataFlow::Source`
+   - 将 `DataFlow::Node::Sink` 改为 `DataFlow::Sink`
+   - 将 `TaintTracking::Configuration` 改为 `TaintTracking::Configuration`
+
+4. 移除未使用的方法：
+   - 删除 `isSourceOf` 方法
+   - 删除 `isSink` 方法
+
+5. 修正字符串匹配逻辑：
+   - 将 `e.toString().matches("%f\"%")` 改为 `e.getValue().regexpMatch("f\"")`
+
+6. 更新配置类：
+   - 确保 `SqlTaintConfiguration` 正确继承 `TaintTracking::Configuration`
+   - 保留 `isSource` 和 `isSink` 方法（之前误标记为未使用）
+
+7. 修正数据类型：
+   - 将 `DataFlow::PathNode` 改为 `DataFlow::PathNode`
+
+8. 更新查询主体：
+   - 保证 `select` 语句的格式正确
+   - 确保使用了正确的路径节点类型
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 09:56:07
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getText() cannot be resolved for type Exprs::Call (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:20,12-19)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:45,39-67)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:57,38-56)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:57,65-83)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_ce009e56/python-security-queries/queries/test-rule/TestRule.ql:52,22-28)
+Rule Content:
+/**
+ * @name Formatted SQL query
+ * @description Detected possible formatted SQL query. Use parameterized queries instead.
+ * @kind problem
+ * @id python/security/formatted-sql-query
+ * @problem.severity warning
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.dataflow.new.TaintTracking
+
+class SqlFormatSource extends DataFlow::Node {
+  SqlFormatSource() {
+    exists(Call call |
+      call.getText().matches("%\\.\\.\\.\\s*%\\.\\.\\.%") and
+      this.asExpr() = call
+    )
+    or
+    exists(Call call |
+      call.getFunc().(Name).getId().matches("%\\.format%") and
+      this.asExpr() = call
+    )
+    or
+    exists(StringLiteral lit |
+      lit.getText().matches("%f\\\"%") and
+      this.asExpr() = lit
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(Call call |
+      call.getFunc().(Name).getId() = "execute" and
+      this.asExpr() = call.getArg(0)
+    )
+  }
+}
+
+class FormattedSqlQueryConfig extends TaintTracking::Configuration {
+  FormattedSqlQueryConfig() { this = "FormattedSqlQueryConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SqlFormatSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SqlExecutionSink
+  }
+}
+
+from FormattedSqlQueryConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink, "Potential SQL injection via formatted string. Use parameterized queries instead.", source,
+  "User input flows into SQL query here"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:24,9-17)
+ERROR: getName() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:33,19-26)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:39,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:51,33-51)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:51,60-78)
+ERROR: could not resolve variable c (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:21,18-19)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:23,12-15)
+ERROR: test is always false, as SqlFormatSource is incompatible with the expression type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:43,32-47)
+ERROR: test is always false, as SqlExecutionSink is incompatible with the expression type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:47,30-46)
+ERROR: SqlFormatSource.extends is incompatible with Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:25,12-13)
+ERROR: SqlExecutionSink.extends is incompatible with Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:34,12-13)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:42,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc51256b/python-security-queries/queries/test-rule/TestRule.ql:46,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正StringLiteral的value访问方式：将`getValue()`改为`getText()`方法获取字符串内容
+2. 修正函数名获取方式：将`getName()`改为`(c.getFunc().(Name).getId())`来获取函数名
+3. 更新TaintTracking配置类的导入方式：使用`import semmle.python.Security.TaintTracking`替代旧的导入路径
+4. 修正PathNode的类型问题：确保导入路径为`import semmle.python.dataflow.new.PathGraph`并修改为正确的路径节点类型
+5. 修正变量作用域问题：将`exists(Call c | ...)`重构为非嵌套的调用结构
+6. 替换弃用的Str类型：使用`StringLiteral`替代`Str`类型
+7. 修正源和接收器的继承关系：确保SqlFormatSource和SqlExecutionSink直接继承自`DataFlow::Node`而非`DataFlow::ExprNode`
+8. 更新类型检查方式：使用`source instanceof SqlFormatSource`和`sink instanceof SqlExecutionSink`的强制类型转换语法
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

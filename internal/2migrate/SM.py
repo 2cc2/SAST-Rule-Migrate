@@ -13,6 +13,7 @@ from runnable_valid.codeql import validate_codeql_rule
 
 lock = threading.Lock()  # 控制台输出锁，防止多线程日志混乱
 
+Language = "Java"
 
 def thread_print(msg: str):
     """线程安全打印"""
@@ -67,7 +68,7 @@ def get_all_yaml_files(directory):
     return yaml_files
 
 
-def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 20):
+def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Codeql", max_retries: int = 5):
     llm = LLM(
         system_prompt="You are a skilled vulnerability detection rule designer.",
         model="deepseek-v3",
@@ -83,9 +84,11 @@ def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Co
     log_file = os.path.join(log_dir, f"{input_filename}.log")
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
-    prompt = MigratePrompt().format(IR=IR_contet, language="python", target_SAST=sast)
+    prompt = MigratePrompt().format(IR=IR_contet, language=Language, target_SAST=sast)
     for attempt in range(1, max_retries + 1):
         thread_print(f"🔁 第 {attempt} 次尝试生成规则...")
+        thread_print(f"prompt{prompt}")
+        print("="*40)
         response = llm.Transform(prompt=prompt, max_tokens=3000)
         thread_print(response)
         rule_content = get_rule_from_llm(response)
@@ -115,9 +118,9 @@ def migrate_rule(input_file: str, output_dir: str, log_dir: str, sast: str = "Co
             log.write(f"{'=' * 80}\n")
 
             # 生成修复建议
-            prompt = AbstractPrompt().format(code=rule_content, error=result['error'], language="python", sast=sast)
+            prompt = AbstractPrompt().format(code=rule_content, error=result['error'], language=Language, sast=sast)
             advise = llm.Transform(prompt=prompt, max_tokens=3000)
-            prompt = RepairPrompt().format(code=rule_content, language="python", error=result['error'], sast=sast, advise=advise)
+            prompt = RepairPrompt().format(code=rule_content, language=Language, error=result['error'], sast=sast, advise=advise)
             time.sleep(2)
 
     thread_print("🚫 多次尝试仍未成功，请人工干预。")
@@ -129,7 +132,7 @@ def process_multiple_files(directory: str, output_dir: str, log_dir: str, max_wo
     print(f"[📂] 输出目录已有 {len(output_files)} 个文件")
 
     yaml_files = get_all_yaml_files(directory)
-    yaml_files = yaml_files[:1]
+    # yaml_files = yaml_files[:1]
     print(f"[📄] 待迁移 YAML 文件数: {len(yaml_files)}")
 
     existing = [os.path.splitext(f)[0].split('_')[0] for f in os.listdir(output_dir)]
@@ -154,15 +157,15 @@ def process_multiple_files(directory: str, output_dir: str, log_dir: str, max_wo
 
 
 if __name__ == "__main__":
-    input_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/IrBase/PyIR"
-    output_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/output/Semgrep2/CodeQL/Py"
-    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/codeql"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/IrBase/JavaIR"
+    output_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/output/Semgrep2/CodeQL/JAVA2"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/codeqlJAVAlog2"
 
     for d in [input_directory,output_directory, log_directory]:
         os.makedirs(d, exist_ok=True)
 
     start = datetime.now()
-    process_multiple_files(input_directory, output_directory, log_directory, max_workers=1)
+    process_multiple_files(input_directory, output_directory, log_directory, max_workers=20)
     end = datetime.now()
 
     print(f"\n✅ 全部任务完成，总耗时: {end - start}")

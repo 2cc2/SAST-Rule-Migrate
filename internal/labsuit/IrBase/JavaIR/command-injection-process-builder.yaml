@@ -1,0 +1,96 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "command-injection-process-builder"
+  kind: taint
+  severity: ERROR
+  message: "A formatted or concatenated string was detected as input to a ProcessBuilder call. This is dangerous if a variable is controlled by user input and could result in a command injection. Ensure your variables are not controlled by users or sufficiently sanitized."
+  metadata:
+    language: "java"
+    category: "security"
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    owasp: "A01:2017 - Injection, A03:2021 - Injection"
+
+sources:
+  - id: PROCESS_BUILDER_CMD
+    match:
+      node: CALL
+      api:
+        type: "java.lang.ProcessBuilder"
+        method: "command"
+      arg_index: 0
+    where:
+      - op: regex
+        left: arg[0].value
+        right: "^=~/(sh|bash|ksh|csh|tcsh|zsh)/|^cmd$"
+
+  - id: PROCESS_BUILDER_INIT
+    match:
+      node: CALL
+      api:
+        type: "java.lang.ProcessBuilder"
+        method: "<init>"
+      arg_index: 0
+    where:
+      - op: regex
+        left: arg[0].value
+        right: "^=~/(sh|bash|ksh|csh|tcsh|zsh)/|^cmd$"
+
+sinks:
+  - id: PROCESS_BUILDER_COMMAND_EXEC
+    match:
+      node: CALL
+      api:
+        type: "java.lang.ProcessBuilder"
+        method: "command"
+      arg_index: any
+    where:
+      - op: neq
+        left: arg[0].value
+        right: "..."
+
+  - id: PROCESS_BUILDER_CONSTRUCTOR_EXEC
+    match:
+      node: CALL
+      api:
+        type: "java.lang.ProcessBuilder"
+        method: "<init>"
+      arg_index: any
+    where:
+      - op: neq
+        left: arg[0].value
+        right: "..."
+
+sanitizers:
+  - id: STRING_LITERAL
+    match:
+      node: LITERAL
+      where:
+        - op: eq
+          left: kind
+          right: "string"
+
+  - id: ARRAY_INIT
+    match:
+      node: CALL
+      api:
+        type: "java.util.Arrays"
+        method: "asList"
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "..."
+
+  - id: STRING_ARRAY
+    match:
+      node: EXPR
+      where:
+        - op: eq
+          left: code
+          right: "new String[]{...}"
+
+propagations:
+  - id: ARG_TO_PROCESS_BUILDER
+    edge: arg->param
+    kind: taint
+```

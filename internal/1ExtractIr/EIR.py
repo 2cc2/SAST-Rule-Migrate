@@ -185,9 +185,9 @@ def process_multiple_files(directory: str, IR_dir: str, log_dir: str, max_worker
 
 
 if __name__ == "__main__":
-    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/python_classified_rules/"
-    IR_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/IrBase/PyIR"
-    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/PYIR"
+    input_directory = "/home/cbb/SAST-Rule-Migrate/input/semgrep/java_classified_rules/"
+    IR_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/IrBase/JavaIR"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/JavaIR"
 
     for d in [input_directory, IR_directory,log_directory]:
         os.makedirs(d, exist_ok=True)

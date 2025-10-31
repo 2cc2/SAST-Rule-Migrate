@@ -1,0 +1,514 @@
+Timestamp: 2025-10-31 10:25:21
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:15,8-12)
+ERROR: could not resolve module Regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:16,8-13)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:18,6-13)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:21,3-15)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:23,3-15)
+Rule Content:
+/**
+ * @name Use JSTL escaping
+ * @description Detected an Expression Language segment in a tag that does not escape
+ *     output. This is dangerous because if any data in this expression
+ *     can be controlled externally, it is a cross-site scripting
+ *     vulnerability. Instead, use the 'out' tag from the JSTL taglib
+ *     to escape this expression.
+ * @kind problem
+ * @problem.severity warning
+ * @id security/jsp/use-jstl-escaping
+ * @tags security
+ *   jsp
+ */
+   
+import java
+import Regex
+
+from Literal lit
+where 
+  // Source pattern: matches unsafe JSP expressions not using JSTL out tag
+  regexMatches("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>", lit.getValue().toString()) and
+  // Sink pattern: matches any Expression Language segment
+  regexMatches("\\$\\{.*?\\}", lit.getValue().toString())
+select lit, 
+  "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled externally, " +
+  "it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the JSTL " +
+  "taglib to escape this expression."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-jstl-escaping"
+  kind: pattern
+  severity: WARNING
+  message: >-
+    Detected an Expression Language segment in a tag that does not escape
+    output. This is dangerous because if any data in this expression
+    can be controlled externally, it is a cross-site scripting
+    vulnerability. Instead, use the 'out' tag from the JSTL taglib
+    to escape this expression.
+    See https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm
+    for more information.
+  metadata:
+    language: regex
+    category: security
+    tags:
+      - jsp
+    references:
+      - https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm
+      - https://stackoverflow.com/a/4948856
+      - https://stackoverflow.com/a/3180202
+
+sources:
+  - id: UNSAFE_EXPRESSION
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "<(?![A-Za-z0-9]+:out).*?\$\{.*?\}.*>"
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: "\$\{.*?\}"
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:26:29
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:13,32-39)
+ERROR: unexpected input 'where' expecting one of: '::' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:14,1-6)
+ERROR: could not resolve module semmle.python.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:11,8-29)
+ERROR: could not resolve type  (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:13,32-39)
+ERROR: could not resolve predicate matches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:16,3-10)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:16,22-30)
+ERROR: could not resolve predicate matches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:18,3-10)
+ERROR: could not resolve variable xssSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:18,11-18)
+Rule Content:
+/**
+ * @name Use JSTL escaping
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ * @kind problem
+ * @id use-jstl-escaping
+ * @security-severity 8.0
+ * @tags security
+ *       jsp
+ */
+import python
+import semmle.python.Strings
+
+from StringLiteral unsafeExpr, xssSink
+where 
+  // Source: Unsafe Expression
+  matches(unsafeExpr.getValue(), "<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>") and
+  // Sink: XSS Sink
+  matches(xssSink.getValue(), "\\$\\{.*?\\}")
+select unsafeExpr, 
+  "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled " +
+  "externally, it is a cross-site scripting vulnerability. Instead, use the " +
+  "'out' tag from the JSTL taglib to escape this expression. " +
+  "See https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm " +
+  "for more information."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:15,8-12)
+ERROR: could not resolve module Regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:16,8-13)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:18,6-13)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:21,3-15)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_572a7345/python-security-queries/queries/test-rule/TestRule.ql:23,3-15)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改import语句：由于这是Python规则，应该使用python而不是java的import。将`import java`改为`import python`
+2. 移除不必要的Regex模块导入：CodeQL的标准库已经包含了正则表达式支持，不需要单独导入Regex模块
+3. 修正节点类型：Python中的字面量节点不是Literal，应该使用python模块提供的StringLiteral等具体类型
+4. 替换正则匹配函数：Python中应该使用`matches`谓词而不是`regexMatches`函数
+5. 调整节点值访问方法：Python字符串字面量的值访问可能需要使用`getText()`或`getValue()`等方法
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:27:37
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:18,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:19,8-32)
+ERROR: could not resolve type StringLiteralExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:21,6-23)
+ERROR: could not resolve type StringLiteralExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:21,36-53)
+Rule Content:
+/**
+ * @name Use JSTL Output Escaping
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ *              This is dangerous because if any data in this expression can be controlled
+ *              externally, it is a cross-site scripting vulnerability.
+ * @id use-jstl-escaping
+ * @kind problem
+ * @severity warning
+ * @security-severity 8.0
+ * @precision high
+ * @tags security
+ *       jsp
+ * @reference https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm
+ * @reference https://stackoverflow.com/a/4948856
+ * @reference https://stackoverflow.com/a/3180202
+ */
+
+import java
+import semmle.code.java.Strings
+
+from StringLiteralExpr unsafeExpr, StringLiteralExpr xssSink
+where 
+  // Match unsafe expressions (not using jstl:out)
+  unsafeExpr.getLiteral().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>") and
+  // Match potential XSS sinks (expression language)
+  xssSink.getLiteral().regexpMatch("\\$\\{.*?\\}") and
+  // Flow from unsafe expression to XSS sink
+  unsafeExpr = xssSink
+select unsafeExpr, 
+  "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled " +
+  "externally, it is a cross-site scripting vulnerability. Instead, use the 'out' " +
+  "tag from the JSTL taglib to escape this expression."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not parse type name (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:13,32-39)
+ERROR: unexpected input 'where' expecting one of: '::' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:14,1-6)
+ERROR: could not resolve module semmle.python.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:11,8-29)
+ERROR: could not resolve type  (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:13,32-39)
+ERROR: could not resolve predicate matches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:16,3-10)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:16,22-30)
+ERROR: could not resolve predicate matches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:18,3-10)
+ERROR: could not resolve variable xssSink (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_663d4a6e/python-security-queries/queries/test-rule/TestRule.ql:18,11-18)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 语言修正：将导入的Python模块改为Java模块，因为规则是针对JSP/JSTL的，应该使用Java语法而不是Python语法。
+
+2. 导入修正：替换错误的导入语句 `import python` 和 `import semmle.python.Strings`，改为导入正确的Java相关模块，如 `import java` 和 `import semmle.code.java.Strings`。
+
+3. 类型修正：将 `StringLiteral` 改为Java中正确的字符串字面量类型 `StringLiteralExpr`，因为它是Java AST中的标准类型。
+
+4. 语法修正：调整where子句的格式，确保符合CodeQL Java查询语法规范，变量声明和约束条件之间使用正确的分隔符。
+
+5. 方法修正：将 `getValue()` 方法改为Java AST中正确的方法名 `getLiteral()` 或 `getValueExpr()`，具体取决于使用的CodeQL Java库版本。
+
+6. 变量修正：确保所有变量在使用前都已正确定义，特别是 `xssSink` 变量需要在查询中声明。
+
+7. 正则匹配修复：验证正则表达式语法在Java环境下是否仍然有效，可能需要调整转义字符。
+
+8. 查询结构修正：确保整个查询结构符合CodeQL Java查询的标准格式，包括正确的导入、变量声明和结果选择部分。
+
+9. 元数据修正：验证所有元数据注释（@name,@description等）是否符合CodeQL Java查询的规范要求。
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:28:46
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql:15,8-29)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql:17,6-9)
+Rule Content:
+/**
+ * @id use-jstl-escaping
+ * @severity WARNING
+ * @description Detected an Expression Language segment in a tag that does not escape
+ *    output. This is dangerous because if any data in this expression
+ *    can be controlled externally, it is a cross-site scripting
+ *    vulnerability. Instead, use the 'out' tag from the JSTL taglib
+ *    to escape this expression.
+ *    See https://www.tutorialspoint.com/jsp/jstl_core_out_tag.htm
+ *    for more information.
+ * @tags security, jsp
+ */
+
+import python
+import semmle.python.Strings
+
+from Str s
+where 
+  s.getText().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>") and
+  s.getText().regexpMatch("\\$\\{.*?\\}")
+select s, 
+  "Detected an unsafe Expression Language segment without output escaping. Use JSTL out tag instead.",
+  s.getLocation()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:18,8-12)
+ERROR: could not resolve module semmle.code.java.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:19,8-32)
+ERROR: could not resolve type StringLiteralExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:21,6-23)
+ERROR: could not resolve type StringLiteralExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_33d9a635/python-security-queries/queries/test-rule/TestRule.ql:21,36-53)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 替换导入模块：由于错误显示无法解析Java模块，应该将规则改为针对Python语言，因此需要替换`import java`和`import semmle.code.java.Strings`为Python相关的导入语句，如`import python`和`import semmle.python.Strings`。
+
+2. 修改类型声明：将Java特有的`StringLiteralExpr`类型改为Python中对应的字符串字面量类型，如`Str`或`StringLiteral`（具体取决于CodeQL for Python的API）。
+
+3. 调整正则表达式语法：确保Python版本的正则表达式语法与Java版本兼容，可能需要转义字符的调整。
+
+4. 更新查询结构：Python的CodeQL查询结构可能与Java不同，需要按Python语言的CodeQL规范重构整个查询。
+
+5. 验证类型方法调用：检查`.getLiteral()`和`.regexpMatch()`方法在Python的CodeQL实现中是否存在，必要时替换为等价的方法调用。
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:29:48
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:12,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:13,8-47)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:15,30-34)
+ERROR: could not resolve type CompileTimeConstantExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:16,10-33)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:22,21-25)
+ERROR: could not resolve type CompileTimeConstantExpr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:23,10-33)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:29,6-10)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f8c7996c/python-security-queries/queries/test-rule/TestRule.ql:29,23-27)
+Rule Content:
+/** 
+ * @name Use JSTL escaping
+ * @description Detected an Expression Language segment in a tag that does not escape output.
+ * @id use-jstl-escaping
+ * @kind problem
+ * @security-severity 8.8
+ * @tags security
+ *       jsp
+ * @problem.severity warning
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+predicate isUnsafeExpression(Expr expr) {
+  exists(CompileTimeConstantExpr cte |
+    cte = expr and
+    cte.getStringValue().regexpMatch("<(?![A-Za-z0-9]+:out).*?\\$\\{.*?\\}.*>")
+  )
+}
+
+predicate isXSSSink(Expr expr) {
+  exists(CompileTimeConstantExpr cte |
+    cte = expr and
+    cte.getStringValue().regexpMatch("\\$\\{.*?\\}")
+  )
+}
+
+from Expr unsafeExpr, Expr xssSink
+where isUnsafeExpression(unsafeExpr) and isXSSSink(xssSink)
+select xssSink, "Detected an Expression Language segment in a tag that does not escape output. " +
+  "This is dangerous because if any data in this expression can be controlled externally, " +
+  "it is a cross-site scripting vulnerability. Instead, use the 'out' tag from the JSTL " +
+  "taglib to escape this expression."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.Strings (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql:15,8-29)
+WARNING: type 'Str' has been deprecated and may be removed in future (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_42c0f32e/python-security-queries/queries/test-rule/TestRule.ql:17,6-9)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改导入语句：将`import semmle.python.Strings`替换为正确的Python标准库导入，应该使用`import python`已经足够处理字符串操作
+2. 替换过时的类型：将`Str`类型替换为CodeQL Python标准库中的字符串类型`string`，因为`Str`已经被标记为过时
+3. 更新字符串操作方法：使用`string`类型提供的标准方法代替可能的过时方法
+4. 保持正则表达式逻辑不变，但确保语法符合CodeQL Python标准库的要求
+5. 验证修改后的规则是否能够正确匹配JSP中的不安全表达式模式
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

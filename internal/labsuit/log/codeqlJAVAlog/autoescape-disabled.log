@@ -1,0 +1,416 @@
+Timestamp: 2025-10-31 10:30:50
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:13,6-13)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:14,7-19)
+Rule Content:
+/** 
+ * @name autoescape-disabled
+ * @description Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/autoescape-disabled
+ * @tags security
+ *       external/cwe/cwe-150
+ *       external/owasp/a07:2017
+ */
+import java
+
+from Literal l
+where regexMatches(".*escape.*?=.*?false.*", l.getValue().toString())
+select l, "Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "autoescape-disabled"
+  kind: pattern
+  severity: WARNING
+  message: "Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element."
+  metadata:
+    language: regex
+    category: security
+    owasp: "A07:2017 - Cross-Site Scripting (XSS)"
+    cwe: "CWE-150: Improper Neutralization of Escape, Meta, or Control Sequences"
+    likelihood: LOW
+    impact: MEDIUM
+    confidence: LOW
+
+sources:
+  - id: HTML_ESCAPE_DISABLED
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: ".*escape.*?=.*?false.*"
+
+sinks:
+  - id: XSS_SINK
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: ".*escape.*?=.*?false.*"
+
+sanitizers:
+  - id: REMOVE_ESCAPE_FALSE
+    match:
+      node: LITERAL
+      where:
+        - op: regex
+          left: value
+          right: ".*escape.*?=.*?false.*"
+    effect: neutralize
+
+propagations: []
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:32:03
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_06554603/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_06554603/python-security-queries/queries/test-rule/TestRule.ql:16,9-17)
+Rule Content:
+/**
+ * @name autoescape-disabled
+ * @description Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element.
+ * @kind problem
+ * @problem.severity warning
+ * @precision low
+ * @id python/autoescape-disabled
+ * @tags security
+ *       owasp:a7
+ *       cwe:150
+ */
+
+import python
+
+from StringLiteral l
+where l.getValue().matches(".*escape.*?=.*?false.*")
+select l, "Detected an element with disabled HTML escaping. This could lead to XSS vulnerabilities."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:13,6-13)
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_4feac7a8/python-security-queries/queries/test-rule/TestRule.ql:14,7-19)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改导入语句：由于报错显示无法解析java模块，说明这是一个Python规则而非Java规则。应该将`import java`改为`import python`，因为我们要检测的是Python代码中的模板字符串。
+
+2. 替换Literal类型：Python中不存在Literal节点类型，应该使用StringLiteral来匹配字符串字面量。将`from Literal l`改为`from StringLiteral l`。
+
+3. 更换正则匹配方法：CodeQL Python中regexMatches并非标准谓词，应该使用matches方法来进行正则匹配。将`regexMatches(".*escape.*?=.*?false.*", l.getValue().toString())`改为`l.getValue().matches(".*escape.*?=.*?false.*")`。
+
+4. 更新元数据标签：将Java相关的安全标签调整为Python相关的标签，例如将`java/autoescape-disabled`改为`python/autoescape-disabled`。
+
+5. 确保获取字符串值的方式正确：在Python中，StringLiteral节点的值可以直接通过getValue()获取，不需要额外的toString()转换。
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:33:09
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql:16,7-19)
+ERROR: getStringValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql:16,25-39)
+Rule Content:
+/**
+ * @name Autoescape disabled
+ * @description Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 6.5
+ * @precision low
+ * @id autoescape-disabled
+ * @tags security
+ *       external/cwe/cwe-150
+ *       owasp-a7
+ */
+import python
+
+from StringLiteral node
+where regexMatches(node.getStringValue(), ".*escape.*?=.*?false.*")
+select node, "Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_06554603/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_06554603/python-security-queries/queries/test-rule/TestRule.ql:16,9-17)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 检查Python AST中StringLiteral的正确访问方法。在CodeQL的Python库中，字符串字面量节点可能需要使用`getText()`或`getStringValue()`方法而不是`getValue()`
+
+2. 验证字符串匹配的正则表达式语法是否适用于Python字符串匹配。可能需要使用`regexMatches()`函数而不是`matches()`方法
+
+3. 确保导入的Python库路径正确，可能需要使用`import python`之外的更具体导入如`import python.django`（如果适用于Django模板）
+
+4. 更新where子句中的条件匹配表达式，使其符合CodeQL Python库的实际API
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:34:14
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.regex.Regexp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql:10,8-34)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql:13,7-18)
+Rule Content:
+/**
+ * @id autoescape-disabled
+ * @severity WARNING
+ * @message Detected an element with disabled HTML escaping. If external data can reach this, this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach here, or remove 'escape=false' from this element.
+ * @tags security
+ * @precision LOW
+ */
+
+import python
+import semmle.python.regex.Regexp
+
+from StringLiteral node
+where regexpMatch(node.getText(), ".*escape.*?=.*?false.*")
+select node, "Detected an element with disabled HTML escaping. This may be vulnerable to cross-site scripting (XSS)."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve predicate regexMatches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql:16,7-19)
+ERROR: getStringValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c73b9bfa/python-security-queries/queries/test-rule/TestRule.ql:16,25-39)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改导入语句以包含正则表达式模块：将 `import python` 改为 `import python` 并添加 `import semmle.python.regex.Regexp` 以获得正则表达式支持
+2. 更改字符串值获取方法：将 `getStringValue()` 替换为 `getText()`，因为这是 CodeQL Python 中获取字符串字面量值的正确方法
+3. 修复正则匹配调用：将 `regexMatches(node.getStringValue(), "...")` 替换为 `regexpMatch(node.getText(), "...")` 使用正确的正则匹配谓词
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:35:26
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc191f88/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.Strings.regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc191f88/python-security-queries/queries/test-rule/TestRule.ql:15,8-35)
+ERROR: could not resolve predicate matches/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc191f88/python-security-queries/queries/test-rule/TestRule.ql:18,7-14)
+ERROR: getValue() cannot be resolved for type Exprs::StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_fc191f88/python-security-queries/queries/test-rule/TestRule.ql:18,20-28)
+Rule Content:
+/**
+ * @name Autoescape Disabled
+ * @description Detected an element with disabled HTML escaping. If external data can reach this, 
+ *              this is a cross-site scripting (XSS) vulnerability. Ensure no external data can reach 
+ *              here, or remove 'escape=false' from this element.
+ * @kind problem
+ * @id python/security/autoescape-disabled
+ * @severity warning
+ * @tags security
+ *       owasp-a7
+ *       cwe-150
+ */
+
+import python
+import semmle.python.Strings.regex
+
+from StringLiteral node
+where matches(node.getValue(), ".*escape.*?=.*?false.*")
+select node, "Detected an element with disabled HTML escaping. If external data can reach here, " +
+       "this is a cross-site scripting (XSS) vulnerability."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.python.regex.Regexp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql:10,8-34)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19dc2d32/python-security-queries/queries/test-rule/TestRule.ql:13,7-18)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入错误：Codeql中正确的正则匹配模块路径应为`import semmle.python.Strings.regex`，而不是`semmle.python.regex.Regexp`
+2. 替换错误的谓词调用：将不可用的`regexpMatch`改为Codeql Python标准库中支持的字符串匹配谓词`matches`，格式为`matches(stringLiteralText, regexPattern)`
+3. 修正字符串获取方法：使用`node.getValue()`获取字符串字面量的原始值，而非`node.getText()`，因为后者可能包含引号等额外字符
+4. 确保语言类型一致：验证原始规则是针对Python语言的，保持使用`import python`并确保所有调用的API都是Python专用的
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

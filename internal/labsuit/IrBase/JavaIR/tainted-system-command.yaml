@@ -1,0 +1,105 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-system-command"
+  kind: taint
+  severity: ERROR
+  message: "Detected user input entering a method which executes a system command. This could result in a command injection vulnerability, which allows an attacker to inject an arbitrary system command onto the server. The attacker could download malware onto or steal data from the server. Instead, use ProcessBuilder, separating the command into individual arguments, like this: `new ProcessBuilder(\"ls\", \"-al\", targetDirectory)`. Further, make sure you hardcode or allowlist the actual command so that attackers can't run arbitrary commands."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - java
+      - spring
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+
+sources:
+  - id: "REQUEST_SOURCE"
+    match:
+      node: METHOD_PARAMETER_IN
+      type:
+        name: "!^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)$"
+      where:
+        - op: regex
+          left: annotation
+          right: "(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)"
+  - id: "STRING_CONCAT"
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - op: pattern
+              value: "$X + $SOURCE"
+            - op: pattern
+              value: "$SOURCE + $Y"
+            - op: pattern
+              value: "String.format(\"...\", ..., $SOURCE, ...)"
+            - op: pattern
+              value: "String.join(\"...\", ..., $SOURCE, ...)"
+            - op: pattern
+              value: "(String $STR).concat($SOURCE)"
+            - op: pattern
+              value: "$SOURCE.concat(...)"
+            - op: pattern
+              value: "$X += $SOURCE"
+            - op: pattern
+              value: "$SOURCE += $X"
+    requires: "REQUEST_SOURCE"
+
+sinks:
+  - id: "COMMAND_EXEC"
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - op: pattern
+              value: "(Process $P) = new Process(...);"
+            - op: pattern
+              value: "(ProcessBuilder $PB).command(...);"
+            - op: pattern
+              value: "(Runtime $R).exec(...);"
+            - op: pattern
+              value: "Runtime.getRuntime(...).exec(...);"
+            - op: pattern
+              value: "(Runtime $R).load(...);"
+            - op: pattern
+              value: "Runtime.getRuntime(...).load(...);"
+            - op: pattern
+              value: "(Runtime $R).loadLibrary(...);"
+            - op: pattern
+              value: "Runtime.getRuntime(...).loadLibrary(...);"
+            - op: pattern
+              value: "(ProcessBuilder $PB).command(...).add(...);"
+            - op: pattern
+              value: "(ProcessBuilder $PB).command(...).addAll(...);"
+            - op: pattern
+              value: "$BUILDER.start(...)"
+    requires: "STRING_CONCAT"
+
+sanitizers:
+  - id: "ARGUMENT_VALIDATION"
+    match:
+      node: CALL
+      where:
+        - op: pattern
+          value: "CommandValidationUtils.validateCommand(...)"
+    effect: neutralize
+    scope:
+      sinks: ["COMMAND_EXEC"]
+
+propagations:
+  - id: "STRINGBUILDER_CONCAT"
+    edge: arg->param
+    kind: taint
+    match:
+      node: CALL
+      where:
+        - op: pattern
+          value: "(StringBuilder $STRB).append($INPUT)"
+    requires: "REQUEST_SOURCE"
+```

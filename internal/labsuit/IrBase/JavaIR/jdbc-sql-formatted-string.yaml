@@ -1,0 +1,103 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: jdbc-sql-formatted-string
+  kind: taint
+  severity: WARNING
+  message: "Possible JDBC injection detected. Use the parameterized query feature available in queryForObject instead of concatenating or formatting strings: 'jdbc.queryForObject(\"select * from table where name = ?\", Integer.class, parameterName);'"
+  tags:
+    - java
+    - jdbc
+  metadata:
+    language: java
+    category: security
+
+sources:
+  - id: SQL_STRING_FORMATTING
+    match:
+      node: CALL
+      api:
+        type: java.lang.String
+        method: format
+      where:
+        - op: in
+          left: methodFullName
+          right: ["java.lang.String.format"]
+  - id: SQL_STRING_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: eq
+          left: operator
+          right: "+"
+        - op: regex
+          left: arg0.value
+          right: ".*select.*|.*update.*|.*insert.*|.*delete.*"
+  - id: SQL_STRING_BUILDER_APPEND
+    match:
+      node: CALL
+      api:
+        type: java.lang.StringBuilder
+        method: append
+      where:
+        - op: regex
+          left: arg0.value
+          right: ".*select.*|.*update.*|.*insert.*|.*delete.*"
+
+sinks:
+  - id: JDBC_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      arg_index: 0
+  - id: JDBC_QUERY_LIST
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForList
+      arg_index: 0
+  - id: JDBC_UPDATE
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: update
+      arg_index: 0
+  - id: JDBC_EXECUTE
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: execute
+      arg_index: 0
+  - id: JDBC_INSERT
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: insert
+      arg_index: 0
+
+propagations:
+  - id: STRING_TO_JDBC
+    edge: arg->param
+    kind: taint
+
+sanitizers:
+  - id: PARAMETERIZED_QUERY
+    match:
+      node: CALL
+      api:
+        type: org.springframework.jdbc.core.JdbcTemplate
+        method: queryForObject
+      where:
+        - op: regex
+          left: arg0.value
+          right: "\?"
+    effect: neutralize
+    scope:
+      sinks: [JDBC_QUERY, JDBC_QUERY_LIST, JDBC_UPDATE, JDBC_EXECUTE, JDBC_INSERT]
+```

@@ -1,0 +1,475 @@
+Timestamp: 2025-10-31 00:02:46
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:17,25-36)
+ERROR: getName() cannot be resolved for type Import::Import (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:20,11-18)
+ERROR: getAnAttribute() cannot be resolved for type SSHClient.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:21,12-26)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:26,31-42)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:29,23-29)
+ERROR: getDeclaringClass() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:30,22-39)
+ERROR: getText() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:31,26-33)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:39,23-29)
+ERROR: getDeclaringClass() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:40,22-39)
+ERROR: getText() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:41,22-29)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:49,31-42)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:53,29-40)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,44-55)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,69-80)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:62,12-18)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:27,3-18)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,3-67,4)
+ERROR: The characteristic predicate for 'TestRule::SafeExecCommandSanitizer' does not bind 'this' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:37,3-43,4)
+Rule Content:
+/**
+ * @name paramiko-exec-command
+ * @description Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead.
+ * @kind taint
+ * @id py/paramiko-exec-command
+ * @severity ERROR
+ * @tags security
+ *       paramiko
+ *       injection
+ * @problem.severity error
+ * @precision high
+ */
+
+import python
+import semmle.python.dataflow.TaintTracking
+
+class SSHClient extends Value::Flow::Source {
+  SSHClient() {
+    exists(Import imp | 
+      imp.getName() = "paramiko.client" and
+      this.getAnAttribute().getClass().getName() = "SSHClient"
+    )
+  }
+}
+
+class ExecCommandCall extends Value::Flow::Sink {
+  ExecCommandCall() {
+    exists(Call call |
+      call.getFunc().(Member).getName() = "exec_command" and
+      call.getFunc().getDeclaringClass().getName() = "SSHClient" and
+      not call.getArg(0).getText().matches("^\".*\"$")
+    )
+  }
+}
+
+class SafeExecCommandSanitizer extends Sanitizer {
+  SafeExecCommandSanitizer() {
+    exists(Call call |
+      call.getFunc().(Member).getName() = "exec_command" and
+      call.getFunc().getDeclaringClass().getName() = "SSHClient" and
+      call.getArg(0).getText().matches("^\".*\"$")
+    )
+  }
+}
+
+class ParamikoExecCommandConfig extends TaintTracking::Configuration {
+  ParamikoExecCommandConfig() { this = "paramiko-exec-command" }
+
+  override predicate isSource(Value::Flow::Source source) {
+    source instanceof SSHClient
+  }
+
+  override predicate isSink(Value::Flow::Sink sink) {
+    sink instanceof ExecCommandCall
+  }
+
+  override predicate isSanitizer(Sanitizer sanitizer) {
+    sanitizer instanceof SafeExecCommandSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(Value::Flow::Node node1, Value::Flow::Node node2) {
+    exists(Member member |
+      member.getName() = "exec_command" and
+      node1.asExpr() = member.getObject() and
+      node2.asExpr() = member
+    )
+  }
+}
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "paramiko-exec-command"
+  kind: taint
+  severity: ERROR
+  message: "Unverified SSL context detected. This will permit insecure connections without verifying SSL certificates. Use 'ssl.create_default_context()' instead."
+  metadata:
+    language: python
+    category: security
+    tags:
+      - paramiko
+      - injection
+      - security
+    references:
+      - "http://docs.paramiko.org/en/stable/api/client.html#paramiko.client.SSHClient.exec_command"
+      - "https://github.com/PyCQA/bandit/blob/d5f8fa0d89d7b11442fc6ec80ca42953974354c8/bandit/plugins/injection_paramiko.py"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+    cwe:
+      - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+sources:
+  - id: "SSH_CLIENT"
+    match:
+      node: CALL
+      api:
+        package: paramiko.client
+        type: SSHClient
+        method: exec_command
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^\".*\"$"
+          negate: true
+sinks:
+  - id: "UNSAFE_EXEC_COMMAND"
+    match:
+      node: CALL
+      api:
+        package: paramiko.client
+        type: SSHClient
+        method: exec_command
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^\".*\"$"
+          negate: true
+sanitizers:
+  - id: "SAFE_EXEC_COMMAND"
+    match:
+      node: CALL
+      api:
+        package: paramiko.client
+        type: SSHClient
+        method: exec_command
+        signature: ["(...)"]
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "^\".*\"$"
+    effect: neutralize
+    scope:
+      sinks: ["UNSAFE_EXEC_COMMAND"]
+propagations:
+  - id: "SSH_CLIENT_TO_EXEC"
+    edge: receiver
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的python语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 00:04:34
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:16,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:19,39-47)
+ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:22,12-21)
+ERROR: asExpr() cannot be resolved for type ParamikoSSHClientSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:24,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:29,39-47)
+ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:32,12-21)
+ERROR: asExpr() cannot be resolved for type ParamikoExecCommandSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:34,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:39,40-48)
+ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:42,12-21)
+ERROR: asExpr() cannot be resolved for type SafeExecCommandSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:44,12-18)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:49,41-69)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:52,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:56,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:60,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:64,44-52)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:64,65-73)
+ERROR: getTarget() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:66,12-21)
+ERROR: getReceiver() cannot be resolved for type Flow::CallNode (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:67,28-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:73,37-45)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:73,64-72)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:52,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:56,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_63235483/python-security-queries/queries/test-rule/TestRule.ql:64,22-43)
+Rule Content:
+/**
+ * @name Unverified SSL context in Paramiko exec_command
+ * @description Detects unverified SSL context in Paramiko exec_command calls
+ * @kind path-problem
+ * @id python/paramiko-exec-command
+ * @problem.severity error
+ * @tags security
+ *       injection
+ *       paramiko
+ *       owasp-a01
+ *       owasp-a03
+ *       cwe-78
+ */
+
+import python
+import DataFlow::PathGraph
+import semmle.python.dataflow.new.TaintTracking
+
+class ParamikoSSHClientSource extends DataFlow::Node {
+  ParamikoSSHClientSource() {
+    exists(CallNode call |
+      call.getTarget().hasQualifiedName("paramiko.client", "SSHClient", "exec_command") and
+      not call.getArg(0).toString().regexpMatch("^\".*\"$") and
+      this.asExpr() = call
+    )
+  }
+}
+
+class ParamikoExecCommandSink extends DataFlow::Node {
+  ParamikoExecCommandSink() {
+    exists(CallNode call |
+      call.getTarget().hasQualifiedName("paramiko.client", "SSHClient", "exec_command") and
+      not call.getArg(0).toString().regexpMatch("^\".*\"$") and
+      this.asExpr() = call
+    )
+  }
+}
+
+class SafeExecCommandSanitizer extends DataFlow::BarrierGuard {
+  SafeExecCommandSanitizer() {
+    exists(CallNode call |
+      call.getTarget().hasQualifiedName("paramiko.client", "SSHClient", "exec_command") and
+      call.getArg(0).toString().regexpMatch("^\".*\"$") and
+      this.asExpr() = call
+    )
+  }
+}
+
+class ParamikoExecCommandConfig extends TaintTracking::Configuration {
+  ParamikoExecCommandConfig() { this = "ParamikoExecCommandConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ParamikoSSHClientSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof ParamikoExecCommandSink
+  }
+
+  override predicate isSanitizer(DataFlow::BarrierGuard sanitizer) {
+    sanitizer instanceof SafeExecCommandSanitizer
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(CallNode call |
+      call.getTarget().hasQualifiedName("paramiko.client", "SSHClient", "exec_command") and
+      pred.asExpr() = call.getReceiver() and
+      succ.asExpr() = call
+    )
+  }
+}
+
+from ParamikoExecCommandConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, "Unverified SSL context detected. This will permit insecure connections " +
+  "without verifying SSL certificates. Use 'ssl.create_default_context()' instead.",
+  source, sink
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:17,25-36)
+ERROR: getName() cannot be resolved for type Import::Import (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:20,11-18)
+ERROR: getAnAttribute() cannot be resolved for type SSHClient.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:21,12-26)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:26,31-42)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:29,23-29)
+ERROR: getDeclaringClass() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:30,22-39)
+ERROR: getText() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:31,26-33)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:39,23-29)
+ERROR: getDeclaringClass() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:40,22-39)
+ERROR: getText() cannot be resolved for type Exprs::Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:41,22-29)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:49,31-42)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:53,29-40)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,44-55)
+ERROR: could not resolve module Value::Flow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,69-80)
+ERROR: could not resolve type Member (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:62,12-18)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:27,3-18)
+ERROR: predicate 'isAdditionalTaintStep' does not override another predicate (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:61,3-67,4)
+ERROR: The characteristic predicate for 'TestRule::SafeExecCommandSanitizer' does not bind 'this' to a value. (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1b006429/python-security-queries/queries/test-rule/TestRule.ql:37,3-43,4)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入路径错误：
+   - 将 `Value::Flow` 改为 `DataFlow` 模块
+   - 确保正确导入 `DataFlow::PathGraph` 和其他必要模块
+
+2. 修正 Import 类型的使用：
+   - 使用 `Import::getImportedName()` 代替废弃的 `getName()`
+
+3. 修正 Source/Sink 定义：
+   - Source 类应继承 `DataFlow::Node` 并定义 `isSource` 特征谓词
+   - Sink 类应继承 `DataFlow::Node` 并定义 `isSink` 特征谓词
+
+4. 修正方法调用解析：
+   - 使用 `CallNode.getTarget()` 获取调用目标
+   - 使用 `Member::getDeclaringType()` 获取声明类
+   - 使用 `Expr::toString()` 代替 `getText()`
+
+5. 修正 TaintTracking 配置：
+   - 确保配置类继承 `TaintTracking::Configuration`
+   - 修正特征谓词绑定问题：在所有特征谓词中绑定 `this`
+
+6. 添加查询选择语句：
+   - 在文件末尾添加 `from ParamikoExecCommandConfig cfg where cfg.hasFlowPath() select cfg.getSource(), cfg.getSink()` 
+
+7. 修正 Sanitizer 定义：
+   - 确保 Sanitizer 类继承 `DataFlow::Sanitizer`
+   - 在特征谓词中绑定 `this` 变量
+
+8. 修正附加污点传播路径：
+   - 使用 `DataFlow::Node` 类型参数
+   - 确保谓词签名与父类一致
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

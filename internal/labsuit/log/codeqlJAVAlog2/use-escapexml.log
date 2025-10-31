@@ -1,0 +1,901 @@
+Timestamp: 2025-10-31 11:12:17
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:13,8-13)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:32,41-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:38,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:44,34-46)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:15,33-37)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:16,10-15)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:21,21-33)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:22,10-15)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:27,27-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,3-11)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,23-31)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,51-59)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,53-61)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,56-64)
+Rule Content:
+/**
+ * @name Use EscapeXML
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import java
+import regex
+
+predicate isUnescapedExpression(Expr e) {
+  exists(regex::Regex r |
+    r.matches("\\$\\{(?!.*escapeXml).*\\}", e.toString())
+  )
+}
+
+predicate isXSSSink(MethodAccess ma) {
+  exists(regex::Regex r |
+    r.matches("\\$\\{(?!.*escapeXml).*\\}", ma.toString())
+  )
+}
+
+predicate isEscapeXmlCall(MethodAccess ma) {
+  ma.getMethod().hasName("escapeXml") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Functions")
+}
+
+class UnescapedExpressionSource extends Expr {
+  UnescapedExpressionSource() {
+    isUnescapedExpression(this)
+  }
+}
+
+class XSSSink extends MethodAccess {
+  XSSSink() {
+    isXSSSink(this)
+  }
+}
+
+class EscapeXMLSanitizer extends MethodAccess {
+  EscapeXMLSanitizer() {
+    isEscapeXmlCall(this)
+  }
+}
+
+from UnescapedExpressionSource source, XSSSink sink
+where 
+  DataFlow::localFlow(DataFlow::exprNode(source), DataFlow::exprNode(sink)) and
+  not exists(EscapeXMLSanitizer sanitizer |
+    DataFlow::localFlow(DataFlow::exprNode(source), DataFlow::exprNode(sanitizer)) and
+    DataFlow::localFlow(DataFlow::exprNode(sanitizer), DataFlow::exprNode(sink))
+  )
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "use-escapexml"
+  kind: hybrid
+  severity: WARNING
+  message: "Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib."
+  tags:
+    - "jsp"
+    - "security"
+  metadata:
+    language: "regex"
+    category: "security"
+    paths:
+      include: "*.jsp"
+    owasp:
+      - "A03:2021 - Injection"
+    cwe:
+      - "CWE-116: Improper Encoding or Escaping of Output"
+    references:
+      - "https://www.tutorialspoint.com/jsp/jstl_function_escapexml.htm"
+      - "https://stackoverflow.com/a/4948856"
+      - "https://stackoverflow.com/a/3180202"
+
+sources:
+  - id: "UNESCAPED_EXPRESSION"
+    match:
+      node: "CALL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+
+sinks:
+  - id: "XSS_SINK"
+    match:
+      node: "CALL"
+      where:
+        - op: "regex"
+          left: "value"
+          right: "\\$\\{(?!.*escapeXml).*\\}"
+
+sanitizers:
+  - id: "ESCAPE_XML"
+    match:
+      node: "CALL"
+      api:
+        package: "javax.servlet.jsp.jstl.core"
+        type: "Functions"
+        method: "escapeXml"
+    effect: 
+      remove: ["xss_taint"]
+      add: ["escaped_html"]
+    scope:
+      sinks: ["XSS_SINK"]
+
+propagations:
+  - id: "EXPRESSION_TO_SINK"
+    from: "UNESCAPED_EXPRESSION"
+    to: "XSS_SINK"
+    edge: "arg->param"
+    kind: "taint"
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:13:45
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:12,8-33)
+ERROR: could not resolve module semmle.code.java.frameworks.JSTL (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:13,8-40)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve type Expression (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:29,41-51)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:35,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:41,34-46)
+ERROR: could not resolve type Expression (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:16,33-43)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:20,21-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:24,27-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,3-11)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,23-31)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,51-59)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,53-61)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,56-64)
+Rule Content:
+/**
+ * @name Use EscapeXML
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import semmle.code.java.DataFlow
+import semmle.code.java.frameworks.JSTL
+import semmle.code.java.dataflow.TaintTracking
+
+predicate isUnescapedExpression(Expression e) {
+  e.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isXSSSink(MethodAccess ma) {
+  ma.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isEscapeXmlCall(MethodAccess ma) {
+  ma.getMethod().hasName("escapeXml") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Functions")
+}
+
+class UnescapedExpressionSource extends Expression {
+  UnescapedExpressionSource() {
+    isUnescapedExpression(this)
+  }
+}
+
+class XSSSink extends MethodAccess {
+  XSSSink() {
+    isXSSSink(this)
+  }
+}
+
+class EscapeXMLSanitizer extends MethodAccess {
+  EscapeXMLSanitizer() {
+    isEscapeXmlCall(this)
+  }
+}
+
+from UnescapedExpressionSource source, XSSSink sink
+where 
+  DataFlow::localFlow(DataFlow::exprNode(source), DataFlow::exprNode(sink)) and
+  not exists(EscapeXMLSanitizer sanitizer |
+    DataFlow::localFlow(DataFlow::exprNode(source), DataFlow::exprNode(sanitizer)) and
+    DataFlow::localFlow(DataFlow::exprNode(sanitizer), DataFlow::exprNode(sink))
+  )
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:13,8-13)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:32,41-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:38,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:44,34-46)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:15,33-37)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:16,10-15)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:21,21-33)
+ERROR: could not resolve module regex (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:22,10-15)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:27,27-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,3-11)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,23-31)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:52,51-59)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:54,53-61)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_c260a53d/python-security-queries/queries/test-rule/TestRule.ql:55,56-64)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 将语言环境从Python切换到Java，修改import语句：
+   - 删除 `import java` 和 `import regex`
+   - 替换为正确的Java标准库导入：`import java` 改为 `import semmle.code.java.DataFlow`
+   - 添加必要的Java相关导入：`import semmle.code.java.frameworks.JSTL` 用于JSTL相关分析
+
+2. 修正类型引用：
+   - 将 `Expr` 类型改为Java中的表达式类型：`Expr` → `Expression`
+   - 将 `MethodAccess` 类型改为正确的Java方法调用类型：`MethodAccess` → `MethodAccess`
+
+3. 修改正则表达式匹配方式：
+   - 移除 `regex::Regex` 用法，改用Java字符串匹配或CodeQL提供的字符串匹配方法
+   - 例如使用 `this.toString().matches("\\$\\{(?!.*escapeXml).*\\}")` 直接进行匹配
+
+4. 修正数据流分析：
+   - 确保正确导入数据流模块：`import semmle.code.java.DataFlow`
+   - 修正数据流节点转换：`DataFlow::exprNode()`改为正确的Java节点转换方法如`DataFlow::exprNode()`
+
+5. 添加必要的标准库依赖：
+   - 添加 `import semmle.code.java.dataflow.DataFlow` 用于数据流分析
+   - 添加 `import semmle.code.java.dataflow.TaintTracking` 用于污点跟踪
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:15:06
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:13,8-16)
+ERROR: could not resolve module dataflow.paths (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:14,8-22)
+ERROR: could not resolve module jsp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:15,8-11)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:30,41-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:36,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:42,34-46)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:17,33-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:21,21-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:25,27-39)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,3-11)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,23-31)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,51-59)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,5-13)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,53-61)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,5-13)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,25-33)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,56-64)
+Rule Content:
+/**
+ * @name Use EscapeXML
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import java
+import dataflow
+import dataflow.paths
+import jsp
+
+predicate isUnescapedExpression(Expr e) {
+  e.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isXSSSink(MethodAccess ma) {
+  ma.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isEscapeXmlCall(MethodAccess ma) {
+  ma.getMethod().hasName("escapeXml") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Functions")
+}
+
+class UnescapedExpressionSource extends Expr {
+  UnescapedExpressionSource() {
+    isUnescapedExpression(this)
+  }
+}
+
+class XSSSink extends MethodAccess {
+  XSSSink() {
+    isXSSSink(this)
+  }
+}
+
+class EscapeXMLSanitizer extends MethodAccess {
+  EscapeXMLSanitizer() {
+    isEscapeXmlCall(this)
+  }
+}
+
+from UnescapedExpressionSource source, XSSSink sink
+where 
+  dataflow::localFlow(dataflow::exprNode(source), dataflow::exprNode(sink)) and
+  not exists(EscapeXMLSanitizer sanitizer |
+    dataflow::localFlow(dataflow::exprNode(source), dataflow::exprNode(sanitizer)) and
+    dataflow::localFlow(dataflow::exprNode(sanitizer), dataflow::exprNode(sink))
+  )
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:12,8-33)
+ERROR: could not resolve module semmle.code.java.frameworks.JSTL (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:13,8-40)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve type Expression (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:29,41-51)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:35,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:41,34-46)
+ERROR: could not resolve type Expression (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:16,33-43)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:20,21-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:24,27-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,3-11)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,23-31)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:49,51-59)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:51,53-61)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,5-13)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_34cc15ff/python-security-queries/queries/test-rule/TestRule.ql:52,56-64)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正导入路径错误：
+   - 将 `semmle.code.java.DataFlow` 改为 `java`
+   - 将 `semmle.code.java.frameworks.JSTL` 改为 `jsp`
+   - 将 `semmle.code.java.dataflow.TaintTracking` 改为 `dataflow`
+
+2. 修正类型引用：
+   - 将 `Expression` 改为 `Expr`
+   - 保留 `MethodAccess` 但确保它来自正确的Java模块
+
+3. 修复数据流分析导入：
+   - 添加 `import dataflow` 用于数据流分析
+   - 添加 `import dataflow.paths` 用于路径敏感的分析
+
+4. 更新方法调用：
+   - 确保所有 `DataFlow::` 调用使用正确的命名空间
+   - 将 `DataFlow::exprNode()` 改为正确的形式 `dataflow::exprNode()`
+
+5. 添加必要的标准库依赖：
+   - 添加 `import java.lang.String`
+   - 添加 `import jsp` 用于JSP特定分析
+"""
+
+```ql
+/**
+ * @name Use EscapeXML
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import java
+import dataflow
+import dataflow.paths
+import jsp
+
+predicate isUnescapedExpression(Expr e) {
+  e.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isXSSSink(MethodAccess ma) {
+  ma.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+}
+
+predicate isEscapeXmlCall(MethodAccess ma) {
+  ma.getMethod().hasName("escapeXml") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Functions")
+}
+
+class UnescapedExpressionSource extends Expr {
+  UnescapedExpressionSource() {
+    isUnescapedExpression(this)
+  }
+}
+
+class XSSSink extends MethodAccess {
+  XSSSink() {
+    isXSSSink(this)
+  }
+}
+
+class EscapeXMLSanitizer extends MethodAccess {
+  EscapeXMLSanitizer() {
+    isEscapeXmlCall(this)
+  }
+}
+
+from UnescapedExpressionSource source, XSSSink sink
+where 
+  dataflow::localFlow(dataflow::exprNode(source), dataflow::exprNode(sink)) and
+  not exists(EscapeXMLSanitizer sanitizer |
+    dataflow::localFlow(dataflow::exprNode(source), dataflow::exprNode(sanitizer)) and
+    dataflow::localFlow(dataflow::exprNode(sanitizer), dataflow::exprNode(sink))
+  )
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:16:25
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:13,8-42)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:38,41-54)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:41,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:45,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:49,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:16,33-41)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:17,10-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:23,21-29)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:24,10-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:30,27-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:31,10-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:54,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:54,29-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:45,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:49,22-33)
+Rule Content:
+/**
+ * @name Use EscapeXML
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+predicate isUnescapedExpression(DataFlow::Node node) {
+  exists(Expr e |
+    node.asExpr() = e and
+    e.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+  )
+}
+
+predicate isXSSSink(DataFlow::Node node) {
+  exists(MethodAccess ma |
+    node.asExpr() = ma and
+    ma.toString().matches("\\$\\{(?!.*escapeXml).*\\}")
+  )
+}
+
+predicate isEscapeXmlCall(DataFlow::Node node) {
+  exists(MethodAccess ma |
+    node.asExpr() = ma and
+    ma.getMethod().hasName("escapeXml") and
+    ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.jsp.jstl.core", "Functions")
+  )
+}
+
+class UnescapedExpressionConfig extends TaintTracking::Configuration {
+  UnescapedExpressionConfig() { this = "UnescapedExpressionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isUnescapedExpression(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isXSSSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isEscapeXmlCall(sanitizer)
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where 
+  any(UnescapedExpressionConfig config).hasFlow(source, sink)
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:13,8-16)
+ERROR: could not resolve module dataflow.paths (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:14,8-22)
+ERROR: could not resolve module jsp (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:15,8-11)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:30,41-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:36,23-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:42,34-46)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:17,33-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:21,21-33)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:25,27-39)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,3-11)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,23-31)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:50,51-59)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,5-13)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:52,53-61)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,5-13)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,25-33)
+ERROR: could not resolve module dataflow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_3302e0ca/python-security-queries/queries/test-rule/TestRule.ql:53,56-64)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正导入路径错误：
+   - 确认代码语言环境，当前似乎是错误的Python环境，需要切换到Java环境
+   - 将 `java` 改为 `java` (保持不变但确认环境)
+   - 将 `dataflow` 改为 `semmle.code.java.dataflow.DataFlow`
+   - 将 `dataflow.paths` 改为 `semmle.code.java.dataflow.TaintTracking`
+   - 删除 `jsp` 导入，改为直接使用Java标准库
+
+2. 修正类型引用：
+   - 将 `Expr` 改为 `DataFlow::Node` （使用数据流节点而非表达式）
+   - 将 `MethodAccess` 改为 `MethodAccess` (保留但确保来自正确的Java模块)
+
+3. 修复数据流分析导入：
+   - 保留 `DataFlow` 库但使用完整路径 `semmle.code.java.dataflow.DataFlow`
+   - 使用 `TaintTracking` 替代部分数据流分析
+
+4. 更新方法调用：
+   - 将所有 `dataflow::exprNode()` 调用改为 `DataFlow::exprNode()`
+   - 确保使用正确的类继承关系
+
+5. 重写检测逻辑：
+   - 重写谓词使用Java标准方法调用检测
+   - 调整数据流分析使用正确的配置库
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 11:17:58
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:38,41-69)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:19,5-16)
+ERROR: could not resolve predicate regexpMatch/2 (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:26,5-16)
+ERROR: could not resolve type MethodCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:31,10-20)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:45,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_2c6fda04/python-security-queries/queries/test-rule/TestRule.ql:49,22-33)
+Rule Content:
+/**
+ * @name Use EscapeXML in JSP
+ * @description Detected an Expression Language segment that does not escape output. This is dangerous because if any data in this expression can be controlled externally, it is a cross-site scripting vulnerability. Instead, use the 'escapeXml' function from the JSTL taglib.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id jsp/use-escapexml
+ * @tags security
+ *       jsp
+ * @precision high
+ */
+
+import python
+import semmle.python.dataflow.new.DataFlow
+import semmle.python.dataflow.new.TaintTracking
+
+predicate isUnescapedExpression(DataFlow::Node node) {
+  exists(string expr |
+    expr = node.asExpr().toString() and
+    regexpMatch("\\$\\{(?!.*escapeXml).*\\}", expr)
+  )
+}
+
+predicate isXSSSink(DataFlow::Node node) {
+  exists(string expr |
+    expr = node.asExpr().toString() and
+    regexpMatch("\\$\\{(?!.*escapeXml).*\\}", expr)
+  )
+}
+
+predicate isEscapeXmlCall(DataFlow::Node node) {
+  exists(MethodCall mc |
+    mc = node.asExpr() and
+    mc.getFuncName() = "escapeXml" and
+    mc.getModuleName() = "javax.servlet.jsp.jstl.core.Functions"
+  )
+}
+
+class UnescapedExpressionConfig extends TaintTracking::Configuration {
+  UnescapedExpressionConfig() { this = "UnescapedExpressionConfig_JSP" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isUnescapedExpression(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isXSSSink(sink)
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    isEscapeXmlCall(sanitizer)
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, UnescapedExpressionConfig config
+where 
+  config.hasFlow(source, sink)
+select sink, "Detected an Expression Language segment that does not escape output. " +
+  "This could lead to XSS vulnerabilities. Use 'escapeXml' function from JSTL taglib instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:13,8-42)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:14,8-47)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:38,41-54)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:41,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:45,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:49,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:16,33-41)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:17,10-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:23,21-29)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:24,10-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:30,27-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:31,10-22)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:54,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:54,29-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:41,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:45,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_0e19f53a/python-security-queries/queries/test-rule/TestRule.ql:49,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修改导入语句，将Java相关导入改为Python相关导入：
+   - 将`import java`替换为`import python`
+   - 将`import semmle.code.java.dataflow.DataFlow`和`import semmle.code.java.dataflow.TaintTracking`替换为Python相关的数据流分析导入
+
+2. 更新数据类型和模块引用：
+   - 将所有`DataFlow::Node`引用替换为Python等效的数据流节点类型
+   - 将`Expr`类替换为Python的AST表达式类型
+   - 将`MethodAccess`类替换为Python的函数调用类型
+
+3. 修改正则表达式匹配逻辑：
+   - 确保正则表达式语法与Python的re模块兼容
+   - 更新字符串匹配方法以符合Python规范
+
+4. 更新配置类定义：
+   - 重构`UnescapedExpressionConfig`类以继承Python的TaintTracking配置
+   - 确保方法签名与Python CodeQL库兼容
+
+5. 修复元数据部分：
+   - 更新`@tags`和`@id`等内容使其符合Python规则规范
+   - 确保问题类型(`@kind`)与Python分析兼容
+
+6. 修正查询主体：
+   - 将Java特定的数据流查询语法调整为Python等效语法
+   - 确保select语句格式符合Python CodeQL规范
+
+7. 处理未使用方法警告：
+   - 确保所有定义的方法都被正确使用或移除未使用的方法
+   - 检查配置类的方法是否正确地覆盖了父类方法
+
+8. 验证规则作用域：
+   - 检查规则是否针对正确的文件类型(.jsp文件)
+   - 确保Python分析能够处理JSP文件中的EL表达式
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

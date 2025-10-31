@@ -1,0 +1,628 @@
+Timestamp: 2025-10-31 10:32:16
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:14,8-12)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:17,31-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:22,34-46)
+ERROR: could not resolve type StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:25,22-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:28,6-18)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:28,23-27)
+Rule Content:
+/**
+ * @name XSSRequestWrapper is insecure
+ * @description It looks like you're using an implementation of XSSRequestWrapper from dzone.
+ *              The XSS filtering in this code is not secure and can be bypassed by malicious actors.
+ * @kind problem
+ * @problem.severity warning
+ * @id java/xssrequestwrapper-is-insecure
+ * @tags security
+ *       owasp-a07
+ *       owasp-a03
+ *       cwe-79
+ */
+
+import java
+import DataFlow::PathGraph
+
+predicate isXSSRequestWrapper(Type t) {
+  t.hasName("XSSRequestWrapper") and
+  t.getASupertype*().hasQualifiedName("javax.servlet.http", "HttpServletRequestWrapper")
+}
+
+predicate isInsecureScriptFilter(MethodAccess ma) {
+  ma.getMethod().hasName("compile") and
+  ma.getMethod().getDeclaringType().hasQualifiedName("java.util.regex", "Pattern") and
+  ma.getArgument(0).(StringLiteral).getValue() = "</script>"
+}
+
+from MethodAccess ma, Type t
+where 
+  isInsecureScriptFilter(ma) and
+  isXSSRequestWrapper(t)
+select ma, "Insecure XSS filtering implementation found. $@ inherits from XSSRequestWrapper which uses insecure Pattern.compile('</script>').",
+  t, "XSSRequestWrapper declaration"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "xssrequestwrapper-is-insecure"
+  kind: pattern
+  severity: WARNING
+  message: "It looks like you're using an implementation of XSSRequestWrapper from dzone. (https://www.javacodegeeks.com/2012/07/anti-cross-site-scripting-xss-filter.html) The XSS filtering in this code is not secure and can be bypassed by malicious actors. It is recommended to use a stack that automatically escapes in your view or templates instead of filtering yourself."
+  metadata:
+    language: java
+    category: security
+    owasp:
+      - "A07:2017 - Cross-Site Scripting (XSS)"
+      - "A03:2021 - Injection"
+    cwe:
+      - "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+    references:
+      - "https://owasp.org/Top10/A03_2021-Injection"
+      - "https://find-sec-bugs.github.io/bugs.htm#XSS_REQUEST_WRAPPER"
+      - "https://www.javacodegeeks.com/2012/07/anti-cross-site-scripting-xss-filter.html"
+
+sources:
+  - id: XSS_REQUEST_WRAPPER
+    match:
+      node: TYPE_DECL
+      where:
+        - op: eq
+          left: name
+          right: "XSSRequestWrapper"
+
+  - id: INSECURE_SCRIPT_FILTER
+    match:
+      node: CALL
+      api:
+        type: "Pattern"
+        method: "compile"
+      where:
+        - op: eq
+          left: arg[0].value
+          right: "</script>"
+
+sinks:
+  - id: XSS_SINK
+    match_patterns:
+      - "class XSSRequestWrapper extends HttpServletRequestWrapper { ... }"
+      - "$P = $X.compile(\"</script>\", $X.CASE_INSENSITIVE); $V = $P.matcher(...).replaceAll(\"\");"
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:33:24
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:26,12-42)
+ERROR: unexpected input '|' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:25,32-33)
+ERROR: unexpected input ')' expecting one of: <EOF>, 'and', 'as', 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'implies', 'import', 'in', 'instanceof', 'int', 'module', 'or', 'order', 'predicate', 'select', 'string', 'where', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', '*', '%', '+', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:27,5-6)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve type Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,6-11)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,17-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,32-44)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:19,34-63)
+WARNING: unused variable 'method' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,24-30)
+Rule Content:
+/**
+ * @name XSSRequestWrapper is insecure
+ * @description Detects usage of insecure XSSRequestWrapper implementation
+ * @kind problem
+ * @id java/xssrequestwrapper-is-insecure
+ * @security-severity 8.8
+ * @tags security
+ *       external/cwe/cwe-79
+ *       owasp-a7
+ *       owasp-a3
+ */
+
+import java
+
+from Class cls, Method method, MethodAccess call
+where
+  // Source: XSS_REQUEST_WRAPPER
+  cls.getName() = "XSSRequestWrapper" and
+  cls.getASupertype() instanceof TypeHttpServletRequestWrapper and
+  
+  // Source: INSECURE_SCRIPT_FILTER
+  (
+    call.getMethod().getName() = "compile" and
+    call.getMethod().getDeclaringType().getName() = "Pattern" and
+    exists(call.getArgument(0) | 
+      this.getStringValue() = "</script>"
+    )
+  )
+select method, "It looks like you're using an implementation of XSSRequestWrapper "
+  + "from dzone. (https://www.javacodegeeks.com/2012/07/anti-cross-site-scripting-xss-filter.html) "
+  + "The XSS filtering in this code is not secure and can be bypassed by malicious actors. "
+  + "It is recommended to use a stack that automatically escapes in your view or "
+  + "templates instead of filtering yourself."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:14,8-12)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:17,31-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:22,34-46)
+ERROR: could not resolve type StringLiteral (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:25,22-35)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:28,6-18)
+ERROR: could not resolve type Type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_a3e67bb7/python-security-queries/queries/test-rule/TestRule.ql:28,23-27)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 确认所需语言库的正确导入方式 - 将 `import java` 改为 `import java` 库的具体子模块，如 `import java` 应该改为对应的 Java 标准库导入格式
+2. 移除未使用的 DataFlow 模块导入 - 由于规则中没有使用数据流分析，删除 `import DataFlow::PathGraph` 这一行
+3. 修正类型引用方式 - 将所有 `Type` 的引用改为完整的 `RefType` 类型 (来自 Java 库)
+4. 修正方法访问节点类型 - 将 `MethodAccess` 改为 `Method`
+5. 修正字符串字面量类型 - 将 `StringLiteral` 改为对应的字符串类型表示
+6. 根据 CodeQL 的 Java 库文档更新变量类型声明和谓词参数类型
+7. 确保所有类型引用都有正确的导入和限定命名空间
+```
+
+建议修正后的关键点应该包括：
+- 使用 `RefType` 代替 `Type`
+- 使用 `Method` 代替 `MethodAccess` 
+- 移除不必要的数据流分析导入
+- 确保字符串比较使用正确的 CodeQL 字符串类型和方法
+- 验证所有类型都在正确的命名空间下
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:34:30
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:13,8-44)
+ERROR: could not resolve type RefType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:15,33-40)
+ERROR: hasName(string) cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:17,10-17)
+ERROR: getASupertype() cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:18,10-23)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:18,37-66)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:22,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:27,14-18)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:23,3-23)
+WARNING: unused variable 'filter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:35,54-60)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper usage
+ * @description Detects usage of XSSRequestWrapper implementation from dzone article
+ * @kind problem
+ * @id java/xssrequestwrapper-is-insecure
+ * @tags security
+ *   external/cwe/cwe-079
+ *   external/owasp/a03
+ *   external/owasp/a07
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class XSSRequestWrapper extends RefType {
+  XSSRequestWrapper() {
+    this.hasName("XSSRequestWrapper") and
+    this.getASupertype() instanceof TypeHttpServletRequestWrapper
+  }
+}
+
+class InsecureScriptFilter extends DataFlow::Node {
+  InsecureScriptFilter() {
+    exists(MethodAccess call |
+      call.getMethod().getName() = "compile" and
+      call.getMethod().getDeclaringType().getName() = "Pattern" and
+      exists(Expr arg |
+        arg = call.getArgument(0) and
+        arg.getStringValue() = "</script>"
+      )
+    )
+  }
+}
+
+from XSSRequestWrapper wrapper, InsecureScriptFilter filter
+select wrapper, "Insecure XSSRequestWrapper usage that can be bypassed by malicious actors. " +
+  "Recommend using automatic escaping in views/templates instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: expected an expression but found a term instead (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:26,12-42)
+ERROR: unexpected input '|' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:25,32-33)
+ERROR: unexpected input ')' expecting one of: <EOF>, 'and', 'as', 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'implies', 'import', 'in', 'instanceof', 'int', 'module', 'or', 'order', 'predicate', 'select', 'string', 'where', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', '*', '%', '+', Lowerid, Upperid, Atlowerid, '/**' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:27,5-6)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:13,8-12)
+ERROR: could not resolve type Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,6-11)
+ERROR: could not resolve type Method (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,17-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,32-44)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:19,34-63)
+WARNING: unused variable 'method' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_385dc85e/python-security-queries/queries/test-rule/TestRule.ql:15,24-30)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修复import语句错误：确保正确导入Java标准库，修改为`import java`为`import java`（虽然看起来一样，但需要确认路径正确）或者更完整的导入如`import java.lang`
+
+2. 修正类型引用错误：
+   - 将`Class`改为`RefType`
+   - 将`Method`改为`Method`（保持原样但确保从正确模块导入）
+   - 将`MethodAccess`改为`MethodAccess`（保持原样但确保从正确模块导入）
+   - 将`TypeHttpServletRequestWrapper`改为完整的类名`javax.servlet.http.HttpServletRequestWrapper`
+
+3. 修复exists子句语法：
+   - 将错误的条件表达式`exists(call.getArgument(0) | this.getStringValue() = "</script>")`改为正确的CodeQL语法：
+     ``` 
+     exists(Expr arg | arg = call.getArgument(0) and arg.getStringValue() = "</script>")
+     ```
+
+4. 解决变量未使用警告：
+   - 确保`method`变量在select子句中被正确使用
+   - 或者在where子句中添加对method的有效约束条件
+
+5. 确保所有类型引用都有正确的模块前缀：
+   - 例如为`RefType`添加`from semmle.code.java`的导入
+   - 为`MethodAccess`添加必要的导入语句
+
+6. 检查并修正整个查询的逻辑流程：
+   - 确保源和汇的定义与原始意图一致
+   - 验证所有条件表达式的正确性
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:35:41
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:13,8-44)
+ERROR: could not resolve type Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:15,33-38)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:17,10-26)
+ERROR: getASupertype() cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:18,10-23)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:18,37-66)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:22,36-48)
+ERROR: getMethod() cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: getMethod() cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: getArgument(int) cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:26,10-21)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:26,26-33)
+WARNING: unused variable 'filter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:30,54-60)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper usage
+ * @description Detection of insecure XSSRequestWrapper implementation
+ * @kind problem
+ * @id java/xss-request-wrapper
+ * @tags security
+ *   external/cwe/cwe-079
+ *   external/owasp/a03
+ *   external/owasp/a07
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class XSSRequestWrapper extends Class {
+  XSSRequestWrapper() {
+    this.hasQualifiedName("", "XSSRequestWrapper") and
+    this.getASupertype() instanceof TypeHttpServletRequestWrapper
+  }
+}
+
+class InsecureScriptFilter extends MethodAccess {
+  InsecureScriptFilter() {
+    this.getMethod().hasName("compile") and
+    this.getMethod().getDeclaringType().hasQualifiedName("java.util.regex", "Pattern") and
+    this.getArgument(0).(Literal).getValue().toString() = "</script>"
+  }
+}
+
+from XSSRequestWrapper wrapper, InsecureScriptFilter filter
+select wrapper, "Using insecure XSSRequestWrapper implementation that can be bypassed. " +
+  "Consider using automatic escaping in view templates instead of manual filtering."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:13,8-44)
+ERROR: could not resolve type RefType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:15,33-40)
+ERROR: hasName(string) cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:17,10-17)
+ERROR: getASupertype() cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:18,10-23)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:18,37-66)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:22,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: could not resolve type Expr (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:27,14-18)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:23,3-23)
+WARNING: unused variable 'filter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_1da5f44b/python-security-queries/queries/test-rule/TestRule.ql:35,54-60)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正导入语句：将当前错误的Java模块导入改为正确的CodeQL标准库导入语句
+2. 修改类继承：
+   - 使XSSRequestWrapper继承正确的CodeQL类型（如Class或RefType）
+   - 确保使用正确的类型检查方法（如hasQualifiedName()替代hasName()）
+3. 修正父类类型检查：
+   - 使用正确的Servlet相关类检查方法
+   - 确保HttpServletRequestWrapper的类型检查写法正确
+4. 修正DataFlow相关的类和方法：
+   - 使用正确的CodeQL数据流类和方法
+   - 确保MethodAccess和Expr类型的使用方式正确
+5. 修复类型检查：
+   - 使用instanceof的正确语法
+6. 清理未使用的变量filter
+7. 确保所有方法调用和属性访问符合CodeQL语法规范
+8. 检查所有类型引用是否正确导入
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-10-31 10:36:51
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:12,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:13,8-42)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:14,8-44)
+ERROR: could not resolve type RefType (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:16,33-40)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:18,10-26)
+ERROR: getDeclaringType() cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:19,10-26)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:26,36-48)
+ERROR: getMethod() cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:28,10-19)
+ERROR: getArgument(int) cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:29,10-21)
+WARNING: unused variable 'filter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_67a0c498/python-security-queries/queries/test-rule/TestRule.ql:33,57-63)
+Rule Content:
+/**
+ * @name Insecure XSSRequestWrapper detection
+ * @description Detects usage of insecure XSSRequestWrapper implementation from dzone article
+ * @kind problem
+ * @id java/xssrequestwrapper-is-insecure
+ * @severity Warning
+ * @tags security
+ *       owasp-a7
+ *       owasp-a3
+ *       cwe-79
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.frameworks.Servlets
+
+class XSSRequestWrapper extends RefType {
+  XSSRequestWrapper() {
+    this.hasQualifiedName("", "XSSRequestWrapper") and
+    this.getDeclaringType().getType().hasQualifiedName(
+      "javax.servlet.http",
+      "HttpServletRequestWrapper"
+    )
+  }
+}
+
+class InsecureScriptFilter extends MethodAccess {
+  InsecureScriptFilter() {
+    this.getMethod().hasQualifiedName("java.util.regex.Pattern", "compile") and
+    this.getArgument(0).toStringLiteral().getValue() = "</script>"
+  }
+}
+
+from XSSRequestWrapper xssWrapper, InsecureScriptFilter filter
+select xssWrapper, "This XSSRequestWrapper implementation is insecure and can be bypassed. " +
+  "Use automatic escaping in your view/templates instead of manual filtering."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:11,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:12,8-42)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:13,8-44)
+ERROR: could not resolve type Class (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:15,33-38)
+ERROR: hasQualifiedName(string, string) cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:17,10-26)
+ERROR: getASupertype() cannot be resolved for type XSSRequestWrapper.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:18,10-23)
+ERROR: could not resolve type TypeHttpServletRequestWrapper (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:18,37-66)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:22,36-48)
+ERROR: getMethod() cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:24,10-19)
+ERROR: getMethod() cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:25,10-19)
+ERROR: getArgument(int) cannot be resolved for type InsecureScriptFilter.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:26,10-21)
+ERROR: could not resolve type Literal (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:26,26-33)
+WARNING: unused variable 'filter' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_69de4161/python-security-queries/queries/test-rule/TestRule.ql:30,54-60)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 更换正确的模块导入路径：使用正确的Java模块路径"semmle.code.java"代替"java"，确保DataFlow和Servlets模块能够正确导入。
+
+2. 修改类定义语法：将"extends Class"改为正确的CodeQL类定义语法，使用"extends RefType"替代不存在的"Class"类型。
+
+3. 修正方法调用链：
+   - 使用"getDeclaringType()"代替"getASupertype()"来检查类继承关系
+   - 使用"getType()"方法获取类型信息
+   - 确保所有方法调用链在CodeQL语法中有效
+
+4. 替换不存在的类型：
+   - 使用"HttpServletRequestWrapper"替代不存在的"TypeHttpServletRequestWrapper"
+   - 使用"Expr"替代不存在的"MethodAccess"类型
+
+5. 修正字面量检查：
+   - 使用正确的方式来检查字符串字面量值，如使用toStringLiteral().getValue()
+
+6. 移除未使用的变量：删除查询中未使用的"filter"变量以消除警告
+
+7. 确保类型转换语法正确：使用as转换而非点标记法
+
+8. 校验所有方法调用的可用性：确保所有调用的方法在CodeQL标准库中存在
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

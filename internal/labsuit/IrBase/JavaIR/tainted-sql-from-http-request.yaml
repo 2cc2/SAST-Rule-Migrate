@@ -1,0 +1,73 @@
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sql-from-http-request"
+  kind: taint
+  severity: WARNING
+  message: "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead."
+  metadata:
+    language: "java"
+    category: "security"
+    cwe: ["CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"]
+    owasp: ["A01:2017 - Injection", "A03:2021 - Injection"]
+
+sources:
+  - id: "HTTP_REQUEST"
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.http.HttpServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+    match:
+      node: CALL
+      api:
+        type: "javax.servlet.ServletRequest"
+        method: "(getInputStream|getParameter|getParameterMap|getParameterValues|getReader|getCookies|getHeader|getHeaderNames|getHeaders|getPart|getParts|getQueryString)"
+
+sinks:
+  - id: "SQL_EXECUTION"
+    match:
+      node: CALL
+      api:
+        type: "java.sql.Statement"
+        method: "(execute|query|executeUpdate|batchUpdate)"
+    match:
+      node: CALL
+      api:
+        type: "java.sql.PreparedStatement"
+    match:
+      node: CALL
+      api:
+        type: "java.sql.CallableStatement"
+    match:
+      node: CALL
+      api:
+        type: "org.springframework.jdbc.core.JdbcTemplate"
+        method: "batchUpdate|queryForObject|queryForMap"
+    match:
+      node: CALL
+      where:
+        - op: regex
+          left: "arg[0].value"
+          right: "(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)"
+
+propagations:
+  - id: "ARG_PARAM"
+    edge: "arg->param"
+    kind: taint
+
+sanitizers:
+  - id: "SQL_PARAMETERIZED"
+    match:
+      node: CALL
+      api:
+        type: "java.sql.PreparedStatement"
+    effect: neutralize
+  - id: "SQL_ESCAPE"
+    match:
+      node: CALL
+      api:
+        type: "org.apache.commons.lang.StringEscapeUtils"
+        method: "escapeSql"
+    effect: neutralize
+```
