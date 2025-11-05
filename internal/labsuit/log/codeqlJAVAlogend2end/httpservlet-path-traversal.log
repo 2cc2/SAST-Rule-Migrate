@@ -1,0 +1,957 @@
+Timestamp: 2025-11-04 22:37:04
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:17,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:20,42-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:23,31-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:31,16-28)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,13-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,33-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:45,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:53,29-37)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:54,12-27)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:63,12-26)
+ERROR: could not resolve type TypeFile (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:64,45-53)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:70,41-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:70,68-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:45,22-33)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:53,22-28)
+Rule Content:
+/**
+ * @name HttpServlet Path Traversal
+ * @description Detects potential path traversal vulnerabilities in Java servlets.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/path-traversal
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-2021-top25
+ *       external/cwe/cwe-2022-top25
+ *       external/owasp/a01:2021
+ *       external/owasp/a05:2017
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class ServletPathTraversalConfig extends TaintTracking::Configuration {
+  ServletPathTraversalConfig() { this = "ServletPathTraversalConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      (
+        // Source from HttpServletRequest directly
+        ma.getMethod().getName() = "getParameter" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest")
+        or
+        // Source from cookies
+        exists(MethodAccess getCookies |
+          getCookies.getMethod().getName() = "getCookies" and
+          getCookies.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+          (
+            ma.getMethod().getName() = "getValue" and
+            ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+            DataFlow::localFlow(DataFlow::exprNode(getCookies), DataFlow::exprNode(ma))
+          )
+        )
+      ) and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getName" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      node.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream")
+        or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream")
+      ) and
+      sink.asExpr() = cc.getArgument(0)
+    )
+    or
+    exists(VariableAccess va |
+      va.getVariable().getType() instanceof TypeFile and
+      sink.asExpr() = va
+    )
+  }
+}
+
+from ServletPathTraversalConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source.getNode(), "Potential path traversal vulnerability. User input reaches file operation without proper sanitization."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解Semgrep表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看源代码内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析原始规则内容：确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将原规则中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标Codeql工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标Codeql工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标Codeql工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <input_content>
+            以下是用户提交的中间表示，请进行转换：
+            rules:
+- id: httpservlet-path-traversal
+  metadata:
+    cwe:
+    - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    owasp:
+    - A05:2017 - Broken Access Control
+    - A01:2021 - Broken Access Control
+    source-rule-url: https://find-sec-bugs.github.io/bugs.htm#PATH_TRAVERSAL_IN
+    references:
+    - https://www.owasp.org/index.php/Path_Traversal
+    category: security
+    technology:
+    - java
+    cwe2022-top25: true
+    cwe2021-top25: true
+    subcategory:
+    - vuln
+    likelihood: HIGH
+    impact: MEDIUM
+    confidence: MEDIUM
+  message: >-
+    Detected a potential path traversal. A malicious actor
+    could control the location of this file, to include going backwards
+    in the directory with '../'. To address this, ensure that user-controlled
+    variables in file paths are sanitized. You may also consider using a utility
+    method such as org.apache.commons.io.FilenameUtils.getName(...) to only
+    retrieve the file name from the path.
+  mode: taint
+  pattern-sources:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (HttpServletRequest $REQ)
+      - patterns:   # this pattern is a hack to get the rule to recognize `map` as tainted source when `map = cookie.getValue(user_input)` is used.
+        - pattern-inside: |
+            (javax.servlet.http.Cookie[] $COOKIES) = (HttpServletRequest $REQ).getCookies(...);
+            ...
+            for (javax.servlet.http.Cookie $COOKIE: $COOKIES) {
+              ...
+            }
+        - pattern: |
+            $COOKIE.getValue(...)
+      - patterns:   # use this pattern to catch cases where tainted array values are assigned to a variable (not caught by taint)
+        - pattern-inside: |
+            $TYPE[] $VALS = (HttpServletRequest $REQ).$GETFUNC(...);
+            ...
+        - pattern: |
+            $PARAM = $VALS[$INDEX];
+  pattern-sanitizers:
+  - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+  pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern: |
+          (java.io.File $FILE) = ...
+      - pattern: |
+          (java.io.FileOutputStream $FOS) = ...
+      - pattern: |
+          new java.io.FileInputStream(...)
+  severity: ERROR
+  languages:
+  - java
+            </input_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-04 22:38:44
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:17,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:19,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:21,42-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:24,31-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:32,16-28)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,13-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,39-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,71-79)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:46,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:54,29-37)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:55,12-27)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:64,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:71,41-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:71,68-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:24,22-30)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:46,22-33)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+Rule Content:
+/**
+ * @name HttpServlet Path Traversal
+ * @description Detects potential path traversal vulnerabilities in Java servlets.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @id java/path-traversal
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-2021-top25
+ *       external/cwe/cwe-2022-top25
+ *       external/owasp/a01:2021
+ *       external/owasp/a05:2017
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class ServletPathTraversalConfig extends TaintTracking::Configuration {
+  ServletPathTraversalConfig() { this = "ServletPathTraversalConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      (
+        // Source from HttpServletRequest directly
+        ma.getMethod().getName() = "getParameter" and
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest")
+        or
+        // Source from cookies
+        exists(MethodAccess getCookies |
+          getCookies.getMethod().getName() = "getCookies" and
+          getCookies.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "HttpServletRequest") and
+          (
+            ma.getMethod().getName() = "getValue" and
+            ma.getMethod().getDeclaringType().hasQualifiedName("javax.servlet.http", "Cookie") and
+            TaintTracking::localTaint(DataFlow::exprNode(getCookies), DataFlow::exprNode(ma))
+          )
+        )
+      ) and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getName" and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      node.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(ConstructorCall cc |
+      (
+        cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream")
+        or
+        cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream")
+      ) and
+      sink.asExpr() = cc.getArgument(0)
+    )
+    or
+    exists(VariableAccess va |
+      va.getVariable().getType().hasQualifiedName("java.io", "File") and
+      sink.asExpr() = va
+    )
+  }
+}
+
+from ServletPathTraversalConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential path traversal vulnerability. User input reaches file operation without proper sanitization."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:17,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:20,42-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:23,31-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:31,16-28)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,13-21)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,33-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:37,65-73)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:45,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:46,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:53,29-37)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:54,12-27)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:63,12-26)
+ERROR: could not resolve type TypeFile (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:64,45-53)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:70,41-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:70,68-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:23,22-30)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:45,22-33)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_8e676542/python-security-queries/queries/test-rule/TestRule.ql:53,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 更新导入语句，使用正确的CodeQL模块路径：
+   - 将 `import java` 改为 `import java`
+   - 将 `import semmle.code.java.dataflow.TaintTracking` 改为 `import semmle.code.java.dataflow.TaintTracking`
+   - 将 `import semmle.code.java.frameworks.Servlets` 改为 `import semmle.code.java.frameworks.Servlets`
+
+2. 确保使用了正确的类型和模块引用：
+   - 确保所有对 `DataFlow` 的引用都正确
+   - 将 `MethodAccess` 改为 `MethodAccess`
+   - 将 `ConstructorCall` 改为 `ConstructorCall`
+   - 将 `VariableAccess` 改为 `VariableAccess`
+   - 将 `TypeFile` 改为 `File`
+
+3. 修正类继承和配置：
+   - 确保 `ServletPathTraversalConfig` 正确继承了 `TaintTracking::Configuration`
+   - 确保内部谓词方法（isSource, isSanitizer, isSink）的签名和实现正确
+
+4. 修正查询部分：
+   - 确保 `from` 子句中的变量声明正确
+   - 确保 `where` 子句中的条件正确使用了配置
+   - 确保 `select` 子句输出正确的信息
+
+5. 完成以下具体改动：
+   - 将 `TypeFile` 改为 `File`
+   - 确保所有使用 `DataFlow` 模块的地方都有正确的导入
+   - 确保所有类型引用都来自正确导入的模块
+   - 移除未使用的警告
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-04 22:40:20
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:25,32-39)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:35,1-2)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:19,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:20,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:22,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:23,3-23)
+WARNING: unused class 'ServletRequestSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:22,7-27)
+Rule Content:
+/**
+ * @name HttpServlet Path Traversal
+ * @description Detects path traversal vulnerabilities in Java servlets where user-controlled
+ *              input can manipulate file system paths.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/path-traversal
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-073
+ *       owasp-a05:2017
+ *       owasp-a01:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class ServletRequestSource extends DataFlow::SourceNode {
+  ServletRequestSource() {
+    exists(MethodAccess ma | 
+      ma.getMethod().getName() matches "getParameter%" or
+      ma.getMethod().getName() matches "getHeader%" or
+      ma.getMethod().getName() matches "getQueryString" or
+      ma.getMethod() = getPathInfo() or
+      ma.getMethod() = getServletPath()
+    |
+      this.asExpr() = ma
+    ) or
+    exists(CookieSource cs | this.asExpr() = cs.asExpr())
+  }
+}
+
+class CookieSource extends DataFlow::SourceNode {
+  CookieSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasName("javax.servlet.http.Cookie")
+    |
+      this.asExpr() = ma
+    )
+  }
+}
+
+class FileSink extends DataFlow::SinkNode {
+  FileSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = ma.getArgument(0)
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::BarrierNode {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential path traversal vulnerability. User-controllable data is used in file operations ($@).",
+  source.getNode(), "Untrusted user input"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:16,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:17,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:18,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:19,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:21,42-55)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:24,31-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:32,16-28)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,13-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,39-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:38,71-79)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:46,34-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:54,29-37)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:55,12-27)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:64,12-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:71,41-49)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:71,68-76)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:24,22-30)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:46,22-33)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_41f29c07/python-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入语句，使用正确的CodeQL模块路径：
+   - 确认java标准库导入正确
+   - 更新TaintTracking路径为codeql/java/ql/src/semmle/code/java/dataflow/TaintTracking.qll
+   - 更新Servlets路径为codeql/java/ql/src/semmle/code/java/frameworks/Servlets.qll
+
+2. 添加必要的依赖导入：
+   - 添加import DataFlow::PathGraph
+   - 添加import semmle.code.java.dataflow.DataFlow
+
+3. 修正类型引用方式：
+   - 确保MethodAccess、ConstructorCall等类型从正确的模块导入
+   - 使用完全限定名引用类型
+
+4. 修正数据流跟踪方法：
+   - 将TaintTracking::localTaint改为正确的数据流传递方法
+   - 确保DataFlow节点的使用方式符合规范
+
+5. 修复类继承和配置：
+   - 确保Configuration类正确继承TaintTracking::Configuration
+   - 验证所有override谓词的签名和实现
+
+6. 修正查询部分：
+   - 确保PathNode的使用正确
+   - 验证select子句的输出格式
+   - 确保三元组(source, sink, message)格式正确
+
+7. 测试和验证：
+   - 编译验证所有错误已解决
+   - 确认警告已消除
+   - 测试规则是否能正确检测漏洞
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-04 22:42:04
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Methods (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:20,8-44)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:21,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:22,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:24,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+ERROR: asExpr() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:33,12-18)
+ERROR: asExpr() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:35,35-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:39,28-36)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+ERROR: asExpr() cannot be resolved for type CookieSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:50,24-32)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:52,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:54,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:56,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:58,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:60,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:62,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:67,38-46)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:69,12-24)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:72,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:77,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:80,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:84,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:88,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:93,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:93,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:80,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:84,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:88,22-33)
+Rule Content:
+/**
+ * @name HttpServlet Path Traversal
+ * @description Detects path traversal vulnerabilities in Java servlets where user-controlled
+ *              input can manipulate file system paths.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/path-traversal
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-073
+ *       owasp-a05:2017
+ *       owasp-a01:2021
+ */
+
+import java
+import semmle.code.java.Methods
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import semmle.code.java.dataflow.DataFlow
+import DataFlow::PathGraph
+
+class ServletRequestSource extends DataFlow::ParameterNode {
+  ServletRequestSource() {
+    exists(MethodAccess ma | 
+      ma.getMethod().getName().regexpMatch("getParameter.*") or
+      ma.getMethod().getName().regexpMatch("getHeader.*") or
+      ma.getMethod().getName() = "getQueryString" or
+      ma.getMethod().getName() = "getPathInfo" or
+      ma.getMethod().getName() = "getServletPath"
+    |
+      this.asExpr() = ma
+    ) or
+    exists(CookieSource cs | this.asExpr() = cs.asExpr())
+  }
+}
+
+class CookieSource extends DataFlow::ParameterNode {
+  CookieSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasQualifiedName("javax.servlet.http", "Cookie")
+    |
+      this.asExpr() = ma
+    )
+  }
+}
+
+class FileSink extends DataFlow::Node {
+  FileSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") and
+      this.asExpr() = cc.getArgument(0)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::BarrierNode {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof ServletRequestSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential path traversal vulnerability. User-controllable data is used in file operations ($@).",
+  source.getNode(), "Untrusted user input"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'matches' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:25,32-39)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:35,1-2)
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:18,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:19,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:20,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:22,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:24,12-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'this' is not bound in the body of this characteristic predicate and the class does not extend any other type (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:23,3-23)
+WARNING: unused class 'ServletRequestSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_19b054a4/python-security-queries/queries/test-rule/TestRule.ql:22,7-27)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 更正导入语句路径：
+   - 添加 `import semmle.code.java.Methods` 用于MethodAccess引用
+   - 更正DataFlow导入为 `import semmle.code.java.dataflow.DataFlow`
+   - 更正TaintTracking导入为 `import semmle.code.java.dataflow.TaintTracking`
+   - 更正Servlets导入为 `import semmle.code.java.frameworks.Servlets`
+   - 确保java标准库导入正确：`import java`
+
+2. 修复方法匹配语法：
+   - 替换`matches`操作符为正则表达式匹配谓词`regexpMatch()`
+   - 示例：`ma.getMethod().getName().regexpMatch("getParameter.*")`
+
+3. 修复类继承关系：
+   - Configuration类需继承`TaintTracking::Configuration`
+   - 添加`extends TaintTracking::Configuration`到PathTraversalConfig类定义
+
+4. 修复方法引用：
+   - 替换`getPathInfo()`和`getServletPath()`为完整方法引用
+   - 添加`import semmle.code.java.frameworks.Servlets`后使用`ServletRequest::getPathInfo`
+
+5. 修正构造方法：
+   - 在ServletRequestSource和CookieSource类中添加`extends DataFlow::ParameterNode`
+   - 确保所有Source/Sink类正确继承相应基类
+
+6. 验证数据类型：
+   - 确保所有MethodAccess引用都有正确的限定符
+   - 检查所有ConstructorCall的类型路径是否正确
+
+7. 修复查询部分：
+   - 确保select子句格式正确
+   - 验证PathNode的使用符合DataFlow::PathGraph规范
+
+8. 测试编译执行：
+   - 验证是否能正常编译通过
+   - 检查所有警告是否已消除
+   - 测试规则是否能正确检测漏洞
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-04 22:43:32
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.dataflow.FlowSources (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:18,8-45)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:20,8-44)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:21,8-16)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:23,36-49)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: asParameter() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:32,12-23)
+ERROR: asParameter() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:34,35-46)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:38,28-41)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+ERROR: asParameter() cannot be resolved for type CookieSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:44,12-23)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:49,24-37)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:51,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:53,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:55,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:57,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:59,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:61,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:66,38-51)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:68,12-24)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:71,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:76,35-48)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:79,31-44)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:83,29-42)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:87,34-47)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:92,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:92,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:79,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:83,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_f026a8ba/python-security-queries/queries/test-rule/TestRule.ql:87,22-33)
+Rule Content:
+/**
+ * @name HttpServlet Path Traversal
+ * @description Detects path traversal vulnerabilities in Java servlets where user-controlled
+ *              input can manipulate file system paths.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/path-traversal
+ * @tags security
+ *       external/cwe/cwe-022
+ *       external/cwe/cwe-073
+ *       owasp-a05:2017
+ *       owasp-a01:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+import DataFlow::PathGraph
+
+class ServletRequestSource extends TaintTracking::Source {
+  ServletRequestSource() {
+    exists(MethodAccess ma | 
+      ma.getMethod().getName().matches("getParameter%") or
+      ma.getMethod().getName().matches("getHeader%") or
+      ma.getMethod().getName() = "getQueryString" or
+      ma.getMethod().getName() = "getPathInfo" or
+      ma.getMethod().getName() = "getServletPath"
+    |
+      this.asParameter() = ma.getAnArgument()
+    ) or
+    exists(CookieSource cs | this.asParameter() = cs.asParameter())
+  }
+}
+
+class CookieSource extends TaintTracking::Source {
+  CookieSource() {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasQualifiedName("javax.servlet.http", "Cookie")
+    |
+      this.asParameter() = ma.getAnArgument()
+    )
+  }
+}
+
+class FileSink extends TaintTracking::Sink {
+  FileSink() {
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "File") and
+      this.asExpr() = cc.getAnArgument()
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileInputStream") and
+      this.asExpr() = cc.getAnArgument()
+    ) or
+    exists(ConstructorCall cc |
+      cc.getConstructedType().hasQualifiedName("java.io", "FileOutputStream") and
+      this.asExpr() = cc.getAnArgument()
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends TaintTracking::Sanitizer {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" and
+      this.asExpr() = ma
+    )
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "PathTraversalConfig" }
+
+  override predicate isSource(TaintTracking::Source source) {
+    source instanceof ServletRequestSource
+  }
+
+  override predicate isSink(TaintTracking::Sink sink) {
+    sink instanceof FileSink
+  }
+
+  override predicate isSanitizer(TaintTracking::Sanitizer sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from PathTraversalConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "Potential path traversal vulnerability. User-controllable data is used in file operations ($@).",
+  source.getNode(), "Untrusted user input"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module java (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:17,8-12)
+ERROR: could not resolve module semmle.code.java.Methods (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:18,8-32)
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:19,8-47)
+ERROR: could not resolve module semmle.code.java.frameworks.Servlets (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:20,8-44)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:21,8-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:22,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:24,36-44)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:26,12-24)
+ERROR: asExpr() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:33,12-18)
+ERROR: asExpr() cannot be resolved for type ServletRequestSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:35,35-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:39,28-36)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:41,12-24)
+ERROR: asExpr() cannot be resolved for type CookieSource.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:45,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:50,24-32)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:52,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:54,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:56,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:58,12-18)
+ERROR: could not resolve type ConstructorCall (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:60,12-27)
+ERROR: asExpr() cannot be resolved for type FileSink.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:62,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:67,38-46)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:69,12-24)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:72,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:77,35-48)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:80,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:84,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:88,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:93,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:93,61-69)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:80,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:84,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test/run_782f7b1f/python-security-queries/queries/test-rule/TestRule.ql:88,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 修正模块导入语句：
+   - 将 `semmle.code.java` 开头的导入改为 `java` 开头的标准导入路径
+   - 确保导入路径符合 CodeQL 标准库命名规范
+
+2. 修正数据流类和方法的引用：
+   - 将所有 `DataFlow::` 前缀改为 `DataFlow` 模块中的正确类名
+   - 确保使用正确的数据流分析类和方法命名
+
+3. 修正节点类型定义：
+   - 将 `ParameterNode` 等节点类型改为 CodeQL 标准的数据流节点类型
+   - 确保继承关系的正确性
+
+4. 修正方法返回值类型：
+   - 确保所有 isSource/isSink/isSanitizer 方法返回正确的类型
+   - 修正方法签名使其符合 CodeQL 规范
+
+5. 修正表达式解析：
+   - 将 `asExpr()` 方法调用改为 CodeQL 标准的表达式获取方法
+   - 确保节点转换的正确性
+
+6. 修正构造函数调用检测：
+   - 使用 CodeQL 标准的构造函数调用检测语法
+   - 确保参数索引的正确性
+
+7. 修正查询主体部分：
+   - 确保路径查询语法符合 CodeQL 规范
+   - 修正节点获取和路径显示的语法
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

@@ -58,7 +58,7 @@ class LLMBot:
             # # 保留系统提示和最近两条消息
             # if len(self.messages) > 2:
             #     self.messages = [self.messages[0]] + [self.messages[1]]
-            if len(self.messages) >= 5:
+            if len(self.messages) > 5:
                 self.messages = [self.messages[0]] + [self.messages[1]]
         return content
     

@@ -1,0 +1,784 @@
+Timestamp: 2025-11-05 12:37:13
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:12,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:53,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:53,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:15,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:38,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:43,22-43)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @severity WARNING
+ * @message Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+
+class TurbineSqlInjection extends TaintTracking::Configuration {
+  TurbineSqlInjection() { this = "TurbineSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // Source 1: String.format() calls or string concatenation
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "format" and ma.getMethod().getDeclaringType().toString() = "String") or
+      ma.getArgument(0).getType() instanceof TypeString and ma.getArgument(0).toString().matches("%+%")
+    |
+      source.asExpr() = ma
+    )
+    or
+    // Source 2: Parameter named $SQL
+    exists(Parameter p | p.getName() = "$SQL" | source.asParameter() = p)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().getName() = "BasePeer" or
+       ma.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      ma.getMethod().getName() = "executeQuery"
+    |
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Literal strings are considered sanitized
+    exists(StringLiteral sl | sanitizer.asExpr() = sl)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Propagation through argument to parameter
+    exists(MethodAccess ma, Parameter p |
+      ma.getAnArgument() = node1.asExpr() and
+      p = ma.getMethod().getAParameter() and
+      node2.asParameter() = p
+    )
+  }
+}
+
+from TurbineSqlInjection config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential SQL injection vulnerability due to unparameterized SQL query"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: turbine-sqli
+  kind: taint
+  severity: WARNING
+  message: "Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'."
+  metadata:
+    language: java
+    category: security
+    cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    technology:
+      - turbine
+
+sources:
+  - id: SQL_CONCAT
+    match:
+      node: CALL
+      where:
+        - op: or
+          conditions:
+            - left: methodFullName
+              op: regex
+              right: "String.format"
+            - left: code
+              op: contains
+              right: "+"
+  - id: SQL_PARAM
+    match:
+      node: PARAM
+      where:
+        - left: name
+          op: eq
+          right: "$SQL"
+
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api:
+        type: "BasePeer|GroupPeer"
+        method: executeQuery
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_SQL
+    match:
+      node: LITERAL
+      where:
+        - left: code
+          op: regex
+          right: '^".+"$'
+
+propagations:
+  - id: SQL_TO_EXEC
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:19
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:49,33-34)
+ERROR: unexpected input '_' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:49,35-36)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:54,1-2)
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:11,8-37)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:12,8-52)
+ERROR: could not resolve module semmle.code.java.StringUtil (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:13,8-35)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:15,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'p' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:48,39-40)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,81-86)
+WARNING: unused class 'TurbineSqlInjection' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:15,7-26)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:31,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:41,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,22-43)
+Rule Content:
+/**
+ * @id turbine-sqli
+ * @severity WARNING
+ * @message Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using 'connection.prepareStatement'.
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.MethodAccess
+import semmle.code.java.dataflow.DataFlow::PathNode
+import semmle.code.java.StringUtil
+
+class TurbineSqlInjection extends TaintTracking::Configuration {
+  TurbineSqlInjection() { this = "TurbineSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    // Source 1: String.format() calls or string concatenation
+    exists(MethodAccess ma |
+      (ma.getMethod().hasName("format") and ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String")) or
+      ma.getArgument(0).getType() instanceof TypeString and exists(ma.getArgument(0).toString()) 
+    |
+      source.asExpr() = ma
+    )
+    or
+    // Source 2: Parameter named $SQL
+    exists(Parameter p | p.getName() = "$SQL" | source.asParameter() = p)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasName("BasePeer") or
+       ma.getMethod().getDeclaringType().hasName("GroupPeer")) and
+      ma.getMethod().hasName("executeQuery")
+    |
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    // Literal strings are considered sanitized
+    exists(StringLiteral sl | sanitizer.asExpr() = sl)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // Propagation through argument to parameter
+    exists(MethodAccess ma, Parameter p |
+      exists(ma.getAnArgument() | _ = node1.asExpr()) and
+      p = ma.getMethod().getAParameter() and
+      node2.asParameter() = p
+    )
+  }
+}
+
+from TurbineSqlInjection config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Potential SQL injection vulnerability due to unparameterized SQL query"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:12,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:17,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:53,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:53,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:15,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:38,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1a1fa456/java-security-queries/queries/test-rule/TestRule.ql:43,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 导入必要的CodeQL库：确保导入正确的TaintTracking模块和其他依赖库。修改import语句为：`import semmle.code.java.dataflow.TaintTracking` 改为 `import semmle.code.java.dataflow.TaintTracking::Configuration`
+
+2. 修正类型引用：
+   - 将 `TaintTracking::Configuration` 改为正确的类路径
+   - 确保 `MethodAccess` 类型来自正确的模块，应该通过 `import semmle.code.java.MethodAccess` 导入
+
+3. 修正DataFlow::PathNode引用：
+   - 添加正确的导入语句：`import semmle.code.java.dataflow.DataFlow::PathNode`
+
+4. 修正方法定义问题：
+   - 确保所有override方法都正确实现了父类方法，检查方法签名是否正确匹配父类的签名
+
+5. 检查表达式语法：
+   - 确保所有方法调用和表达式语法遵循CodeQL规范，特别是正则表达式匹配语法
+
+6. 验证配置类初始化：
+   - 检查配置类构造函数是否正确初始化，确保 `this = "TurbineSqlInjection"` 语法的正确性
+
+7. 检查参数类型匹配：
+   - 确保所有参数类型与CodeQL标准库的类型系统匹配，特别是参数和表达式的转换
+
+8. 处理警告信息：
+   - 确保所有定义的方法都被正确使用，移除未使用的代码或方法
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:39:25
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:14,8-34)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:16,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+ERROR: isStringLiteral() cannot be resolved for type Expr::Literal (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:38,51-66)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:49,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:49,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:37,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:41,22-43)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind problem
+ * @id java/turbine-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.StringOps
+
+class TurbineSqlInjection extends TaintTracking::Configuration {
+  TurbineSqlInjection() { this = "TurbineSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      (ma.getMethod().getName() = "format" and ma.getMethod().getDeclaringType().toString() = "String") or
+      exists(Expr e | e = source.asExpr() | e instanceof AddExpr)
+    )
+    or
+    exists(Parameter p | p.getName() = "$SQL" and source.asParameter() = p)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().getName() = "executeQuery" and
+      (ma.getMethod().getDeclaringType().getName() = "BasePeer" or 
+       ma.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Literal l | l = sanitizer.asExpr() | l.isStringLiteral())
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodAccess ma |
+      node1.asExpr() = ma.getAnArgument() and
+      node2.asParameter() = ma.getMethod().getAParameter()
+    )
+  }
+}
+
+from TurbineSqlInjection config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected a formatted string in a SQL statement. This could lead to SQL injection. Use prepared statements instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: missing one of: ')' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:49,33-34)
+ERROR: unexpected input '_' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:49,35-36)
+ERROR: unexpected input '}' expecting one of: 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '_', '-', '(', ')', '[', '+', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:54,1-2)
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:11,8-37)
+ERROR: could not resolve module semmle.code.java.dataflow.DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:12,8-52)
+ERROR: could not resolve module semmle.code.java.StringUtil (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:13,8-35)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:15,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:32,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:48,12-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'p' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:48,39-40)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,81-86)
+WARNING: unused class 'TurbineSqlInjection' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:15,7-26)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:31,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:41,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e4e34fb6/java-security-queries/queries/test-rule/TestRule.ql:46,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入语句：
+   - 移除不存在的模块导入 `semmle.code.java.MethodAccess` 和 `semmle.code.java.StringUtil`
+   - 使用正确的基础导入 `import semmle.code.java.dataflow.TaintTracking`
+   - 确保 `PathNode` 的正确导入方式
+
+2. 修改配置类声明：
+   - 修正 `TaintTracking::Configuration` 继承关系为标准的 `TaintTracking::Configuration`
+
+3. 修正方法访问表达式：
+   - 确保所有 `MethodAccess` 引用正确
+   - 修改 `exists(ma.getAnArgument() | _ = node1.asExpr())` 为正确的绑定表达式
+
+4. 解决语法错误：
+   - 修正缺少的右括号问题
+   - 移除不合法的下划线占位符 `_`
+
+5. 处理警告信息：
+   - 确保所有变量都被正确使用
+   - 移除未使用的变量声明
+   - 确保类和方法都被有效引用
+
+6. 验证数据流路径：
+   - 检查 `DataFlow::PathNode` 的正确使用
+   - 确保查询模块包含有效的查询语句
+
+7. 测试规则有效性：
+   - 验证修复后的规则能够正确编译
+   - 确保语义功能与原始规则一致
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:40:30
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:16,35-63)
+ERROR: could not resolve type Add (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:22,60-63)
+ERROR: could not resolve type StringType (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:38,74-84)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:49,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:49,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:37,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:41,22-43)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind problem
+ * @id java/turbine-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class TurbineSqlInjection extends TaintTracking::Configuration {
+  TurbineSqlInjection() { this = "TurbineSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodCall ma |
+      (ma.getMethod().getName() = "format" and ma.getMethod().getDeclaringType().toString() = "String") or
+      exists(Expr e | e = source.asExpr() and e instanceof Add)
+    )
+    or
+    exists(Parameter p | p.getName() = "$SQL" and source.asParameter() = p)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      mc.getMethod().getName() = "executeQuery" and
+      (mc.getMethod().getDeclaringType().getName() = "BasePeer" or 
+       mc.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Literal l | l = sanitizer.asExpr() and l.getType() instanceof StringType)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodCall mc |
+      node1.asExpr() = mc.getAnArgument() and
+      node2.asParameter() = mc.getMethod().getAParameter()
+    )
+  }
+}
+
+from TurbineSqlInjection config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected a formatted string in a SQL statement. This could lead to SQL injection. Use prepared statements instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOps (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:14,8-34)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:16,35-63)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:20,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+ERROR: isStringLiteral() cannot be resolved for type Expr::Literal (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:38,51-66)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:42,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:49,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:49,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:37,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ae6fe369/java-security-queries/queries/test-rule/TestRule.ql:41,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入语句：
+   - 删除不存在或不必要的模块导入 `semmle.code.java.StringOps`
+   - 确认使用正确的基础导入 `import semmle.code.java.dataflow.TaintTracking`
+   - 确保 `DataFlow::PathNode` 的正确导入方式是 `import DataFlow::PathGraph`
+
+2. 修改配置类声明：
+   - 修正 `TaintTracking::Configuration` 为正确的完整路径 `TaintTracking::Configuration`
+   - 确保类正确继承自 `TaintTracking::Configuration` 并实现必要方法
+
+3. 修正方法访问表达式：
+   - 确保所有 `MethodAccess` 引用正确，使用完整路径 `MethodAccess`
+   - 修正 `isStringLiteral()` 为 `getType() instanceof StringType`
+
+4. 处理数据流节点引用：
+   - 修正 `DataFlow::PathNode` 为 `DataFlow::PathNode` 并确保正确导入
+   - 确保查询语句中的数据流节点引用正确
+
+5. 解决警告信息：
+   - 确保所有方法都被正确调用
+   - 移除未使用的变量声明
+   - 确保类的方法实现完整且正确
+
+6. 验证规则结构完整性：
+   - 检查所有谓词实现是否正确
+   - 确保查询语句正确引用配置类
+   - 验证流路径分析逻辑正确性
+
+7. 最终测试：
+   - 验证修复后的规则能够通过编译
+   - 确保语义功能与原始需求一致
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:41:26
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:15,8-26)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:17,35-63)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:50,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:50,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:29,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:38,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_10d6d25a/java-security-queries/queries/test-rule/TestRule.ql:42,22-43)
+Rule Content:
+/**
+ * @name Turbine SQL Injection
+ * @description Detected a formatted string in a SQL statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use a prepared statements (java.sql.PreparedStatement) instead.
+ * @kind problem
+ * @id java/turbine-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow
+import DataFlow::PathNode
+
+class TurbineSqlInjection extends TaintTracking::Configuration {
+  TurbineSqlInjection() { this = "TurbineSqlInjection" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodCall ma |
+      (ma.getMethod().getName() = "format" and ma.getMethod().getDeclaringType().toString() = "String") or
+      exists(AddExpr e | e = source.asExpr())
+    )
+    or
+    exists(Parameter p | p.getName() = "$SQL" and source.asParameter() = p)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodCall mc |
+      mc.getMethod().getName() = "executeQuery" and
+      (mc.getMethod().getDeclaringType().getName() = "BasePeer" or 
+       mc.getMethod().getDeclaringType().getName() = "GroupPeer") and
+      sink.asExpr() = mc.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Literal l | l = sanitizer.asExpr() and l.getType() instanceof TypeString)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(MethodCall mc |
+      node1.asExpr() = mc.getAnArgument() and
+      node2.asParameter() = mc.getMethod().getAParameter()
+    )
+  }
+}
+
+from TurbineSqlInjection config, DataFlow::PathNode source, DataFlow::PathNode sink
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected a formatted string in a SQL statement. This could lead to SQL injection. Use prepared statements instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:14,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:16,35-63)
+ERROR: could not resolve type Add (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:22,60-63)
+ERROR: could not resolve type StringType (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:38,74-84)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:49,34-52)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:49,61-79)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:19,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:37,22-33)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_77c87a12/java-security-queries/queries/test-rule/TestRule.ql:41,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 导入正确的模块：
+   - 将错误的 `DataFlow::PathGraph` 替换为正确的 `DataFlow`
+   - 添加 `DataFlow::PathNode` 导入
+
+2. 修正继承的配置类：
+   - 将 `TaintTracking::Configuration` 替换为正确的 `TaintTracking::Configuration`
+
+3. 修正运算符类型：
+   - 将 `Add` 替换为正确的 `AddExpr` 用于表示加法表达式
+
+4. 修正字符串类型检查：
+   - 将 `StringType` 替换为 `TypeString` 用于检查字符串类型
+
+5. 确保所有方法都被使用：
+   - 验证 Configuration 类中所有方法被正确调用
+   - 确保 `hasFlowPath` 方法正确使用这些方法
+
+6. 更新查询结构：
+   - 修正 `DataFlow::PathNode` 的使用方式
+   - 确保 `hasFlowPath` 调用正确
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

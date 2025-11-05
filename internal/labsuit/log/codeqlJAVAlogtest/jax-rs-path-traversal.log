@@ -1,0 +1,802 @@
+Timestamp: 2025-11-05 12:37:14
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:19,31-46)
+ERROR: could not resolve predicate getAnAnnotation/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:21,5-20)
+ERROR: could not resolve predicate getAnAnnotation/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:22,5-20)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:26,35-47)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:28,5-14)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:29,5-14)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:33,38-50)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:35,5-14)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:36,5-14)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:40,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:43,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+Rule Content:
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class IsPathParameter extends MethodParameter {
+  IsPathParameter() {
+    getAnAnnotation().getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+    getAnAnnotation().toString().matches("@PathParam")
+  }
+}
+
+class FileConstructorCall extends MethodAccess {
+  FileConstructorCall() {
+    getMethod().hasName("<init>") and
+    getMethod().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends MethodAccess {
+  FilenameUtilsSanitizer() {
+    getMethod().hasName("getName") and
+    getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "jax-rs-path-traversal"
+  kind: taint
+  severity: WARNING
+  message: "Detected a potential path traversal. A malicious actor could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+  metadata:
+    language: java
+    category: security
+    tags:
+      - jax-rs
+sources:
+  - id: PATH_PARAM
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: typeFullName
+          right: "@PathParam|@javax.ws.rs.PathParam"
+sinks:
+  - id: FILE_CREATION
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: "<init>"
+      where:
+        - op: contains
+          left: code
+          right: $VAR
+propagations:
+  - id: PARAM_TO_ARG
+    edge: arg->param
+    kind: taint
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+    scope:
+      sinks: [FILE_CREATION]
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:20
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JaxRs (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:18,8-41)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:34,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:35,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:41,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:42,5-14)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:46,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:61,22-33)
+Rule Content:
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.JaxRs
+
+class IsPathParameter extends Parameter {
+  IsPathParameter() {
+    exists(Annotation a |
+      a = getAnAnnotation() and
+      (
+        a.getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+        a.toString().matches("@PathParam")
+      )
+    )
+  }
+}
+
+class FileConstructorCall extends Call {
+  FileConstructorCall() {
+    getTarget().hasName("<init>") and
+    getTarget().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends Call {
+  FilenameUtilsSanitizer() {
+    getTarget().hasName("getName") and
+    getTarget().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer.getArgument(0)
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodParameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:19,31-46)
+ERROR: could not resolve predicate getAnAnnotation/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:21,5-20)
+ERROR: could not resolve predicate getAnAnnotation/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:22,5-20)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:26,35-47)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:28,5-14)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:29,5-14)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:33,38-50)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:35,5-14)
+ERROR: could not resolve predicate getMethod/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:36,5-14)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:40,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:43,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1b54c7f0/java-security-queries/queries/test-rule/TestRule.ql:55,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 替换MethodParameter类型为Parameter类，因为最新的CodeQL Java库中已使用Parameter替代旧的MethodParameter类型
+2. 将getAnAnnotation()方法替换为getAnnotations()并使用exists判断是否存在符合条件的注解
+3. 替换MethodAccess类型为Expr或特定的Call类来表示方法调用
+4. 将getMethod()替换为getTarget()方法来获取被调用的方法
+5. 确保正确导入TaintTracking::Configuration类和相关路径分析模块
+6. 检查并修正所有方法访问权限和返回类型，确保与父类配置一致
+7. 验证所有类型引用和方法调用是否符合最新CodeQL Java库规范
+8. 消除所有未使用方法警告，确保所有定义的方法都被正确实现和使用
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:39:38
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:45,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+Rule Content:
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class IsPathParameter extends Parameter {
+  IsPathParameter() {
+    exists(Annotation a |
+      a = this.getAnAnnotation() and
+      (
+        a.getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+        a.toString().matches("@PathParam")
+      )
+    )
+  }
+}
+
+class FileConstructorCall extends Call {
+  FileConstructorCall() {
+    this.getCallee().hasName("<init>") and
+    this.getCallee().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends Call {
+  FilenameUtilsSanitizer() {
+    this.getCallee().hasName("getName") and
+    this.getCallee().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer.getArgument(0)
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.JaxRs (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:18,8-41)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:34,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:35,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:41,5-14)
+ERROR: could not resolve predicate getTarget/0 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:42,5-14)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:46,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:49,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_e9bf218c/java-security-queries/queries/test-rule/TestRule.ql:61,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 移除不可用的JaxRs模块导入，改用标准注解处理方法
+2. 将Call类的方法访问从getTarget()改为getCallee()，这是CodeQL标准API
+3. 确保TaintTracking::Configuration的正确导入路径为DataFlow::Configuration
+4. 检查所有重写方法(isSource/isSink/isSanitizer)是否与父类签名匹配
+5. 验证所有类型引用和方法调用是否符合最新CodeQL Java库标准
+6. 确保所有定义的方法都在查询中被实际使用
+```
+
+```ql
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class IsPathParameter extends Parameter {
+  IsPathParameter() {
+    exists(Annotation a |
+      a = this.getAnAnnotation() and
+      (
+        a.getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+        a.toString().matches("@PathParam")
+      )
+    )
+  }
+}
+
+class FileConstructorCall extends Call {
+  FileConstructorCall() {
+    getCallee().hasName("<init>") and
+    getCallee().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends Call {
+  FilenameUtilsSanitizer() {
+    getCallee().hasName("getName") and
+    getCallee().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer.getArgument(0)
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:40:35
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:45,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+Rule Content:
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class IsPathParameter extends Parameter {
+  IsPathParameter() {
+    exists(Annotation a |
+      a = this.getAnAnnotation() and
+      (
+        a.getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+        a.toString().matches("@PathParam")
+      )
+    )
+  }
+}
+
+class FileConstructorCall extends Call {
+  FileConstructorCall() {
+    getCallee().hasName("<init>") and
+    getCallee().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends Call {
+  FilenameUtilsSanitizer() {
+    getCallee().hasName("getName") and
+    getCallee().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer.getArgument(0)
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:45,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_12219fa9/java-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 将TaintTracking::Configuration改为DataFlow::Configuration，这是CodeQL的正确类型引用
+2. 确保所有重写方法(isSource/isSink/isSanitizer)都与父类完全匹配保留override修饰符
+3. 确认DataFlow模块已正确导入并包含Configuration类
+4. 检查调用this.getCallee()是否必需，CodeQL新版本可能隐式处理this引用
+5. 验证所有语法是否符合最新CodeQL Java库标准(2023版)
+6. 确保查询主体部分显式调用了所有自定义谓词方法
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:41:28
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql:17,8-48)
+ERROR: could not resolve module TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql:45,35-49)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_229d7612/java-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+Rule Content:
+/**
+ * @name Potential Path Traversal in JAX-RS
+ * @description Detected a potential path traversal. A malicious actor could control the location of this file,
+ * to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables
+ * in file paths are sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision high
+ * @id java/jax-rs-path-traversal
+ * @tags security
+ *       jax-rs
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking2
+
+class IsPathParameter extends Parameter {
+  IsPathParameter() {
+    exists(Annotation a |
+      a = this.getAnAnnotation() and
+      (
+        a.getType().hasQualifiedName("javax.ws.rs", "PathParam") or
+        a.toString().matches("@PathParam")
+      )
+    )
+  }
+}
+
+class FileConstructorCall extends Call {
+  FileConstructorCall() {
+    getCallee().hasName("<init>") and
+    getCallee().getDeclaringType().hasQualifiedName("java.io", "File")
+  }
+}
+
+class FilenameUtilsSanitizer extends Call {
+  FilenameUtilsSanitizer() {
+    getCallee().hasName("getName") and
+    getCallee().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils")
+  }
+}
+
+class PathTraversalConfig extends TaintTracking2::Configuration {
+  PathTraversalConfig() { this = "JaxRsPathTraversal" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(IsPathParameter param |
+      source.asParameter() = param
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(FileConstructorCall call |
+      sink.asExpr() = call.getArgument(0)
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node node) {
+    exists(FilenameUtilsSanitizer sanitizer |
+      node.asExpr() = sanitizer
+    )
+  }
+}
+
+from PathTraversalConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal from $@ to unsanitized file creation", source,
+  source.toString() + " to " + sink.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:45,35-63)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:48,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_141d6934/java-security-queries/queries/test-rule/TestRule.ql:60,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 更改导入语句：将 `import semmle.code.java.dataflow.TaintTracking` 替换为 `import semmle.code.java.dataflow.TaintTracking2`，因为在新版CodeQL中，污点跟踪配置类已迁移到TaintTracking2模块。
+
+2. 修改配置类继承：将 `class PathTraversalConfig extends TaintTracking::Configuration` 改为 `class PathTraversalConfig extends TaintTracking2::Configuration`，以匹配新的模块名称。
+
+3. 确保配置类方法被引用：在查询主体部分（from语句）明确实例化配置类并使用它，例如添加 `PathTraversalConfig config = new PathTraversalConfig()` 语句。
+
+4. 验证方法覆盖：检查所有override关键字的方法（isSource、isSink、isSanitizer）是否都具有正确的签名和实现，确保它们被配置类正确调用。
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

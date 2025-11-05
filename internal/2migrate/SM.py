@@ -132,7 +132,7 @@ def process_multiple_files(directory: str, output_dir: str, log_dir: str, max_wo
     print(f"[📂] 输出目录已有 {len(output_files)} 个文件")
 
     yaml_files = get_all_yaml_files(directory)
-    # yaml_files = yaml_files[:1]
+    yaml_files = yaml_files[:2]
     print(f"[📄] 待迁移 YAML 文件数: {len(yaml_files)}")
 
     existing = [os.path.splitext(f)[0].split('_')[0] for f in os.listdir(output_dir)]
@@ -158,8 +158,8 @@ def process_multiple_files(directory: str, output_dir: str, log_dir: str, max_wo
 
 if __name__ == "__main__":
     input_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/IrBase/JavaIR"
-    output_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/output/Semgrep2/CodeQL/JAVA2"
-    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/codeqlJAVAlog2"
+    output_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/output/Semgrep2/CodeQL/JAVAtest"
+    log_directory = "/home/cbb/SAST-Rule-Migrate/internal/labsuit/log/codeqlJAVAlogtest"
 
     for d in [input_directory,output_directory, log_directory]:
         os.makedirs(d, exist_ok=True)

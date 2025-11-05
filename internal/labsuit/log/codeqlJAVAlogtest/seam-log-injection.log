@@ -1,0 +1,614 @@
+Timestamp: 2025-11-05 12:37:12
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:41,42-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:44,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:48,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can lead to code execution.
+ * @kind taint
+ * @problem.severity error
+ * @security-severity 8.8
+ * @id java/seam-log-injection
+ * @tags security
+ *       jboss
+ *       injection
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+class SeamLogMethod extends Method {
+  SeamLogMethod() {
+    this.getDeclaringType().getQualifiedName() = "org.jboss.seam.log.Log" and
+    this.getName() in ["debug", "error", "fatal", "info", "trace", "warn"]
+  }
+}
+
+class SeamLogSource extends DataFlow::Node {
+  SeamLogSource() {
+    exists(MethodAccess ma | 
+      ma.getMethod() instanceof SeamLogMethod and 
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SeamLogSink extends DataFlow::Node {
+  SeamLogSink() {
+    exists(MethodAccess ma | 
+      ma.getMethod() instanceof SeamLogMethod and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class SeamLogTaintTrackingConfig extends TaintTracking::Configuration {
+  SeamLogTaintTrackingConfig() { this = "SeamLogTaintTrackingConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SeamLogSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SeamLogSink
+  }
+}
+
+from SeamLogTaintTrackingConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential log injection vulnerability due to dynamic content in Seam log expression."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: seam-log-injection
+  kind: taint
+  severity: ERROR
+  message: >-
+    Seam Logging API support an expression language to introduce bean property to log messages.
+    The expression language can also be the source to unwanted code execution.
+    In this context, an expression is built with a dynamic value.
+    The source of the value(s) should be verified to avoid that unfiltered values fall into this risky
+    code evaluation.
+  tags:
+    - jboss
+  metadata:
+    language: java
+    category: security
+    cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+    owasp: "A03:2021 - Injection"
+sources:
+  - id: DYNAMIC_VALUE
+    match:
+      node: CALL
+      api:
+        type: org.jboss.seam.log.Log
+        method: debug|error|fatal|info|trace|warn
+sinks:
+  - id: LOG_INJECTION
+    match:
+      node: CALL
+      api:
+        type: org.jboss.seam.log.Log
+        method: debug|error|fatal|info|trace|warn
+      arg_index: 0
+sanitizers: []
+propagations:
+  - id: VALUE_PROPAGATION
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:05
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:15,8-26)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:42,42-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Seam Logging API supports expression language that can lead to code execution.
+ * @kind taint
+ * @problem.severity error
+ * @security-severity 8.8
+ * @id java/seam-log-injection
+ * @tags security
+ *       jboss
+ *       injection
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathNode
+
+class SeamLogMethod extends Method {
+  SeamLogMethod() {
+    this.getDeclaringType().getQualifiedName() = "org.jboss.seam.log.Log" and
+    this.getName() in ["debug", "error", "fatal", "info", "trace", "warn"]
+  }
+}
+
+class SeamLogSource extends DataFlow::Node {
+  SeamLogSource() {
+    exists(Call ma | 
+      ma.getCallee() instanceof SeamLogMethod and 
+      this.asExpr() = ma
+    )
+  }
+}
+
+class SeamLogSink extends DataFlow::Node {
+  SeamLogSink() {
+    exists(Call ma | 
+      ma.getCallee() instanceof SeamLogMethod and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+class SeamLogTaintTrackingConfig extends TaintTracking::Configuration {
+  SeamLogTaintTrackingConfig() { this = "SeamLogTaintTrackingConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SeamLogSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SeamLogSink
+  }
+}
+
+from SeamLogTaintTrackingConfig config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Potential log injection vulnerability due to dynamic content in Seam log expression."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:25,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:34,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:41,42-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:44,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5279a5be/java-security-queries/queries/test-rule/TestRule.ql:48,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正MethodAccess引用错误：将`MethodAccess`替换为Codeql中正确的语法`MethodAccessNode`，这是Java分析中表示方法访问的标准类型
+2. 修正TaintTracking配置类的语法错误：将`TaintTracking::Configuration`改为`TaintTracking::Configuration`并确保正确导入相关模块
+3. 确保所有使用的模块都已正确导入：检查并确认导入了`semmle.code.java.dataflow.FlowSources`和`semmle.code.java.dataflow.TaintTracking`
+4. 移除未使用的警告：检查`isSource`和`isSink`方法是否被正确引用，确保它们在配置类中被正确覆盖和使用
+5. 验证数据类型一致性：确保所有变量类型与方法参数类型匹配，特别是`DataFlow::Node`与表达式之间的转换
+6. 检查方法调用语法：确保`getMethod()`, `getArgument()`等方法的调用方式符合Codeql规范
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:56
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:15,29-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:35,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:35,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:26,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects Seam Logging API calls with potential expression language injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       jboss
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+
+class SeamLogConfig extends TaintTracking::Configuration {
+  SeamLogConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, SeamLogConfig config
+where config.hasFlowPath(source, sink)
+select sink, 
+  "Seam Logging API supports expression language which may lead to code execution. The argument is from $@.",
+  source, source.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:15,8-26)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:42,42-70)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:45,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c5cf4012/java-security-queries/queries/test-rule/TestRule.ql:49,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 移除未使用的PathNode导入：删除`import DataFlow::PathNode`语句，因为规则中没有使用到PathNode相关功能
+2. 更新TaintTracking配置类的导入：确保正确导入了完整的路径`import semmle.code.java.dataflow.TaintTracking::Configuration`
+3. 检查源和汇的调用关系：确认`isSource`和`isSink`方法被正确覆盖并在配置中使用
+4. 验证方法访问语法：确保`Call`类型的正确使用，以及`getCallee()`方法的正确性
+5. 审查数据类型转换：确认`DataFlow::Node`与表达式(`asExpr()`)之间的转换是合法且一致的
+6. 清理警告信息：检查并确保所有方法都被正确使用，消除"unused method"警告
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:39:56
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:13,8-37)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:17,29-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects Seam Logging API calls with potential expression language injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       jboss
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.MethodAccess
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow::PathGraph
+
+class SeamLogConfig extends TaintTracking::Configuration {
+  SeamLogConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, SeamLogConfig config
+where config.hasFlow(source, sink)
+select sink, 
+  "Seam Logging API supports expression language which may lead to code execution. The argument is from $@.",
+  source, source.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:15,29-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:19,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:27,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:35,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:35,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:18,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7e4730eb/java-security-queries/queries/test-rule/TestRule.ql:26,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修复TaintTracking配置类导入路径：更新为完整的导入路径`import semmle.code.java.dataflow.TaintTracking::Configuration`
+
+2. 添加MethodAccess类导入：在文件开头添加`import semmle.code.java.MethodAccess`以解决MethodAccess类型识别问题
+
+3. 修复DataFlow::PathNode导入问题：
+   - 移除错误的PathNode用法
+   - 改为导入并使用正确的DataFlow路径节点类`import DataFlow::Node`
+   - 更新查询部分使用DataFlow::Node而非PathNode
+
+4. 确保方法被正确使用：
+   - 确认isSource和isSink方法在Configuration中被正确覆盖
+   - 检查方法返回值类型与预期一致
+
+5. 更新查询语句：
+   - 将PathNode替换为Node
+   - 确保config.hasFlowPath()参数类型匹配
+
+6. 验证类型转换：
+   - 检查所有asExpr()转换是否符合Codeql规范
+   - 确保method访问和参数获取语法正确
+
+7. 清理警告信息：
+   - 确认所有定义的方法都被实际使用
+   - 移除未使用的方法或变量
+
+8. 测试编译：
+   - 阶段性地编译验证修改效果
+   - 逐个解决报错直到完全通过编译
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:40:47
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:13,8-46)
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:17,29-52)
+ERROR: could not resolve type DataFlow::MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:21,12-34)
+ERROR: could not resolve type DataFlow::MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:29,12-34)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de2545e9/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+Rule Content:
+/**
+ * @name Seam Log Injection
+ * @description Detects Seam Logging API calls with potential expression language injection
+ * @kind path-problem
+ * @problem.severity error
+ * @id java/seam-log-injection
+ * @tags security
+ *       jboss
+ *       external/cwe/cwe-95
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.MethodAccess
+import semmle.code.java.dataflow.TaintTracking
+import DataFlow
+
+class SeamLogConfig extends DataFlow::Configuration {
+  SeamLogConfig() { this = "SeamLogInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    exists(DataFlow::MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      source.asExpr() = ma
+    )
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    exists(DataFlow::MethodAccess ma |
+      ma.getMethod().hasName(["debug", "error", "fatal", "info", "trace", "warn"]) and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.jboss.seam.log", "Log") and
+      sink.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, SeamLogConfig config
+where config.hasFlow(source, sink)
+select sink, 
+  "Seam Logging API supports expression language which may lead to code execution. The argument is from $@.",
+  source, source.toString()
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:13,8-37)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:15,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:17,29-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:21,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:29,12-24)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:20,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3af2cf76/java-security-queries/queries/test-rule/TestRule.ql:28,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入语句：将 'semmle.code.java.MethodAccess' 改为正确的导入路径 'semmle.code.java.dataflow.MethodAccess'
+2. 修正导入语句：将 'DataFlow::PathGraph' 改为正确的导入路径 'DataFlow'
+3. 修正基类引用：将 'TaintTracking::Configuration' 改为正确的类路径 'DataFlow::Configuration'
+4. 修正方法访问引用：将 'MethodAccess' 改为 'DataFlow::MethodAccess'
+5. 确保所有未使用的方法确实需要保留（根据规则逻辑应该是需要的）
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

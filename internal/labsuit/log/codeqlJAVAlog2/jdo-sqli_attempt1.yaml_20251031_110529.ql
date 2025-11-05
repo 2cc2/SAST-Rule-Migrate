@@ -1,97 +1,79 @@
 /**
- * @name JDOSQL Injection
- * @id jdo-sqli
- * @kind problem
- * @severity Warning
+ * @name JDO SQL Injection
  * @description Detected a formatted string in a SQL statement. This could lead to SQL injection
- *              if variables in the SQL statement are not properly sanitized. Use a prepared statements
- *              (java.sql.PreparedStatement) instead. You can obtain a PreparedStatement using
- *              'connection.prepareStatement'.
+ *              if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/jdo-sqli
+ * @tags security
+ *       external/cwe/cwe-089
  */
 
 import java
 import semmle.code.java.dataflow.TaintTracking
-import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringFormat
+import DataFlow::PathGraph
 
-class SqlSource extends DataFlow::Node {
-  SqlSource() {
+class JdoSqlSource extends DataFlow::Node {
+  JdoSqlSource() {
+    // String.format() calls
     exists(MethodAccess ma |
       ma.getMethod().hasName("format") and
       ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "String") and
-      ma = this.asExpr()
-    ) or
-    exists(AssignStmt assign |
-      assign.getRValue().getType().toString() = "String" and
-      assign.getRValue().toString().matches("%SQL = %X + %Y") and
-      assign.getRValue() = this.asExpr()
-    ) or
-    exists(Parameter p |
-      p.getName().matches("%SQL%") and
-      p = this.asParameter()
+      this.asExpr() = ma
+    )
+    or
+    // Variables named SQL
+    exists(Variable v |
+      this.asExpr() = v.getAnAccess() and
+      v.getType().hasName("String") and
+      v.getName().matches("%SQL%")
     )
   }
 }
 
-class SqlSink extends DataFlow::Node {
-  SqlSink() {
+class JdoSink extends DataFlow::Node {
+  JdoSink() {
     exists(MethodAccess ma |
       (
-        ma.getMethod().getName() = "setFilter" and
+        (ma.getMethod().hasName("setFilter") or ma.getMethod().hasName("setGrouping")) and
         ma.getMethod().getDeclaringType().hasQualifiedName("javax.jdo", "Query") and
-        ma.getArgument(0) = this.asExpr()
-      ) or
+        this.asExpr() = ma.getArgument(0)
+      )
+      or
       (
-        ma.getMethod().getName() = "setGrouping" and
-        ma.getMethod().getDeclaringType().hasQualifiedName("javax.jdo", "Query") and
-        ma.getArgument(0) = this.asExpr()
-      ) or
-      (
-        ma.getMethod().getName() = "newQuery" and
+        ma.getMethod().hasName("newQuery") and
         ma.getMethod().getDeclaringType().hasQualifiedName("javax.jdo", "PersistenceManager") and
-        ma.getArgument(1) = this.asExpr()
+        this.asExpr() = ma.getArgument(0)
       )
     )
   }
 }
 
-class SafeAssignment extends DataFlow::Node {
-  SafeAssignment() {
-    exists(AssignStmt assign |
-      assign.getRValue().getType().toString() = "String" and
-      assign.getRValue().toString().matches("\"...\" + \"...\"") and
-      assign.getRValue() = this.asExpr()
-    )
+class JdoSanitizer extends DataFlow::Node {
+  JdoSanitizer() {
+    this.asExpr() instanceof StringLiteral and
+    this.asExpr().toString().matches("\"[^\"]+\"\\s*\\+\\s*\"[^\"]+\"")
   }
 }
 
-class SafeParameter extends DataFlow::Node {
-  SafeParameter() {
-    exists(Parameter p |
-      p.getInitializer().toString().matches("\"...\"") and
-      p = this.asParameter()
-    )
-  }
-}
+class JdoTaintConfig extends TaintTracking::Configuration {
+  JdoTaintConfig() { this = "JDO SQL Injection" }
 
-class SqlTaintTrackingConfiguration extends TaintTracking::Configuration {
-  SqlTaintTrackingConfiguration() { this = "SqlTaintTrackingConfiguration" }
+  override predicate isSource(DataFlow::Node source) { source instanceof JdoSqlSource }
 
-  override predicate isSource(DataFlow::Node source) { source instanceof SqlSource }
+  override predicate isSink(DataFlow::Node sink) { sink instanceof JdoSink }
 
-  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
-
-  override predicate isSanitizer(DataFlow::Node node) {
-    node instanceof SafeAssignment or node instanceof SafeParameter
-  }
+  override predicate isSanitizer(DataFlow::Node node) { node instanceof JdoSanitizer }
 
   override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
-    exists(MethodAccess mc |
-      pred.asExpr() = mc.getArgument(_) and
-      succ.asParameter() = mc.getMethod().getAParameter()
+    exists(AddExpr add |
+      add.getAnOperand() = pred.asExpr() and
+      add = succ.asExpr()
     )
   }
 }
 
-from SqlTaintTrackingConfiguration config, DataFlow::PathNode source, DataFlow::PathNode sink
-where config.hasFlowPath(source, sink)
-select sink.getNode(), source, sink, "Potential SQL injection vulnerability due to using formatted strings in JDO query"
+from JdoTaintConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink, source, sink, "User-provided SQL string reaches JDO query execution without proper sanitization"

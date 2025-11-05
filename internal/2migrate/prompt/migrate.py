@@ -47,6 +47,10 @@ class RepairPrompt(PromptTemplate):
             {advise}
             修不好你永远也别想出去！
             </advise>
+            <code>
+            待修改的代码如下
+            {code}
+            </code>
             <output>
             请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
             ```ql

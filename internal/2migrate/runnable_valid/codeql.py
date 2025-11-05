@@ -8,33 +8,47 @@ import shutil
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-
 # ------------ 配置区 ------------
 codeql_path = "/home/cbb/codeql-cli/codeql/codeql"  # CodeQL 可执行文件路径
-base_path = "/home/cbb/SAST-Rule-Migrate/migrate/test/codeql_test"  # 持久化目录
-max_workers = 3  # 并发线程数
+# codeql_path = "/home/cbb/codeql2/codeql/codeql"
+base_path = "/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test"  # 持久化目录
+max_workers = 1  # 并发线程数
 cmd_timeout = 300  # 子进程超时（秒）
 keep_on_fail = True  # 是否在验证失败时保留临时目录
 # ---------------------------------
 
-packages_dir = os.path.expanduser("~/.codeql/packages")
-
+packages_dir = os.path.expanduser("/home/cbb/.codeql/packages/")
+# codeql_version = "2.18.5"
 
 def ensure_dir(p):
     os.makedirs(p, exist_ok=True)
 
 
-def write_codeql_pack_yaml(root_dir: str, language: str = "python"):
+
+
+def write_codeql_pack_yaml(root_dir: str, language: str = "java"):
     """写入 codeql-pack.yml"""
     pack_file = os.path.join(root_dir, "codeql-pack.yml")
+
+    # ✅ 对 Java 语言显式依赖 java-all 和 java-queries
+    if language == "java":
+        dependencies = (
+            "dependencies:\n"
+            "  codeql/java-all: \"*\"\n"
+            "  codeql/java-queries: \"*\"\n"
+        )
+    else:
+        dependencies = f"dependencies:\n  codeql/{language}-all: \"*\"\n"
+
     with open(pack_file, "w") as f:
         f.write(
             f"name: sast/{language}-security-queries\n"
             "version: 0.0.1\n"
             "library: false\n"
-            f"dependencies:\n  codeql/{language}-all: \"*\"\n"
+            f"{dependencies}"
         )
     return pack_file
+
 
 
 def write_rule_file(rule_file: str, rule_content: str):
@@ -87,26 +101,6 @@ def write_sample_code(sample_file: str, language: str = "python"):
     with open(sample_file, "w", encoding="utf-8") as f:
         f.write(content)
 
-# def write_sample_code(sample_file: str, language: str = "python"):
-#     """写入简单样例源码"""
-#     if language == "python":
-#         content = "import os\nos.system('ls')\n"
-#     elif language == "java":
-#         content = (
-#             "public class Sample {\n"
-#             "  public static void main(String[] args) {\n"
-#             "    Runtime.getRuntime().exec(\"ls\");\n"
-#             "  }\n"
-#             "}\n"
-#         )
-#     elif language == "javascript":
-#         content = "eval('console.log(1)');"
-#     else:
-#         content = "// sample\n"
-#     with open(sample_file, "w", encoding="utf-8") as f:
-#         f.write(content)
-
-
 def run_cmd(cmd, cwd=None, timeout=cmd_timeout):
   
     try:
@@ -126,7 +120,7 @@ def run_cmd(cmd, cwd=None, timeout=cmd_timeout):
         return 1, "", f"Exception: {e}"
 
 
-def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language: str = "python"):
+def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language: str = "java"):
     """验证单个 CodeQL 规则"""
     result = {"valid": True, "error": ""}
     thread_id = uuid.uuid4().hex[:8]
@@ -134,7 +128,8 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
 
     try:
         ensure_dir(persist_path)
-
+        if persist_path:
+            print("存在",persist_path)
         root_dir = os.path.join(persist_path, f"{language}-security-queries")
         query_dir = os.path.join(root_dir, "queries", "test-rule")
         ensure_dir(query_dir)
@@ -164,6 +159,7 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
                 "--language=" + language,
                 "--source-root=" + sample_dir,
                 "--command=" + command,
+                "--search-path=" + packages_dir,
                 "--overwrite"
             ]
             print(f"[🔄] ({thread_id}) 正在执行 Maven 构建命令：{command}")
@@ -183,16 +179,23 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
             return result
 
         # 安装依赖
-        print(f"[📦] ({thread_id}) 安装 CodeQL 依赖包...")
-        code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
-        if code != 0:
-            result["valid"] = False
-            result["error"] = f"Pack install failed: {err_pack.strip()}"
-            return result
-
+        # print(f"[📦] ({thread_id}) 安装 CodeQL 依赖包...")
+        # code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
+        # if code != 0:
+        #     result["valid"] = False
+        #     result["error"] = f"Pack install failed: {err_pack.strip()}"
+        #     return result
+        lock_src = "/home/cbb/SAST-Rule-Migrate/internal/share/codeql-pack.lock.yml"
+        lock_dst = os.path.join(root_dir, "codeql-pack.lock.yml")
+        if os.path.exists(lock_src):
+            shutil.copy(lock_src, lock_dst)
+            print(f"[🧩] ({thread_id}) 已复制本地 lock 文件，跳过 pack install")
+        else:
+            print(f"[📦] ({thread_id}) 未找到缓存 lock 文件，正在执行 pack install ...")
+            code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
         # 运行查询
         print(f"[🚀] ({thread_id}) 正在运行规则验证...")
-        code, out, err = run_cmd([codeql_path, "query", "run", rule_file, "--database", db_path])
+        code, out, err = run_cmd([codeql_path, "query", "run", rule_file, "--database",db_path,"--search-path=" + packages_dir,])
         if code != 0:
             result["valid"] = False
             result["error"] = err.strip() or "Unknown CodeQL failure"
@@ -211,7 +214,8 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
         # 清理临时目录
         if os.path.exists(persist_path):
             try:
-                shutil.rmtree(persist_path)
+                # shutil.rmtree(persist_path)
+                print(persist_path)
             except Exception as e:
                 print(f"[cleanup warning] failed to remove {persist_path}: {e}")
 
@@ -238,19 +242,81 @@ if __name__ == "__main__":
  *       external/cwe/cwe-078
  */
 
-import python
-
-from Call call, Name name
 where
   name = call.getFunc() and
   name.getId() = "exec"
 select call, "Use of exec function detected"
 '''
-    rule = '''import java
+    rule = '''
+    /**
+ * @id el-injection
+ * @severity Warning
+ * @name Expression Language Injection
+ * @description An expression is built with a dynamic value. The source of the value(s) should be 
+ *              verified to avoid that unfiltered values fall into this risky code evaluation.
+ * @kind path-problem
+ * @problem.severity warning
+ * @tags security
+ *       external/cwe/cwe-094
+ */
 
-    from MethodCall mc
-    where mc.getMethod().hasName("exec")
-    select mc, "This method call executes a system command."
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+
+/** The source of potentially dangerous dynamic input */
+class DynamicInput extends DataFlow::Node {
+  DynamicInput() {
+    exists(Parameter p | this.asParameter() = p) or
+    exists(Literal l | this.asExpr() = l and not l.getValue().toString() = "\"...\"") or
+    exists(Call c | this.asExpr() = c)
+  }
+}
+
+/** The sink where untrusted input could lead to EL injection */
+class ElSink extends DataFlow::Node {
+  ElSink() {
+    exists(Call c |
+      c.getCallee().getName() = "createValueExpression" and
+      c.getCallee().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+      this.asExpr() = c.getArgument(1)
+    ) or
+    exists(Call c |
+      c.getCallee().getName() = "createMethodExpression" and
+      c.getCallee().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
+      this.asExpr() = c.getArgument(1)
+    ) or
+    exists(Call c |
+      c.getCallee().getName() = "buildConstraintViolationWithTemplate" and
+      this.asExpr() = c.getArgument(0)
+    )
+  }
+}
+
+/** Sanitizer for string literals which are considered safe */
+class StringLiteralSanitizer extends DataFlow::Node {
+  StringLiteralSanitizer() {
+    exists(Literal l | this.asExpr() = l and l.getValue().toString() = "\"...\"")
+  }
+}
+
+/** Taint tracking configuration for EL injection */
+class ElInjectionConfig extends TaintTracking::Configuration {
+  ElInjectionConfig() { this = "ElInjectionConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof DynamicInput }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof ElSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof StringLiteralSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, ElInjectionConfig config
+where config.hasFlowPath(source, sink)
+select sink, "Expression injection risk detected with dynamic input: " + sink.getNode().toString(),
+  source, sink, "Potential EL injection vulnerability"
     '''
     
 
@@ -260,12 +326,26 @@ select call, "Use of exec function detected"
     print(result)
     if result["valid"]:
         print("[✅] 规则验证通过！")
-    # results = validate_rules_concurrently(rules, base_path, max_workers=max_workers, language="java")
 
-    # summary_path = os.path.join(base_path, "validation_summary.json")
-    # with open(summary_path, "w", encoding="utf-8") as f:
-    #     json.dump(results, f, indent=2, ensure_ascii=False)
 
-    # print(f"[{datetime.now()}] Done. Results saved to {summary_path}")
-    # for i, r in enumerate(results, 1):
-    #     print(f"Rule {i}: valid={r['valid']}, error={r.get('error','')}")
+
+def ensure_codeql_deps_installed():
+    """检查并安装 CodeQL 依赖包"""
+    print("[🧩] 检查 CodeQL Java 依赖包...")
+    try:
+        installed = subprocess.run(
+            ["codeql", "resolve", "packs"],
+            capture_output=True, text=True, check=True
+        ).stdout
+
+        required = ["codeql/java-all", "codeql/java-queries"]
+        for pkg in required:
+            if pkg not in installed:
+                print(f"[⬇️] 未找到 {pkg}，开始安装...")
+                subprocess.run(["codeql", "pack", "install", pkg], check=True)
+            else:
+                print(f"[✅] 已安装 {pkg}")
+    except Exception as e:
+        print(f"[❌] 检查 CodeQL 包失败: {e}")
+
+

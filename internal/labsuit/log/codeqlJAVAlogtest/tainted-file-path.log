@@ -1,0 +1,1039 @@
+Timestamp: 2025-11-05 12:37:22
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:87,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:94,37-65)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:23,3-18)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:39,3-20)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:86,3-25)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:97,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:101,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:105,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location 
+ * of this file, to include going backwards in the directory with '../'. To address this, 
+ * ensure that user-controlled variables in file paths are sanitized. Consider using 
+ * org.apache.commons.io.FilenameUtils.getName() to only retrieve the file name from the path.
+ * @kind problem
+ * @problem.severity error
+ * @id java/tainted-file-path
+ * @tags security
+ *       java
+ *       spring
+ *       external/cwe/cwe-023
+ *       external/owasp/a01:2021
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Method m, Parameter p | 
+      p = m.getAParameter() and
+      p.getType() instanceof PrimitiveType and
+      not p.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      (
+        exists(Annotation a | 
+          a = p.getAnAnnotation() and
+          a.getType().getName().matches("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)")
+        )
+      )
+    )
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(MethodAccess ma |
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileReader") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileInputStream") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Paths") and
+        ma.getMethod().hasName("get")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().hasName("getResource")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().hasName("getResourceAsStream")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.util", "ResourceUtils") and
+        ma.getMethod().hasName("getFile")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FileUtils") and
+        ma.getMethod().hasName("openOutputStream")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform.stream", "StreamSource") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.core.io", "ClassPathResource") and
+        ma.getMethod().hasName("<init>")
+      )
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().hasName("getName")
+    )
+  }
+}
+
+class TaintedFilepathConfig extends TaintTracking::Configuration {
+  TaintedFilepathConfig() { this = "TaintedFilepathConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileOperationSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintedFilepathConfig config
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal vulnerability from user input to file operation"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-file-path"
+  kind: taint
+  severity: ERROR
+  message: "Detected user input controlling a file path. An attacker could control the location of this file, to include going backwards in the directory with '../'. To address this, ensure that user-controlled variables in file paths are sanitized. You may also consider using a utility method such as org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+  metadata:
+    language: java
+    category: security
+    tags:
+      - java
+      - spring
+    cwe: "CWE-23: Relative Path Traversal"
+    owasp: "A01:2021 - Broken Access Control"
+
+sources:
+  - id: USER_INPUT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: regex
+          left: type
+          right: ^(?!(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean))
+        - op: regex
+          left: annotation
+          right: (RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)
+        - op: eq
+          left: kind
+          right: METHOD_PARAMETER_IN
+
+sinks:
+  - id: FILE_OPERATION
+    match:
+      node: CALL
+      api:
+        type: java.io.File
+        method: <init>
+    match:
+      node: CALL
+      api:
+        type: java.io.FileReader
+        method: <init>
+    match:
+      node: CALL
+      api:
+        type: java.io.FileInputStream
+        method: <init>
+    match:
+      node: CALL
+      api:
+        type: java.nio.file.Paths
+        method: get
+    match:
+      node: CALL
+      api:
+        type: java.lang.Class
+        method: getResource
+    match:
+      node: CALL
+      api:
+        type: java.lang.Class
+        method: getResourceAsStream
+    match:
+      node: CALL
+      api:
+        type: org.springframework.util.ResourceUtils
+        method: getFile
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FileUtils
+        method: openOutputStream
+    match:
+      node: CALL
+      api:
+        type: javax.xml.transform.stream.StreamSource
+        method: <init>
+    match:
+      node: CALL
+      api:
+        type: org.springframework.core.io.ClassPathResource
+        method: <init>
+
+sanitizers:
+  - id: FILENAME_UTILS
+    match:
+      node: CALL
+      api:
+        type: org.apache.commons.io.FilenameUtils
+        method: getName
+    effect: neutralize
+    scope:
+      sinks: [FILE_OPERATION]
+
+propagations:
+  - id: METHOD_ARG_TO_PARAM
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:52
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:21,8-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:91,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:99,37-65)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:102,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:106,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:110,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location 
+ * of this file, to include going backwards in the directory with '../'. To address this, 
+ * ensure that user-controlled variables in file paths are sanitized. Consider using 
+ * org.apache.commons.io.FilenameUtils.getName() to only retrieve the file name from the path.
+ * @kind problem
+ * @problem.severity error
+ * @id java/tainted-file-path
+ * @tags security
+ *       java
+ *       spring
+ *       external/cwe/cwe-023
+ *       external/owasp/a01:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.MethodAccess
+import semmle.code.java.frameworks.spring.SpringController
+
+class UserInputSource extends DataFlow::Node {
+  UserInputSource() {
+    exists(Method m, Parameter p | 
+      this.asParameter() = p and
+      p = m.getAParameter() and
+      p.getType() instanceof PrimitiveType and
+      not p.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)") and
+      (
+        exists(Annotation a | 
+          a = p.getAnAnnotation() and
+          a.getType().getName().matches("(RequestBody|PathVariable|RequestParam|RequestHeader|CookieValue|ModelAttribute)")
+        )
+      )
+    )
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(MethodAccess ma |
+      this.asExpr() = ma and
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileReader") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileInputStream") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Paths") and
+        ma.getMethod().hasName("get")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().hasName("getResource")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().hasName("getResourceAsStream")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.util", "ResourceUtils") and
+        ma.getMethod().hasName("getFile")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FileUtils") and
+        ma.getMethod().hasName("openOutputStream")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform.stream", "StreamSource") and
+        ma.getMethod().hasName("<init>")
+      ) or
+      (
+        ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.core.io", "ClassPathResource") and
+        ma.getMethod().hasName("<init>")
+      )
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      this.asExpr() = ma and
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().hasName("getName")
+    )
+  }
+}
+
+class TaintedFilepathConfig extends TaintTracking::Configuration {
+  TaintedFilepathConfig() { this = "TaintedFilepathConfig" }
+  
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserInputSource
+  }
+  
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileOperationSink
+  }
+  
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink, TaintedFilepathConfig config
+where config.hasFlow(source, sink)
+select sink, "Potential path traversal vulnerability from user input to file operation"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:40,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:87,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:94,37-65)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:23,3-18)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:39,3-20)
+WARNING: 'this' is not bound in the body of this characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:86,3-25)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:97,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:101,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_7ff95a5e/java-security-queries/queries/test-rule/TestRule.ql:105,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 添加缺失的导入语句：
+   - 添加 `import semmle.code.java.dataflow.DataFlow` 用于解决 DataFlow::Node 相关错误
+   - 添加 `import semmle.code.java.MethodAccess` 用于解决 MethodAccess 类型解析错误
+   - 添加 `import semmle.code.java.dataflow.TaintTracking` 用于解决 TaintTracking::Configuration 类型解析错误
+
+2. 修复特征谓词(this绑定)问题：
+   - 在 UserInputSource、FileOperationSink 和 FilenameUtilsSanitizer 类中添加 `this = ...` 表达式来绑定 this 变量
+   - 例如：`this.asParameter() = p` 或 `this.asExpr() = ma`
+
+3. 修复未使用方法警告：
+   - 确保 TaintedFilepathConfig 类中的 isSource、isSink 和 isSanitizer 方法被正确实现
+   - 检查这些方法是否正确覆盖了父类的抽象方法
+
+4. 检查类型引用是否正确：
+   - 确认所有使用的类型（如 PrimitiveType、Annotation）都有对应的导入
+   - 确保使用的类型与 CodeQL Java 库中的定义一致
+
+5. 更新方法调用语法：
+   - 检查所有方法调用是否使用正确的 CodeQL 语法
+   - 例如 getAParameter() 是否应该是 getAParameter() 或 getParameter(0)
+
+6. 验证数据流配置：
+   - 确保 TaintTracking::Configuration 子类正确实现了所有必要方法
+   - 验证 hasFlow() 调用的参数是否正确
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:40:00
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Parameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:17,31-50)
+ERROR: getAnAnnotation() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:21,107-122)
+ERROR: getAnAnnotation() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:22,12-27)
+ERROR: getType() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:24,14-21)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:66,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:82,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:82,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:77,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location
+ *              of this file, to include going backwards in the directory with '../'.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-23
+ *       external/owasp/a01b
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SpringParameter extends DataFlow::Parameter {
+  SpringParameter() {
+    exists(string annotation | 
+      annotation =
+        ["RequestBody", "PathVariable", "RequestParam", "RequestHeader", "CookieValue", "ModelAttribute"].getAnAnnotation() |
+      this.getAnAnnotation().toString().matches(annotation)
+    ) and
+    not this.getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)")
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileReader") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileInputStream") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Paths") and
+        ma.getMethod().getName() = "get") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResource") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResourceAsStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.util", "ResourceUtils") and
+        ma.getMethod().getName() = "getFile") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FileUtils") and
+        ma.getMethod().getName() = "openOutputStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform.stream", "StreamSource") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.core.io", "ClassPathResource") and
+        ma.getMethod().getName() = "<init>") |
+      this.asParameter() = ma.getParameter(0)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" |
+      this.asExpr() = ma
+    )
+  }
+}
+
+class TaintedFilePathConfig extends TaintTracking::Configuration {
+  TaintedFilePathConfig() { this = "TaintedFilePathConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SpringParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileOperationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFilePathConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected user input controlling a file path. " +
+  "An attacker could control the location of this file, to include going backwards in the directory with '../'. " +
+  "To address this, ensure that user-controlled variables in file paths are sanitized. " +
+  "You may also consider using a utility method such as " +
+  "org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:21,8-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:91,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:99,37-65)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:102,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:106,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2f82152d/java-security-queries/queries/test-rule/TestRule.ql:110,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正 MethodAccess 导入路径错误：
+   - 移除错误的 `import semmle.code.java.MethodAccess` 语句
+   - 使用正确的导入 `import semmle.code.java.dataflow.MethodAccess`
+
+2. 修改 MethodAccess 类型引用：
+   - 确保所有 MethodAccess 引用都使用完整路径 `DataFlow::MethodAccess`
+   - 或者使用导入后的别名（如果适用）
+
+3. 重新实现 TaintTracking 配置：
+   - 检查 TaintTracking::Configuration 的导入路径
+   - 确保使用的是最新的 CodeQL Java 库版本
+   - 可能需要使用 `import DataFlow::TaintTracking`
+
+4. 验证方法覆盖：
+   - 确保 isSource, isSink 和 isSanitizer 方法确实覆盖了父类方法
+   - 检查这些方法是否被正确调用
+
+5. 更新数据流跟踪配置：
+   - 确认配置类正确继承了 TaintTracking::Configuration
+   - 检查 hasFlow() 调用是否正确绑定到配置实例
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:41:17
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:17,31-39)
+ERROR: getAnAnnotation() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:21,74-89)
+ERROR: getParameter() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+ERROR: getParameter() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:24,14-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:28,33-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:30,12-20)
+ERROR: asExpr() cannot be resolved for type FileOperationSink.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:51,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:56,38-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:58,12-20)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:61,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:66,37-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:69,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:73,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:77,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:82,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:82,33-41)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:77,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location
+ *              of this file, to include going backwards in the directory with '../'.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-23
+ *       external/owasp/a01b
+ */
+import java
+import DataFlow::PathGraph
+import DataFlow::MethodAccess
+
+class SpringParameter extends DataFlow::Node {
+  SpringParameter() {
+    exists(string annotationName |
+      annotationName = ["RequestBody", "PathVariable", "RequestParam", 
+                       "RequestHeader", "CookieValue", "ModelAttribute"].getAnAnnotation() |
+      this.getParameter().getAnAnnotation().toString().matches(annotationName)
+    ) and
+    not this.getParameter().getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)")
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(DataFlow::MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileReader") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileInputStream") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Paths") and
+        ma.getMethod().getName() = "get") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResource") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResourceAsStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.util", "ResourceUtils") and
+        ma.getMethod().getName() = "getFile") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FileUtils") and
+        ma.getMethod().getName() = "openOutputStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform.stream", "StreamSource") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.core.io", "ClassPathResource") and
+        ma.getMethod().getName() = "<init>") |
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(DataFlow::MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" |
+      this.asExpr() = ma
+    )
+  }
+}
+
+class TaintedFilePathConfig extends TaintTracking::Configuration {
+  TaintedFilePathConfig() { this = "TaintedFilePathConfig" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof SpringParameter
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof FileOperationSink
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFilePathConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected user input controlling a file path. " +
+  "An attacker could control the location of this file, to include going backwards in the directory with '../'. " +
+  "To address this, ensure that user-controlled variables in file paths are sanitized. " +
+  "You may also consider using a utility method such as " +
+  "org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type DataFlow::Parameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:17,31-50)
+ERROR: getAnAnnotation() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:21,107-122)
+ERROR: getAnAnnotation() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:22,12-27)
+ERROR: getType() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:24,14-21)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:66,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:82,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:82,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_c8e679f6/java-security-queries/queries/test-rule/TestRule.ql:77,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 修正DataFlow库导入：
+   移除错误的`import semmle.code.java.dataflow.DataFlow`和`import semmle.code.java.dataflow.TaintTracking`
+   替换为正确的导入`import DataFlow::PathGraph`
+
+2. 修改SpringParameter类定义：
+   - 改为继承自`DataFlow::Node`而非不存在的`DataFlow::Parameter`
+   - 使用`this.getType()`获取参数类型
+   - 使用`this.getAnAnnotation()`获取参数注解
+
+3. 修正MethodAccess类型引用：
+   - 使用完整路径`DataFlow::MethodAccess`
+   - 或添加正确的MethodAccess导入
+
+4. 更新TaintTracking配置：
+   - 修改为继承自`TaintTracking::Configuration`
+   - 确保正确实现了`isSource`,`isSink`,`isSanitizer`方法
+   - 保持方法签名与方法调用一致
+
+5. 修复路径节点类型：
+   - 将所有`DataFlow::PathNode`改为`DataFlow::PathNode`
+   - 确保PathGraph模块已正确导入
+
+6. 验证方法调用：
+   - 确保所有方法调用都有对应的定义
+   - 检查方法签名是否匹配
+
+7. 检查类型系统一致性：
+   - 确保所有类型引用都已正确导入
+   - 验证所有类型转换是否合法
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:42:36
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: hasQualifiedName(string) cannot be resolved for type Annotation::AnnotationType (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:22,54-70)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:30,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:58,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:66,37-65)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:78,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:78,33-51)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:71,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_124940a0/java-security-queries/queries/test-rule/TestRule.ql:73,22-33)
+Rule Content:
+/**
+ * @name Tainted file path
+ * @description Detected user input controlling a file path. An attacker could control the location
+ *              of this file, to include going backwards in the directory with '../'.
+ * @kind problem
+ * @problem.severity error
+ * @precision high
+ * @id java/tainted-file-path
+ * @tags security
+ *       external/cwe/cwe-23
+ *       external/owasp/a01b
+ */
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class SpringParameter extends DataFlow::Node {
+  SpringParameter() {
+    exists(string annotationName |
+      annotationName = ["RequestBody", "PathVariable", "RequestParam", 
+                       "RequestHeader", "CookieValue", "ModelAttribute"] and
+      this.asParameter().getAnAnnotation().getType().hasQualifiedName(annotationName)
+    ) and
+    not this.asParameter().getType().toString().matches("^(Integer|Long|Float|Double|Char|Boolean|int|long|float|double|char|boolean)")
+  }
+}
+
+class FileOperationSink extends DataFlow::Node {
+  FileOperationSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "File") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileReader") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.io", "FileInputStream") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.nio.file", "Paths") and
+        ma.getMethod().getName() = "get") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResource") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Class") and
+        ma.getMethod().getName() = "getResourceAsStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.util", "ResourceUtils") and
+        ma.getMethod().getName() = "getFile") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FileUtils") and
+        ma.getMethod().getName() = "openOutputStream") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("javax.xml.transform.stream", "StreamSource") and
+        ma.getMethod().getName() = "<init>") or
+      (ma.getMethod().getDeclaringType().hasQualifiedName("org.springframework.core.io", "ClassPathResource") and
+        ma.getMethod().getName() = "<init>") |
+      this.asParameter() = ma.getArgument(0)
+    )
+  }
+}
+
+class FilenameUtilsSanitizer extends DataFlow::Node {
+  FilenameUtilsSanitizer() {
+    exists(MethodAccess ma |
+      ma.getMethod().getDeclaringType().hasQualifiedName("org.apache.commons.io", "FilenameUtils") and
+      ma.getMethod().getName() = "getName" |
+      this.asParameter() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedFilePathConfig extends TaintTracking::Configuration {
+  TaintedFilePathConfig() { this = "TaintedFilePathConfig" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof SpringParameter }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof FileOperationSink }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer instanceof FilenameUtilsSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintedFilePathConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), "Detected user input controlling a file path. " +
+  "An attacker could control the location of this file, to include going backwards in the directory with '../'. " +
+  "To address this, ensure that user-controlled variables in file paths are sanitized. " +
+  "You may also consider using a utility method such as " +
+  "org.apache.commons.io.FilenameUtils.getName(...) to only retrieve the file name from the path."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:14,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:15,8-16)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:17,31-39)
+ERROR: getAnAnnotation() cannot be resolved for type string (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:21,74-89)
+ERROR: getParameter() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:22,12-24)
+ERROR: getParameter() cannot be resolved for type SpringParameter.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:24,14-26)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:28,33-41)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:30,12-20)
+ERROR: asExpr() cannot be resolved for type FileOperationSink.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:51,12-18)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:56,38-46)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:58,12-20)
+ERROR: asExpr() cannot be resolved for type FilenameUtilsSanitizer.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:61,12-18)
+ERROR: could not resolve module TaintTracking (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:66,37-50)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:69,31-39)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:73,29-37)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:77,34-42)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:82,6-14)
+ERROR: could not resolve module DataFlow (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:82,33-41)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:69,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:73,22-28)
+WARNING: unused method 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_de951842/java-security-queries/queries/test-rule/TestRule.ql:77,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正模块导入语句，将错误的模块路径修正为：
+   - 将 `DataFlow::PathGraph` 替换为 `semmle.code.java.dataflow.DataFlow`
+   - 将 `DataFlow::MethodAccess` 替换为 `semmle.code.java.dataflow.DataFlow`
+   - 添加缺失的模块 `semmle.code.java.dataflow.TaintTracking`
+
+2. 修改 SpringParameter 类的实现：
+   - 使用 `this.asParameter()` 代替 `this.getParameter()`
+   - 使用 `this.asParameter().getAnAnnotation() instanceof` 检查注解
+   - 修正类型检查逻辑，使用 `getType().toString()` 进行正则匹配
+
+3. 修改 FileOperationSink 类：
+   - 使用 `this.asExpr() = ma.getArgument(0)` 改为 `this.asParameter() = ma.getArgument(0)`
+
+4. 修改 FilenameUtilsSanitizer 类：
+   - 使用 `this.asExpr() = ma` 改为 `this.asParameter() = ma.getArgument(0)`
+
+5. 确保所有扩展类正确的继承 DataFlow 模块的类型：
+   - 确认所有 extends 的类继承自正确的 DataFlow 类型
+
+6. 移除未使用的方法警告：
+   - 确保所有 isSource/isSink/isSanitizer 方法都被正确调用
+
+7. 更新 TaintTracking 配置：
+   - 确认继承自正确的 `TaintTracking::Configuration` 路径为 `semmle.code.java.dataflow.TaintTracking`
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================

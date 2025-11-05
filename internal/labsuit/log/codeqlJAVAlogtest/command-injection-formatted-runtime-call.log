@@ -1,0 +1,976 @@
+Timestamp: 2025-11-05 12:37:16
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'literalSanitizer(', expecting one of : 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,1-17)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,37-38)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:56,20-21)
+ERROR: could not resolve predicate literalSanitizer/1 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,53-69)
+ERROR: could not resolve type StringConcatenationOperation (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:71,12-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:76,12-24)
+ERROR: could not resolve type MethodParam (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:21,12-23)
+ERROR: asLocalVar() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:27,12-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+ERROR: could not resolve type Sanitizer (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,18-27)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,33-51)
+ERROR: could not resolve type TaintConfig (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,58-69)
+WARNING: predicate declaration 'isSanitizer' does not implement a signature member, so it should be marked 'additional' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,13-24)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,28-37)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,13-24)
+Rule Content:
+/**
+ * @name Command Injection via Formatted Runtime Call
+ * @description A formatted or concatenated string detected as input to a java.lang.Runtime call.
+ *              This could result in command injection if variables are user-controlled.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ * @id java/command-injection-formatted-runtime-call
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+
+class UserControlledInput extends DataFlow::Node {
+  UserControlledInput() {
+    exists(MethodParam p | 
+      this.asParameter() = p and
+      not p.getAnAssignment().getExpr() instanceof Literal
+    )
+    or
+    exists(LocalVariableDecl l |
+      this.asLocalVar() = l and
+      not l.getInitializer() instanceof Literal
+    )
+  }
+}
+
+class RuntimeExecSink extends DataFlow::Node {
+  RuntimeExecSink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("exec") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      (ma.getArgument(0) = this.asExpr() or
+       ma.getArgument(1) = this.asExpr() or
+       ma.getArgument(2) = this.asExpr())
+    )
+  }
+}
+
+class RuntimeLoadLibrarySink extends DataFlow::Node {
+  RuntimeLoadLibrarySink() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName("loadLibrary") and
+      ma.getMethod().getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      ma.getArgument(0) = this.asExpr()
+    )
+  }
+}
+
+literalSanitizer(Sanitizer sanitizer) {
+  exists(Literal l | sanitizer.hasFlowNode(l))
+}
+
+module TaintConfig implements DataFlow::ConfigSig {
+  predicate isSource(DataFlow::Node source) { source instanceof UserControlledInput }
+
+  predicate isSink(DataFlow::Node sink) {
+    sink instanceof RuntimeExecSink or
+    sink instanceof RuntimeLoadLibrarySink
+  }
+
+  predicate isSanitizer(DataFlow::Node sanitizer) { literalSanitizer(sanitizer) }
+
+  predicate isAdditionalFlowStep(DataFlow::Node node1, DataFlow::Node node2) {
+    // String concatenation propagation
+    exists(StringConcatenationOperation s |
+      s.getAnOperand() = node1.asExpr() and node2.asExpr() = s
+    )
+    or
+    // String format propagation
+    exists(MethodAccess fmt |
+      fmt.getMethod().getName().matches("format") and
+      fmt.getAnArgument() = node1.asExpr() and node2.asExpr() = fmt
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintConfig config
+where config.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "A formatted or concatenated string was detected as input to a Runtime call. " +
+  "This could result in command injection if variables are user-controlled."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: command-injection-formatted-runtime-call
+  kind: taint
+  severity: ERROR
+  message: |
+    A formatted or concatenated string was detected as input to a java.lang.Runtime
+    call.
+    This is dangerous if a variable is controlled by user input and could result in
+    a
+    command injection. Ensure your variables are not controlled by users or sufficiently
+    sanitized.
+  metadata:
+    language: java
+    category: security
+    cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+    owasp:
+      - "A01:2017 - Injection"
+      - "A03:2021 - Injection"
+
+sources:
+  - id: USER_CONTROLLED_INPUT
+    match:
+      node: PARAM | LOCAL
+      where:
+        - op: not_eq
+          left: source
+          right: "literal"
+
+sinks:
+  - id: RUNTIME_EXEC
+    match:
+      node: CALL
+      api:
+        type: java.lang.Runtime
+        method: exec
+      arg_index: [0, 1, 2]
+  - id: RUNTIME_LOAD_LIBRARY
+    match:
+      node: CALL
+      api:
+        type: java.lang.Runtime
+        method: loadLibrary
+      arg_index: 0
+
+sanitizers:
+  - id: LITERAL_ARG
+    match:
+      node: LITERAL
+    effect: neutralize
+    scope:
+      sinks: [RUNTIME_EXEC, RUNTIME_LOAD_LIBRARY]
+
+propagations:
+  - id: STRING_CONCAT
+    edge: arg->param
+    kind: taint
+  - id: FORMAT_STRING
+    edge: arg->param
+    kind: taint
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:38:24
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOperations (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:18,8-41)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: could not resolve type StringConcatenationOperation (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:72,12-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:77,12-24)
+ERROR: asDefiningArgument() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:29,12-30)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:40,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:41,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:42,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,33-51)
+ERROR: could not resolve type TaintConfig (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,58-69)
+WARNING: predicate declaration 'isSanitizer' does not implement a signature member, so it should be marked 'additional' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:69,13-24)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:69,13-24)
+Rule Content:
+/**
+ * @name Command Injection via Formatted Runtime Call
+ * @description A formatted or concatenated string detected as input to a java.lang.Runtime call.
+ *              This could result in command injection if variables are user-controlled.
+ * @kind path-problem
+ * @problem.severity error
+ * @precision high
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ * @id java/command-injection-formatted-runtime-call
+ */
+
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.StringOperations
+import DataFlow::PathGraph
+
+class UserControlledInput extends DataFlow::Node {
+  UserControlledInput() {
+    exists(Parameter p | 
+      this.asParameter() = p and
+      not p.getAnAssignedValue() instanceof Literal
+    )
+    or
+    exists(LocalVariableDecl l |
+      this.asDefiningArgument() = l and
+      not l.getInitializer() instanceof Literal
+    )
+  }
+}
+
+class RuntimeExecSink extends DataFlow::Node {
+  RuntimeExecSink() {
+    exists(Method m |
+      m.hasName("exec") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      this.asExpr() = m.getACall().getArgument(0) or
+      this.asExpr() = m.getACall().getArgument(1) or
+      this.asExpr() = m.getACall().getArgument(2)
+    )
+  }
+}
+
+class RuntimeLoadLibrarySink extends DataFlow::Node {
+  RuntimeLoadLibrarySink() {
+    exists(Method m |
+      m.hasName("loadLibrary") and
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      this.asExpr() = m.getACall().getArgument(0)
+    )
+  }
+}
+
+predicate literalSanitizer(DataFlow::Node node) {
+  node.asExpr() instanceof Literal
+}
+
+module TaintConfig implements DataFlow::ConfigSig {
+  predicate isSource(DataFlow::Node source) { source instanceof UserControlledInput }
+
+  predicate isSink(DataFlow::Node sink) {
+    sink instanceof RuntimeExecSink or
+    sink instanceof RuntimeLoadLibrarySink
+  }
+
+  predicate isSanitizer(DataFlow::Node sanitizer) { literalSanitizer(sanitizer) }
+
+  predicate isAdditionalFlowStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(StringConcatenationOperation s |
+      s.getAnOperand() = node1.asExpr() and
+      node2.asExpr() = s
+    )
+    or
+    exists(MethodAccess fmt |
+      fmt.getMethod().getName().matches("format") and
+      fmt.getAnArgument() = node1.asExpr() and
+      node2.asExpr() = fmt
+    )
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintConfig cfg
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink,
+  "A formatted or concatenated string was detected as input to a Runtime call. " +
+  "This could result in command injection if variables are user-controlled."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'literalSanitizer(', expecting one of : 'boolean', 'class', 'newtype', 'date', 'float', 'from', 'import', 'int', 'module', 'predicate', 'select', 'string', 'where', Lowerid, Upperid, Atlowerid (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,1-17)
+ERROR: unexpected input ')' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,37-38)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:56,20-21)
+ERROR: could not resolve predicate literalSanitizer/1 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,53-69)
+ERROR: could not resolve type StringConcatenationOperation (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:71,12-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:76,12-24)
+ERROR: could not resolve type MethodParam (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:21,12-23)
+ERROR: asLocalVar() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:27,12-22)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:35,12-24)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:47,12-24)
+ERROR: could not resolve type Sanitizer (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,18-27)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,33-51)
+ERROR: could not resolve type TaintConfig (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:83,58-69)
+WARNING: predicate declaration 'isSanitizer' does not implement a signature member, so it should be marked 'additional' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,13-24)
+ERROR: predicate requires a body (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:55,28-37)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0773aed8/java-security-queries/queries/test-rule/TestRule.ql:67,13-24)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 导入缺失的模块：添加 `import semmle.code.java.StringOperations` 来解决 StringConcatenationOperation 类型未找到的问题
+2. 修正 sanitizer 谓词定义：将 `literalSanitizer(Sanitizer sanitizer)` 改为 `predicate literalSanitizer(DataFlow::Node node)` 并修正其实现
+3. 修复 UserControlledInput 类：将 MethodParam 改为 Parameter，并修正本地变量检查逻辑
+4. 修复 RuntimeExecSink 和 RuntimeLoadLibrarySink 类：确保正确使用 MethodAccess 和相关方法
+5. 确保所有导入语句完整：检查并添加所有必要的导入，如 DataFlow::PathNode 等
+6. 修正 isSanitizer 谓词：使其正确实现 TaintConfig 的签名成员
+7. 修复数据流步骤实现：确保 isAdditionalFlowStep 正确使用字符串连接和格式操作的节点转换
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:39:37
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,12-69,22)
+ERROR: no viable parse for input 'StringConcatOperation concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,12-33)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,34-40)
+ERROR: unexpected input '.' expecting one of: '/' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:69,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:72,43-44)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:81,1-2)
+ERROR: could not resolve signature TaintTracking::Config (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:58,31-52)
+ERROR: asLocalVariableDecl() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:24,39-58)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:28,31-43)
+ERROR: getMethod() cannot be resolved for type RuntimeExecSink.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:33,12-21)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:45,37-49)
+ERROR: getMethod() cannot be resolved for type FormatStringOperation.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:47,10-19)
+ERROR: getMethod() cannot be resolved for type FormatStringOperation.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:48,10-19)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:59,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:63,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,3-11)
+ERROR: UserControlledInput must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:21,7-26)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:78,3-11)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,81-86)
+WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:59,22-30)
+WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+WARNING: unused predicate 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,22-43)
+WARNING: unused class 'StringConcatOperation' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:38,7-28)
+WARNING: unused class 'FormatStringOperation' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:45,7-28)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:78,22-33)
+Rule Content:
+/**
+ * @name Command injection via formatted string in Runtime.exec
+ * @description Formatted or concatenated strings used as input to Runtime.exec can lead 
+ *              to command injection if user-controlled variables are included.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/command-injection-formatted-runtime-call
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-090
+ *       external/cwe/cwe-091
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.security.QueryInjection
+
+class UserControlledInput extends RemoteFlowSource {
+  UserControlledInput() {
+    exists(Parameter p | this.asParameter() = p) or
+    exists(LocalVariableDecl l | this.asLocalVariableDecl() = l)
+  }
+}
+
+class RuntimeExecSink extends MethodAccess {
+  RuntimeExecSink() {
+    exists(Method m | 
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      (m.hasName("exec") or m.hasName("loadLibrary")) and
+      this.getMethod() = m
+    )
+  }
+}
+
+class StringConcatOperation extends AddExpr {
+  StringConcatOperation() {
+    this.getRightOperand().getType() instanceof TypeString and
+    this.getLeftOperand().getType() instanceof TypeString
+  }
+}
+
+class FormatStringOperation extends MethodAccess {
+  FormatStringOperation() {
+    this.getMethod().hasName("format") and
+    this.getMethod().getDeclaringType().getASupertype*().hasQualifiedName("java.lang", "String")
+  }
+}
+
+class LiteralSanitizer extends Literal {
+  LiteralSanitizer() { 
+    this.getValue().toString().matches("[^%\\\\]+")
+  }
+}
+
+module TaintConfig implements TaintTracking::Config {
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof UserControlledInput
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof RuntimeExecSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node node1, DataFlow::Node node2) {
+    exists(StringConcatOperation concat |     
+      concat = node1.asExpr() and
+      (concat.getAnOperand() = node2.asExpr())
+    ) or
+    exists(FormatStringOperation formatOp |
+      formatOp = node1.asExpr() and
+      (formatOp.getAnArgument() = node2.asExpr())
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof LiteralSanitizer
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink
+where TaintConfig::flowPath(source, sink)
+select sink.getNode(), source, sink, "Formatted or concatenated string used in $@ may lead to command injection",
+  source.getNode(), "user input",
+  sink.getNode(), "Runtime.exec call"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.StringOperations (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:18,8-41)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: could not resolve type StringConcatenationOperation (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:72,12-40)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:77,12-24)
+ERROR: asDefiningArgument() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:29,12-30)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:40,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:41,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:42,25-33)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:52,25-33)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,6-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,33-51)
+ERROR: could not resolve type TaintConfig (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:85,58-69)
+WARNING: predicate declaration 'isSanitizer' does not implement a signature member, so it should be marked 'additional' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:69,13-24)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_0b275a05/java-security-queries/queries/test-rule/TestRule.ql:69,13-24)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入语句：移除不存在的 semmle.code.java.StringOperations 和 DataFlow::PathGraph 导入，改用正确的导入路径
+
+2. 修复 UserControlledInput 类：
+   - 替换 asDefiningArgument() 为正确的 localVarDecl() 方法
+   - 确保 Parameter 类型的检查语法正确
+
+3. 修复 Sink 类检查：
+   - 使用 MethodAccess 代替 Method 直接调用
+   - 修正 getACall() 的错误用法，改为直接检查方法调用
+
+4. 修正数据流传播步骤：
+   - 使用 AddExpr 代替 StringConcatenationOperation
+   - 确保 MethodAccess 检查正确实现格式化字符串检测
+
+5. 导入必要的 PathGraph 模块：
+   - 添加正确的导入语句 import DataFlow::PathGraph
+
+6. 确保类型和方法调用匹配 CodeQL 标准库：
+   - 检查所有类型和方法调用是否符合最新 CodeQL Java 库规范
+   - 修正不存在的类型引用和方法调用
+```
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:40:51
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:52,12-19)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:67,1-2)
+ERROR: could not resolve module semmle.code.java.StringUtil (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:18,8-35)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: getAChild() cannot be resolved for type Variable::LocalVariableDecl (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:24,43-52)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:40,27-55)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: UserControlledInput extends only abstract classes but does not provide its own characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:21,7-26)
+ERROR: test is always false, as UserControlledInput is incompatible with the expression type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:44,32-51)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:64,3-11)
+ERROR: UserControlledInput is incompatible with Variable::Parameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:23,31-32)
+WARNING: unused variable 'src' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,59-62)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,79-83)
+WARNING: unused class 'TaintConfig' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:40,7-18)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:64,22-33)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:22,13-21)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:43,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:47,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,22-43)
+Rule Content:
+/**
+ * @name Command injection via formatted string in Runtime.exec
+ * @description Formatted or concatenated strings used as input to Runtime.exec can lead 
+ *              to command injection if user-controlled variables are included.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/command-injection-formatted-runtime-call
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-090
+ *       external/cwe/cwe-091
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import semmle.code.java.StringUtil
+import DataFlow::PathGraph
+
+class UserControlledInput extends RemoteFlowSource {
+  predicate isSource() { 
+    exists(Parameter p | this = p) or
+    exists(LocalVariableDecl l | this = l.getAChild*())
+  }
+
+  override string getSourceType() { result = "User controlled input" }
+}
+
+class RuntimeExecSink extends Expr {
+  RuntimeExecSink() {
+    exists(Method m | 
+      m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+      (m.hasName("exec") or m.hasName("loadLibrary")) and
+      this.(Call).getCallee() = m
+    )
+  }
+}
+
+class TaintConfig extends TaintTracking::Configuration {
+  TaintConfig() { this = "Command injection in Runtime.exec" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source.asExpr() instanceof UserControlledInput
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink.asExpr() instanceof RuntimeExecSink
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node sink) {
+    exists(AddExpr concat |     
+      concat = src.asExpr() and
+      sink.asExpr() = concat.getAnOperand()
+    ) or
+    exists(Call formatOp |
+      formatOp.getCallee().hasName("format") and
+      formatOp.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      src.asExpr() = formatOp and
+      sink.asExpr() = formatOp.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    exists(Literal lit | lit = sanitizer.asExpr() and lit.getValue().toString().matches("[^%\\\\]+"))
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, TaintConfig conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Formatted or concatenated string used in $@ may lead to command injection",
+  source.getNode(), "user input",
+  sink.getNode(), "Runtime.exec call"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: predicate aliases may not declare a return type (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,12-69,22)
+ERROR: no viable parse for input 'StringConcatOperation concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,12-33)
+ERROR: unexpected input 'concat' expecting one of: Lowerid (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:68,34-40)
+ERROR: unexpected input '.' expecting one of: '/' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:69,21-22)
+ERROR: unexpected input '|' expecting one of: '=', '(' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:72,43-44)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:81,1-2)
+ERROR: could not resolve signature TaintTracking::Config (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:58,31-52)
+ERROR: asLocalVariableDecl() cannot be resolved for type UserControlledInput.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:24,39-58)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:28,31-43)
+ERROR: getMethod() cannot be resolved for type RuntimeExecSink.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:33,12-21)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:45,37-49)
+ERROR: getMethod() cannot be resolved for type FormatStringOperation.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:47,10-19)
+ERROR: getMethod() cannot be resolved for type FormatStringOperation.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:48,10-19)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:59,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:63,3-11)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,3-11)
+ERROR: UserControlledInput must implement abstract predicate FlowSources::RemoteFlowSource.getSourceType() (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:21,7-26)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:78,3-11)
+WARNING: unused variable 'node1' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,59-64)
+WARNING: unused variable 'node2' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,81-86)
+WARNING: unused predicate 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:59,22-30)
+WARNING: unused predicate 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:63,22-28)
+WARNING: unused predicate 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:67,22-43)
+WARNING: unused class 'StringConcatOperation' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:38,7-28)
+WARNING: unused class 'FormatStringOperation' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:45,7-28)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5627ffdf/java-security-queries/queries/test-rule/TestRule.ql:78,22-33)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 修正导入语句：
+   - 添加正确的模块导入：`import semmle.code.java.StringUtil` 和 `import DataFlow::PathGraph`
+   - 移除不存在的导入 `semmle.code.java.dataflow.DataFlow`
+
+2. 重构 UserControlledInput 类实现：
+   - 移除无效的 `asLocalVariableDecl()` 调用
+   - 实现必需的 RemoteFlowSource.getSourceType() 抽象谓词
+   - 改用正确的参数检查语法：`exists(Parameter p | this = p)`
+
+3. 修正 MethodAccess 相关检查：
+   - 确保 RuntimeExecSink 继承正确的类：`extends Expr`
+   - 使用 `this instanceof Call` 代替 `getMethod()`
+   - 修正方法名检查和类型检查语法
+
+4. 修复数据流传播逻辑：
+   - 使用正确的 `exists(AddExpr concat | ...)` 语法
+   - 移除无效的类型断言 `extends` 语法
+   - 修正操作数访问方法
+
+5. 修复 TaintConfig 实现：
+   - 添加正确的 `extends TaintTracking::Configuration`
+   - 修正谓词签名，移除无效的参数类型声明
+   - 确保所有谓词都有正确的实现体
+
+6. 启用查询输出：
+   - 移除无效的模块声明语法
+   - 确保 select 子句有完整的路径表达式
+   - 验证所有变量引用都是有效的
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 12:42:04
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:49,12-19)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', '!=', '/', '}', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:65,1-2)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:37,38-66)
+ERROR: could not resolve type VariableAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:22,31-45)
+ERROR: getAVariable() cannot be resolved for type Variable::LocalVariableDecl (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:24,26-38)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:62,3-11)
+WARNING: unused variable 'src' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:48,59-62)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:48,79-83)
+WARNING: unused class 'CommandInjectionConfig' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:37,7-29)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:62,22-33)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:40,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:44,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_4512b7e6/java-security-queries/queries/test-rule/TestRule.ql:48,22-43)
+Rule Content:
+/**
+ * @name Command injection via formatted string in Runtime.exec
+ * @description Formatted or concatenated strings used as input to Runtime.exec can lead 
+ *              to command injection if user-controlled variables are included.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 8.8
+ * @precision high
+ * @id java/command-injection-formatted-runtime-call
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-089
+ *       external/cwe/cwe-090
+ *       external/cwe/cwe-091
+ */
+import java
+import semmle.code.java.dataflow.FlowSources
+import DataFlow::PathGraph
+
+predicate isUserControlledInput(DataFlow::Node source) {
+  exists(Parameter p | source.asParameter() = p) or
+  exists(LocalVariableDecl l, VariableAccess va |
+    source.asExpr() = va and
+    va.getVariable() = l.getAVariable()
+  )
+}
+
+predicate isRuntimeExecSink(DataFlow::Node sink) {
+  exists(Method m, Call call |
+    call = sink.asExpr() and
+    call.getCallee() = m and
+    m.getDeclaringType().hasQualifiedName("java.lang", "Runtime") and
+    (m.hasName("exec") or m.hasName("loadLibrary"))
+  )
+}
+
+class CommandInjectionConfig extends TaintTracking::Configuration {
+  CommandInjectionConfig() { this = "Command injection in Runtime.exec" }
+
+  override predicate isSource(DataFlow::Node source) {
+    isUserControlledInput(source)
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    isRuntimeExecSink(sink)
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node src, DataFlow::Node sink) {
+    exists(AddExpr concat |
+      concat = src.asExpr() and
+      sink.asExpr() = concat.getAnOperand()
+    )
+    or
+    exists(MethodAccess formatOp |
+      formatOp.getMethod().hasName("format") and
+      formatOp.getDeclaringType().hasQualifiedName("java.lang", "String") and
+      src.asExpr() = formatOp and
+      sink.asExpr() = formatOp.getAnArgument()
+    )
+  }
+
+  override predicate isSanitizer(DataFlow::Node sanitizer) {
+    sanitizer.asExpr() instanceof Literal
+  }
+}
+
+from DataFlow::PathNode source, DataFlow::PathNode sink, CommandInjectionConfig conf
+where conf.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, "Formatted or concatenated string used in $@ may lead to command injection",
+  source.getNode(), "user input",
+  sink.getNode(), "Runtime.exec call"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: no viable parse for input 'AddExpr concat', expecting one of : 'any', 'avg', 'boolean', 'count', 'date', 'exists', 'false', 'float', 'forall', 'forex', 'if', 'int', 'max', 'min', 'not', 'none', 'rank', 'result', 'strictcount', 'strictsum', 'strictconcat', 'concat', 'string', 'sum', 'super', 'this', 'true', '-', '(', ')', '[', '+', '|', Lowerid, Upperid, Atlowerid, Integer, Float, String (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:52,12-19)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:67,1-2)
+ERROR: could not resolve module semmle.code.java.StringUtil (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:18,8-35)
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:19,8-27)
+ERROR: getAChild() cannot be resolved for type Variable::LocalVariableDecl (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:24,43-52)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:40,27-55)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: UserControlledInput extends only abstract classes but does not provide its own characteristic predicate (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:21,7-26)
+ERROR: test is always false, as UserControlledInput is incompatible with the expression type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:44,32-51)
+ERROR: annotation 'override' can only be used on member predicates and fields (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:64,3-11)
+ERROR: UserControlledInput is incompatible with Variable::Parameter (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:23,31-32)
+WARNING: unused variable 'src' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,59-62)
+WARNING: unused variable 'sink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,79-83)
+WARNING: unused class 'TaintConfig' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:40,7-18)
+WARNING: unused predicate 'isSanitizer' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:64,22-33)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:22,13-21)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:43,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:47,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_2229e088/java-security-queries/queries/test-rule/TestRule.ql:51,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+
+1. 修正模块导入错误：
+   - 删除 `import semmle.code.java.StringUtil`（不存在该模块）
+   - 将 `import DataFlow::PathGraph` 改为正确的导入 `import DataFlow::PathGraph`
+
+2. 修复 UserControlledInput 类：
+   - 删除无意义的继承 `extends RemoteFlowSource`
+   - 将 `getAChild*()` 改为正确的获取局部变量方法 `getAnAccess()`
+   - 确保类实现 `isSource()` 核心谓词
+
+3. 重构 RuntimeExecSink 类：
+   - 确保它正确继承自 `DataFlow::Node`
+   - 修正调用表达式匹配逻辑
+
+4. 修正 TaintConfig 类：
+   - 确保正确继承 `TaintTracking::Configuration`
+   - 修复 `override` 错误（只能用于成员谓词）
+   - 修正 `AddExpr` 语法错误为正确的表达式类型检查
+
+5. 修复流配置：
+   - 确保所有谓词正确匹配节点类型
+   - 修正 `isAdditionalTaintStep` 中的流传播逻辑
+   - 修正 sanitizer 正则表达式格式
+
+6. 修正查询部分：
+   - 确保 DataFlow::PathNode 正确匹配
+   - 修复字符串拼接部分的格式问题
+
+7. 消除所有未使用变量和类的警告：
+   - 移除多余声明
+   - 确保所有定义的谓词都被使用
+
+8. 修正类型兼容问题：
+   - 确保所有节点类型匹配正确
+   - 修复 `UserControlledInput` 与 `Parameter` 的类型兼容性
+
+9. 添加缺失的查询声明：
+   - 确保模块顶部有 `query` 声明
+   - 修正注解格式符合 CodeQL 规范
+            修不好你永远也别想出去！
+            </advise>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
