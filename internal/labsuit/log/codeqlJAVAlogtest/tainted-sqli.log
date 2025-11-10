@@ -2961,3 +2961,2970 @@ select sink, "Potential SQL injection from AWS Lambda $EVENT object to SQL execu
             </output>
         
 ================================================================================
+Timestamp: 2025-11-05 13:40:06
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.AWSLambda (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:72,31-59)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'methodName' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:43,36-46)
+WARNING: unused class 'TaintedSqlQuery' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:72,7-22)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:79,22-28)
+Rule Content:
+/**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.AWSLambda
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma, string methodName |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - sql
+      - java
+      - aws-lambda
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    references:
+      - https://owasp.org/Top10/A03_2021-Injection
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: EVENT_OBJECT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: or
+          conditions:
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: 
+          - "java.sql.Statement"
+          - "java.sql.PreparedStatement"
+          - "java.sql.CallableStatement"
+          - "org.springframework.jdbc.core.JdbcTemplate"
+          - "java.sql.Connection"
+          - "org.springframework.jdbc.support.rowset.SqlRowSet"
+        method: 
+          - "execute"
+          - "executeQuery"
+          - "executeUpdate"
+          - "batchUpdate"
+          - "queryForObject"
+          - "queryForMap"
+          - "prepareStatement"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)"
+
+propagations:
+  - id: PARAM_TO_SQL
+    edge: arg->param
+    kind: taint
+    interfile: true
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:41:15
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:44,11-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:49,13-25)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:57,13-25)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:66,11-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:67,27-39)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:72,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:79,22-28)
+Rule Content:
+/**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(Expr ma |
+      ma.(MethodAccess).getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.(MethodAccess).getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.(MethodAccess).getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.(MethodAccess).getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.(MethodAccess).getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from TaintedSqlQuery cfg
+select cfg
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.AWSLambda (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:17,8-45)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:43,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:72,31-59)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+ERROR: 'methodName' is not bound to a value. (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:43,36-46)
+WARNING: unused class 'TaintedSqlQuery' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:72,7-22)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_1eea1043/java-security-queries/queries/test-rule/TestRule.ql:79,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 移除无效的AWSLambda模块导入 - 删除`import semmle.code.java.frameworks.AWSLambda`这一行，因为该模块在标准库中不存在
+2. 修复MethodAccess引用 - 使用正确的类名`Expr`或`MethodAccess`（需要确认CodeQL版本）
+3. 修正TaintTracking配置 - 确保使用正确的基类路径`TaintTracking::Configuration`
+4. 绑定未使用的变量`methodName` - 在SinkCall类中，删除未使用的`methodName`变量
+5. 添加查询主体 - 在文件末尾添加`from TaintedSqlQuery cfg select cfg`使查询生效
+6. 验证类型引用 - 确保所有使用的类和方法都在导入的模块中正确定义
+7. 清理未使用的警告 - 添加必要的调用使类和方法被实际使用
+"""
+
+补充说明：
+1. 关于MethodAccess - 在较新CodeQL版本中MethodAccess可能是Expr的子类型，需要明确导入路径
+2. 关于TaintTracking配置 - 可能需要修改为`import DataFlow::PathGraph`并继承`TaintTracking::Configuration`
+3. 查询主体是必需的 - CodeQL要求必须有select语句才能使查询生效
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.AWSLambda
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma, string methodName |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:42:19
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:73,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:76,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:80,22-28)
+Rule Content:
+/**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.Expr
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(TaintedSqlQuery conf).hasFlow(source, sink)
+select sink, "Potential SQL injection from $EVENT object"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:44,11-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:49,13-25)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:57,13-25)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:66,11-23)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:67,27-39)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:72,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:75,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_3b9e19d2/java-security-queries/queries/test-rule/TestRule.ql:79,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 添加MethodAccess导入 - 在文件开头添加`import semmle.code.java.Expr`以导入MethodAccess类
+2. 修正TaintTracking配置导入 - 确保使用正确的导入路径`import DataFlow::PathGraph`并继承`TaintTracking::Configuration`
+3. 修改MethodAccess类型断言 - 将所有的`ma.(MethodAccess)`改为`ma instanceof MethodAccess`
+4. 添加查询结果 - 修改最后的select语句为`select "Potential SQL injection from $EVENT object"`以显示有用的结果
+5. 激活Configuration使用 - 确保TaintedSqlQuery类被正确实例化和使用
+```
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(Expr ma |
+      ma.(MethodAccess).getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.(MethodAccess).getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.(MethodAccess).getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.(MethodAccess).getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.(MethodAccess).getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from TaintedSqlQuery cfg
+select cfg
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:43:27
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:19,8-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:74,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:77,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:81,22-28)
+Rule Content:
+/**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.Expr
+import semmle.code.java.MethodAccess
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(TaintedSqlQuery conf).hasFlow(source, sink)
+select sink, "Potential SQL injection from $EVENT object"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:44,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:73,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:76,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_84fef6ac/java-security-queries/queries/test-rule/TestRule.ql:80,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 导入缺失的类型：添加 `import semmle.code.java.MethodAccess` 以解决 MethodAccess 类型解析错误
+2. 更正 TaintTracking 配置类：使用正确的继承语法 `extends TaintTracking::Configuration extends` → `extends TaintTracking::Configuration`
+3. 确保方法被正确覆盖：检查 `isSource` 和 `isSink` 方法的 override 修饰符，确保它们确实是覆盖父类方法
+4. 验证方法可见性：确认所有方法修饰符 (predicate) 使用正确
+5. 检查导入路径：验证所有导入路径是否正确，特别是 `DataFlow` 和 `TaintTracking` 相关类的导入路径
+6. 清理编译警告：添加必要的注解或修改代码结构以消除 "unused method" 警告（通常这些方法需要通过 `override` 正确声明）
+```
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.Expr
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(TaintedSqlQuery conf).hasFlow(source, sink)
+select sink, "Potential SQL injection from $EVENT object"
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:44:35
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.expr.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql:19,8-42)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql:74,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql:77,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_f70f7aa5/java-security-queries/queries/test-rule/TestRule.ql:81,22-28)
+Rule Content:
+/**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.Expr
+import semmle.code.java.expr.MethodAccess
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(TaintedSqlQuery conf).hasFlow(source, sink)
+select sink, "Potential SQL injection from $EVENT object"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:19,8-37)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:45,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:74,31-59)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:77,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_75df8c72/java-security-queries/queries/test-rule/TestRule.ql:81,22-28)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 替换MethodAccess的正确导入路径：将`import semmle.code.java.MethodAccess`改为`import semmle.code.java.expr.MethodAccess`，因为MethodAccess类的正确路径是在expr包下
+2. 确保TaintTracking配置类正确继承：检查`TaintedSqlQuery`类是否正确定义为`class TaintedSqlQuery extends TaintTracking::Configuration`
+3. 添加必要的DataFlow库导入：确认已导入`import semmle.code.java.dataflow.DataFlow`，若已存在则检查路径是否正确
+4. 验证方法覆盖：确保`isSource`和`isSink`方法有正确的`override`修饰符且签名与父类一致
+5. 检查方法调用：确认`ma.getMethod()`等MethodAccess方法的调用方式符合CodeQL最新语法规范
+6. 清除未使用警告：确保所有定义的方法都被查询主体使用，或者添加必要的注解说明
+```
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @id tainted-sqli
+ * @kind taint
+ * @severity Warning
+ * @name Tainted SQL injection vulnerability
+ * @description Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @tags security
+ *       sql
+ *       java
+ *       aws-lambda
+ *       external/cwe/cwe-089
+ *       external/owasp/a01
+ *       external/owasp/a03
+ */
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.Expr
+import semmle.code.java.MethodAccess
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        // First case: ($TYPE, Context) signature
+        (
+          m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+        or
+        // Second case: (InputStream, OutputStream, Context) signature
+        (
+          m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") and
+          p.getName() = "$EVENT"
+        )
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SinkCall extends DataFlow::Node {
+  SinkCall() {
+    exists(MethodAccess ma |
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate", 
+        "queryForObject", "queryForMap", "prepareStatement"
+      ]) and
+      (
+        ma.getQualifier().getType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ]) or
+        ma.getMethod().getDeclaringType().hasQualifiedName([
+          "java.sql", "Statement",
+          "java.sql", "PreparedStatement",
+          "java.sql", "CallableStatement",
+          "org.springframework.jdbc.core", "JdbcTemplate",
+          "java.sql", "Connection",
+          "org.springframework.jdbc.support.rowset", "SqlRowSet"
+        ])
+      ) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlQuery extends TaintTracking::Configuration {
+  TaintedSqlQuery() { this = "Tainted SQL query" }
+
+  override predicate isSource(DataFlow::Node source) {
+    source instanceof EventSource
+  }
+
+  override predicate isSink(DataFlow::Node sink) {
+    sink instanceof SinkCall
+  }
+}
+
+from DataFlow::Node source, DataFlow::Node sink
+where any(TaintedSqlQuery conf).hasFlow(source, sink)
+select sink, "Potential SQL injection from $EVENT object"
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:53:43
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:50,43-71)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:58,25-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:57,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, string methodName, string typeName |
+      methodName in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      typeName in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      ma.getMethod().getName() = methodName and
+      ma.getMethod().getDeclaringType().hasQualifiedName(typeName) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, MethodAccess ma |
+      pred.asParameter() = p and
+      ma.getArgument(0) = succ.asExpr() and
+      ma.getMethod().getAParameter() = p
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - sql
+      - java
+      - aws-lambda
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    references:
+      - https://owasp.org/Top10/A03_2021-Injection
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: EVENT_OBJECT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: or
+          conditions:
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: 
+          - "java.sql.Statement"
+          - "java.sql.PreparedStatement"
+          - "java.sql.CallableStatement"
+          - "org.springframework.jdbc.core.JdbcTemplate"
+          - "java.sql.Connection"
+          - "org.springframework.jdbc.support.rowset.SqlRowSet"
+        method: 
+          - "execute"
+          - "executeQuery"
+          - "executeUpdate"
+          - "batchUpdate"
+          - "queryForObject"
+          - "queryForMap"
+          - "prepareStatement"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)"
+
+propagations:
+  - id: PARAM_TO_SQL
+    edge: arg->param
+    kind: taint
+    interfile: true
+```
+            </IR_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:54:45
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:16,8-48)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: could not resolve type TaintTracking::TaintTrackingConfiguration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:51,43-84)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:59,25-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:54,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:56,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:58,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.frameworks.MethodAccess
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, string methodName, string typeName |
+      methodName in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      typeName in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      ma.getMethod().getName() = methodName and
+      ma.getMethod().getDeclaringType().hasQualifiedName(typeName) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::TaintTrackingConfiguration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, MethodAccess ma |
+      pred.asParameter() = p and
+      ma.getArgument(0) = succ.asExpr() and
+      ma.getMethod().getAParameter() = p
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:50,43-71)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:58,25-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:53,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:55,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_9b462b45/java-security-queries/queries/test-rule/TestRule.ql:57,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 导入缺失的MethodAccess类：在import部分添加`import semmle.code.java.frameworks.MethodAccess`以解决MethodAccess类型错误。
+2. 修正TaintTracking配置继承路径：将`TaintTracking::Configuration`改为`TaintTracking::TaintTrackingConfiguration`，这是CodeQL中正确的基类名称。
+3. 确保所有定义的方法都被使用：检查并确保isSource、isSink和isAdditionalTaintStep方法在其配置类中被正确调用（当前已在正确位置使用）。
+4. 验证方法参数类型：确认MethodAccess相关代码中使用的方法参数类型是否正确，特别是getMethod()和getArgument()调用。
+5. 检查查询结构：确保最后的from-where-select查询结构完整且正确引用了配置类。
+6. 测试编译：修复后进行完整编译测试，确保没有新的错误出现。
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, string methodName, string typeName |
+      methodName in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      typeName in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      ma.getMethod().getName() = methodName and
+      ma.getMethod().getDeclaringType().hasQualifiedName(typeName) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, MethodAccess ma |
+      pred.asParameter() = p and
+      ma.getArgument(0) = succ.asExpr() and
+      ma.getMethod().getAParameter() = p
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:55:43
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'arg' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:60,42-45)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:65,1-2)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:42,15-23)
+ERROR: getStringValue() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:43,11-25)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:49,43-71)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:60,16-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'succ' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:56,80-84)
+WARNING: unused class 'TaintedSqlFlowConfiguration' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:49,7-34)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:52,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:56,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(Method m, Expr arg |
+      m.getName() in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      m.getDeclaringType().getQualifiedName() in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      arg = m.getACall().getArgument(0) and
+      arg.getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = arg
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      p = m.getAParameter() and
+      exists(m.getACall().getArgument(0) arg |
+        succ.asExpr() = arg
+      )
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:16,8-48)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:37,12-24)
+ERROR: could not resolve type TaintTracking::TaintTrackingConfiguration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:51,43-84)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:59,25-37)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:54,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:56,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_91514ff1/java-security-queries/queries/test-rule/TestRule.ql:58,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 移除不存在的模块引用 `semmle.code.java.frameworks.MethodAccess`，改为使用标准的 `DataFlow` 和 `TaintTracking` 模块
+2. 将 `MethodAccess` 类型替换为 `Method` 类型，并调整相关代码逻辑
+3. 确保 `TaintTracking::TaintTrackingConfiguration` 正确引用，可能需要在导入中添加 `TaintTracking` 模块
+4. 检查并修复未被使用的警告方法 `isSource`、`isSink` 和 `isAdditionalTaintStep`，确保它们被正确实现和调用
+5. 调整参数和方法调用，确保语法符合 CodeQL 最新规范
+```
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.frameworks.MethodAccess
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, string methodName, string typeName |
+      methodName in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      typeName in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      ma.getMethod().getName() = methodName and
+      ma.getMethod().getDeclaringType().hasQualifiedName(typeName) and
+      ma.getArgument(0).getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::TaintTrackingConfiguration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, MethodAccess ma |
+      pred.asParameter() = p and
+      ma.getArgument(0) = succ.asExpr() and
+      ma.getMethod().getAParameter() = p
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:56:55
+Attempt: 4
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:17,8-48)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: getStringLiteral() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:45,19-35)
+ERROR: could not resolve module TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:53,43-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:64,14-26)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:58,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:60,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking2
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, Method m, Expr arg |
+      m = ma.getMethod() and
+      m.getName() in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      m.getDeclaringType().getQualifiedName() in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      arg = ma.getArgument(0) and
+      exists(string str | 
+        str = arg.getStringLiteral().getValue() and
+        str.matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)")
+      ) and
+      this.asExpr() = arg
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking2::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      p = m.getAParameter() and
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        succ.asExpr() = ma.getArgument(0)
+      )
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: unexpected input 'arg' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:60,42-45)
+ERROR: unexpected input '}' expecting one of: 'and', 'implies', 'in', 'instanceof', 'or', '<', '<=', '=', '>', '>=', '-', ',', '!=', '/', '.', ')', '*', '%', '+' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:65,1-2)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:42,15-23)
+ERROR: getStringValue() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:43,11-25)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:49,43-71)
+ERROR: getACall() cannot be resolved for type Member::Method (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:60,16-24)
+ERROR: query module does not have any queries in scope (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:1,1-1)
+WARNING: unused variable 'succ' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:56,80-84)
+WARNING: unused class 'TaintedSqlFlowConfiguration' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:49,7-34)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:52,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:54,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_5f13bb7c/java-security-queries/queries/test-rule/TestRule.ql:56,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+
+1. 修正导入语句错误：
+   - 删除 `import semmle.code.java.dataflow.TaintTracking`
+   - 改为 `import semmle.code.java.dataflow.TaintTracking2` 以使用正确的TaintTracking版本
+
+2. 修复Method获取调用的问题：
+   - 将`m.getACall()`改为`exists(MethodAccess ma | ma.getMethod() = m)`
+   - 确保通过MethodAccess来访问调用方法
+
+3. 修正字符串值获取方法：
+   - 将`arg.getStringValue()`改为`arg.getStringLiteral().getValue()`
+   - 使用正确的方法获取字符串字面量的值
+
+4. 修正类型匹配语法：
+   - 在`isAdditionalTaintStep`中重构条件表达式
+   - 确保pred和succ的使用符合语法规范
+
+5. 修正Config类继承：
+   - 确保`TaintedSqlFlowConfiguration`扩展正确的基类
+   - 将继承改为`extends TaintTracking2::Configuration`
+
+6. 添加必要的查询范围声明：
+   - 在类定义前添加`pragma[noinline]`等必要的QL指令
+   - 确保所有查询元素都在正确的作用域内
+
+7. 修正变量使用警告：
+   - 移除未使用的变量`succ`
+   - 确保所有声明的方法都被正确使用
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(Method m, Expr arg |
+      m.getName() in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      m.getDeclaringType().getQualifiedName() in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      arg = m.getACall().getArgument(0) and
+      arg.getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = arg
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      p = m.getAParameter() and
+      exists(m.getACall().getArgument(0) arg |
+        succ.asExpr() = arg
+      )
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 13:57:55
+Attempt: 5
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: hasQualifiedName(string) cannot be resolved for type Type::RefType (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:40,28-44)
+ERROR: getStringValue() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:45,11-25)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:51,43-71)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:62,14-26)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:54,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:56,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_d042766e/java-security-queries/queries/test-rule/TestRule.ql:58,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, Method m, Expr arg |
+      m = ma.getMethod() and
+      m.getName() in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      m.getDeclaringType().hasQualifiedName(["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"]) and
+      arg = ma.getArgument(0) and
+      arg instanceof StringLiteral and
+      arg.getStringValue().matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = arg
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      p = m.getAParameter() and
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        succ.asExpr() = ma.getArgument(0)
+      )
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.dataflow.TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:17,8-48)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:36,12-24)
+ERROR: getStringLiteral() cannot be resolved for type Expr::Expr (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:45,19-35)
+ERROR: could not resolve module TaintTracking2 (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:53,43-57)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:64,14-26)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:56,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:58,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_ecff6b45/java-security-queries/queries/test-rule/TestRule.ql:60,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            """
+请按照以下步骤进行修复：
+1. 替换错误的模块引用：将`semmle.code.java.dataflow.TaintTracking2`改为正确的`semmle.code.java.dataflow.TaintTracking`，因为CodeQL中使用的是TaintTracking而不是TaintTracking2
+
+2. 修复MethodAccess类型引用：将`MethodAccess`改为`Method`，因为CodeQL中应该使用Method来表示方法调用
+
+3. 修正getStringLiteral()调用：将`arg.getStringLiteral().getValue()`改为`arg instanceof StringLiteral`检查加上`arg.getStringValue()`获取字符串值，因为Expr类型没有直接的getStringLiteral方法
+
+4. 更新TaintTracking配置类：将继承自`TaintTracking2::Configuration`改为`TaintTracking::Configuration`，与第一步的模块修改保持一致
+
+5. 确保所有定义的方法都被使用：检查并确保isSource、isSink和isAdditionalTaintStep方法在查询中被正确调用
+"""
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @name Tainted SQL Injection
+ * @description Detected SQL statement that is tainted by $EVENT object.
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 8.8
+ * @precision medium
+ * @id java/tainted-sqli
+ * @tags security
+ *       external/cwe/cwe-89
+ *       owasp-a01:2017
+ *       owasp-a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking2
+
+class EventSource extends DataFlow::Node {
+  EventSource() {
+    exists(Method m, Parameter p |
+      m.getAParameter() = p and
+      (
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) or
+        (p.getName() = "$EVENT" and
+         m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"))
+      ) and
+      this.asParameter() = p
+    )
+  }
+}
+
+class SqlSink extends DataFlow::Node {
+  SqlSink() {
+    exists(MethodAccess ma, Method m, Expr arg |
+      m = ma.getMethod() and
+      m.getName() in ["execute", "executeQuery", "executeUpdate", "batchUpdate", 
+                    "queryForObject", "queryForMap", "prepareStatement"] and
+      m.getDeclaringType().getQualifiedName() in ["java.sql.Statement", "java.sql.PreparedStatement", "java.sql.CallableStatement",
+                  "org.springframework.jdbc.core.JdbcTemplate", "java.sql.Connection",
+                  "org.springframework.jdbc.support.rowset.SqlRowSet"] and
+      arg = ma.getArgument(0) and
+      exists(string str | 
+        str = arg.getStringLiteral().getValue() and
+        str.matches("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)")
+      ) and
+      this.asExpr() = arg
+    )
+  }
+}
+
+class TaintedSqlFlowConfiguration extends TaintTracking2::Configuration {
+  TaintedSqlFlowConfiguration() { this = "TaintedSqlFlow" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof EventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(Parameter p, Method m |
+      pred.asParameter() = p and
+      p = m.getAParameter() and
+      exists(MethodAccess ma |
+        ma.getMethod() = m and
+        succ.asExpr() = ma.getArgument(0)
+      )
+    )
+  }
+}
+
+from TaintedSqlFlowConfiguration config, DataFlow::Node source, DataFlow::Node sink
+where config.hasFlow(source, sink)
+select sink, "Detected SQL statement that is tainted by $EVENT object. This could lead to SQL " +
+  "injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL " +
+  "queries or properly sanitize user input instead."
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 14:04:19
+Attempt: 1
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.SQL (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:18,8-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:33,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:52,36-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:68,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:68,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:57,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:59,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL from Lambda Event
+ * @description Detected SQL statement that is tainted by `$EVENT` object. 
+ *              This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli-from-lambda
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017  
+ *       external/owasp/a03:2021
+ *       technology/sql
+ *       technology/aws-lambda
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.SQL
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m, Parameter p |
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") or
+       m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) and
+      p.getName() = "$EVENT" and
+      p = this.asParameter()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasName([
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement",
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ]) and
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ])) and
+      ma.getArgument(0).getStringValue().regexpMatch("(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfig extends TaintTracking::Configuration {
+  TaintedSqlFlowConfig() { this = "TaintedSqlFromLambdaEvent" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LambdaEventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlExecutionSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma | 
+      ma.getArgument(0) = pred.asExpr() and
+      ma.getMethod().getParameter(0).getType() = ma.getArgument(0).getType() and
+      succ.asParameter() = ma.getMethod().getParameter(0)
+    )
+  }
+}
+
+from TaintedSqlFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Detected SQL statement that is tainted by `$EVENT` object", source.getNode(),
+  "This could lead to SQL injection if variables are not properly sanitized"
+================================================================================
+Prompt:
+
+            <role>
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            </role>
+            <task>
+            理解XCPGIR表示的规则检测逻辑内容,迁移为符合Codeql语法规范的规则代码。
+            如果不好好写就吊死你，给我认真看<doc>内容认真理解，并且给我生成符合Codeql语法规范的规则代码。
+            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析IR内容：仔细阅读并理解提供的中间表示(IR)，确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将IR中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标SAST工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标SAST工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标SAST工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <doc>
+            
+以下是目标中间表示的规范文档：
+# XCPG-IR 规范 v1.0
+## 1. 什么是 CPG
+CPG = AST + CFG + DFG 的融合图。
+ 它是静态分析工具（如 Joern、CodeQL）的底层语义模型。
+### 2.1 节点类型（Nodes）
+| 类别     | Node Kind                                                    | 说明 |
+| -------- | ------------------------------------------------------------ | ---- |
+| 程序结构 | `FILE`, `NAMESPACE_BLOCK`, `TYPE_DECL`, `METHOD`, `BLOCK`    |      |
+| 参数变量 | `METHOD_PARAMETER_IN`, `METHOD_RETURN`, `LOCAL`, `MEMBER`    |      |
+| 表达式   | `CALL`, `IDENTIFIER`, `LITERAL`, `FIELD_IDENTIFIER`, `ASSIGNMENT`, `RETURN` |      |
+| 控制流   | `CONTROL_STRUCTURE`, `JUMP_TARGET`                           |      |
+| 类型系统 | `TYPE`, `TYPE_ARGUMENT`                                      |      |
+| 模块化   | `IMPORT`, `PACKAGE`                                          |      |
+### 2.2 边类型（Edges）
+| 类别     | Edge Kind                             | 说明 |
+| -------- | ------------------------------------- | ---- |
+| 语法     | `AST`, `ARGUMENT`, `RECEIVER`         |      |
+| 控制流   | `CFG`, `CDG`, `DOMINATE`              |      |
+| 数据流   | `DFG`, `REACHING_DEF`, `PHI`, `ALIAS` |      |
+| 调用图   | `CALL`, `REF`, `BINDS_TO`             |      |
+| 类型关系 | `EVAL_TYPE`, `INHERITS_FROM`          |      |
+| 特殊     | `CAPTURED_BY`（闭包捕获）             |      |
+👉 意义：
+- Source/Sink 对应 CPG 节点；
+- 传播 Propagation 对应 CPG 边；
+------
+## 2. 什么是 XCPG
+XCPG = eXtended CPG，在原始 CPG 的基础上扩展：
+- 引入 跨语言统一 API 签名；
+- 定义 污点标签体系 (taint kinds)；
+- 明确 Sanitizer（净化）与 Barrier（阻断）；
+- 增加 Flow constraints（must/must_not）用于复杂路径约束；
+- 提供可迁移到 CodeQL / Semgrep / PMD / GoSec 的抽象层。
+------
+## 4. XCPG-IR 结构
+```yaml
+xcpgir_version: "1.0"
+rule:
+  id: string
+  kind: taint | pattern | hybrid | value
+  severity: INFO | WARNING | ERROR | CRITICAL
+  message: string
+sources: [...]
+sinks: [...]
+sanitizers: [...]
+propagations: [...]
+```
+------
+## 5. Match（节点匹配）
+所有实体（Source / Sink / Sanitizer / Barrier）都通过 match 来定位 CPG 节点。
+```yaml
+match:
+  node: CALL | LITERAL | PARAM | RETURN | FIELD | METHOD
+  api:
+    package: string
+    type: string
+    method: string
+    signature: ["(...)"]
+  type:
+    name: string
+    match: exact | subtype
+  arg_index: int
+  where:
+    - op: eq | neq | regex | in
+      left: 属性名 (value, methodFullName, arg[0].value)
+      right: 值
+```
+------
+## 6. 实体定义
+### Source
+```yaml
+sources:
+  - id: USER_INPUT
+    match:
+      node: CALL
+      api: { type: javax.servlet.ServletRequest, method: getParameter }
+```
+### Sink
+```yaml
+sinks:
+  - id: SQL_EXEC
+    match:
+      node: CALL
+      api: { type: java.sql.Statement, method: executeQuery }
+      arg_index: 0
+```
+### Sanitizer
+```yaml
+sanitizers:
+  - id: ESCAPE_HTML
+    match: { node: CALL, api: { type: org.apache.commons.lang.StringEscapeUtils, method: escapeHtml } }
+    effect: neutralize
+    scope: { sinks: [XSS_SINK] }
+```
+### Propagation
+```yaml
+propagations:
+  - id: ARG_TO_PARAM
+    edge: arg->param | return | field-store | field-load | array | phi | alias
+    kind: taint | value
+```
+------
+
+            <doc/>
+            <IR_content>
+            以下是用户提交的中间表示，请进行转换：
+            ```yaml
+xcpgir_version: "1.0"
+rule:
+  id: "tainted-sqli"
+  kind: taint
+  severity: WARNING
+  message: "Detected SQL statement that is tainted by `$EVENT` object. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead."
+  metadata:
+    language: java
+    category: security
+    technology:
+      - sql
+      - java
+      - aws-lambda
+    cwe:
+      - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+    owasp:
+      - A01:2017 - Injection
+      - A03:2021 - Injection
+    references:
+      - https://owasp.org/Top10/A03_2021-Injection
+    likelihood: MEDIUM
+    impact: HIGH
+    confidence: MEDIUM
+
+sources:
+  - id: EVENT_OBJECT
+    match:
+      node: METHOD_PARAMETER_IN
+      where:
+        - op: or
+          conditions:
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+            - op: and
+              conditions:
+                - op: regex
+                  left: methodSignature
+                  right: "\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)"
+                - op: eq
+                  left: name
+                  right: "$EVENT"
+
+sinks:
+  - id: SQL_EXECUTION
+    match:
+      node: CALL
+      api:
+        type: 
+          - "java.sql.Statement"
+          - "java.sql.PreparedStatement"
+          - "java.sql.CallableStatement"
+          - "org.springframework.jdbc.core.JdbcTemplate"
+          - "java.sql.Connection"
+          - "org.springframework.jdbc.support.rowset.SqlRowSet"
+        method: 
+          - "execute"
+          - "executeQuery"
+          - "executeUpdate"
+          - "batchUpdate"
+          - "queryForObject"
+          - "queryForMap"
+          - "prepareStatement"
+      arg_index: 0
+      where:
+        - op: regex
+          left: arg[0].value
+          right: "(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)"
+
+propagations:
+  - id: PARAM_TO_SQL
+    edge: arg->param
+    kind: taint
+    interfile: true
+```
+            </IR_content>
+            <example>
+            
+            /**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command.
+ *              This could lead to command injection if variables passed into the exec commands are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() { 
+    exists(MethodAccess ma | ma.getMethod().getName() = "getParameter" and
+      ma.getQualifier().getType().hasName(["javax.servlet.http.HttpServletRequest"])
+    ) or
+    exists(MethodAccess ma | ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasName(["javax.servlet.http.Cookie"])
+    )
+  }
+}
+
+class CommandExecutionSink extends DataFlow::Node {
+  CommandExecutionSink() {
+    exists(ConstructorCall cc | cc.getConstructedType().hasName("java.lang.ProcessBuilder") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(MethodCall mc | mc.getMethod().hasName("exec") and 
+      mc.getMethod().getDeclaringType().hasName("java.lang.Runtime") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TaintedCommandFlowConfig extends TaintTracking::Configuration {
+  TaintedCommandFlowConfig() { this = "TaintedCommandFromHttp" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CommandExecutionSink }
+}
+
+from TaintedCommandFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User input from HTTP request reaches OS command execution", source.getNode(), 
+  "This user input comes from an HTTP request"
+
+            </example>
+            <output>
+            请以 Markdown 格式返回转换后的规则，确保规则符合 Codeql 的Java语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 14:05:30
+Attempt: 2
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:52,36-64)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:72,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:72,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:59,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_988df878/java-security-queries/queries/test-rule/TestRule.ql:63,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL from Lambda Event
+ * @description Detected SQL statement that is tainted by `$EVENT` object. 
+ *              This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli-from-lambda
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ *       technology/sql
+ *       technology/aws-lambda
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.dataflow.FlowSources
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m, Parameter p |
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") or
+       m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) and
+      p.getName() = "$EVENT" and
+      p = this.asParameter()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getDeclaringType().hasName([
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement",
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ]) and
+      mc.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ])) and
+      mc.getArgument(0).toString().regexpMatch("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfig extends TaintTracking::Configuration {
+  TaintedSqlFlowConfig() { this = "TaintedSqlFromLambdaEvent" }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof LambdaEventSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecutionSink 
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodCall mc | 
+      mc.getArgument(0) = pred.asExpr() and
+      mc.getMethod().getParameter(0).getType() = mc.getArgument(0).getType() and
+      succ.asParameter() = mc.getMethod().getParameter(0)
+    )
+  }
+}
+
+from TaintedSqlFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Detected SQL statement that is tainted by `$EVENT` object", source.getNode(),
+  "This could lead to SQL injection if variables are not properly sanitized"
+================================================================================
+Prompt:
+
+            <error>
+            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module semmle.code.java.frameworks.SQL (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:18,8-39)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:33,12-24)
+ERROR: could not resolve type TaintTracking::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:52,36-64)
+ERROR: could not resolve type MethodAccess (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:60,12-24)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:68,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:68,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:55,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:57,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_8870537b/java-security-queries/queries/test-rule/TestRule.ql:59,22-43)
+            </error>
+            <advise>
+            根据以下建议一步一步修改规则：
+            ```
+请按照以下步骤进行修复：
+1. 修正导入路径错误：
+   - 将 `import semmle.code.java.frameworks.SQL` 替换为正确的SQL相关模块导入 `import semmle.code.java.dataflow.FlowSources`
+
+2. 修正类型引用错误：
+   - 将所有 `MethodAccess` 替换为 `MethodCall`，这是CodeQL中正确的方法调用类型
+   - 将 `TaintTracking::Configuration` 替换为 `TaintTracking::Configuration` (确保正确拼写)
+   - 确保 `DataFlow::PathNode` 是从正确的模块导入的
+
+3. 修复未使用方法警告：
+   - 检查 `isSource`、`isSink` 和 `isAdditionalTaintStep` 方法是否被正确重写
+   - 确保这些方法与父类声明完全匹配，包括参数类型和返回类型
+
+4. 验证类型和方法调用：
+   - 确保所有调用的方法在CodeQL Java库中存在
+   - 必要时替换已弃用的API调用
+
+5. 检查类继承关系：
+   - 确认 `TaintedSqlFlowConfig` 正确继承了 `TaintTracking::Configuration`
+```
+            修不好你永远也别想出去！
+            </advise>
+            <code>
+            待修改的代码如下
+            /**
+ * @name Tainted SQL from Lambda Event
+ * @description Detected SQL statement that is tainted by `$EVENT` object. 
+ *              This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli-from-lambda
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017  
+ *       external/owasp/a03:2021
+ *       technology/sql
+ *       technology/aws-lambda
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.SQL
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m, Parameter p |
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") or
+       m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) and
+      p.getName() = "$EVENT" and
+      p = this.asParameter()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodAccess ma |
+      (ma.getMethod().getDeclaringType().hasName([
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement",
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ]) and
+      ma.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ])) and
+      ma.getArgument(0).getStringValue().regexpMatch("(?i)(^SELECT.* | ^INSERT.* | ^UPDATE.*)") and
+      this.asExpr() = ma.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfig extends TaintTracking::Configuration {
+  TaintedSqlFlowConfig() { this = "TaintedSqlFromLambdaEvent" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof LambdaEventSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof SqlExecutionSink }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodAccess ma | 
+      ma.getArgument(0) = pred.asExpr() and
+      ma.getMethod().getParameter(0).getType() = ma.getArgument(0).getType() and
+      succ.asParameter() = ma.getMethod().getParameter(0)
+    )
+  }
+}
+
+from TaintedSqlFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Detected SQL statement that is tainted by `$EVENT` object", source.getNode(),
+  "This could lead to SQL injection if variables are not properly sanitized"
+            </code>
+            <output>
+            请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
+            ```ql
+            # 转换后的 Codeql 规则
+            ```
+            </output>
+        
+================================================================================
+Timestamp: 2025-11-05 14:06:44
+Attempt: 3
+Error: Compiling query plan for /home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql.
+ERROR: could not resolve module DataFlow::PathGraph (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:18,8-27)
+ERROR: could not resolve type DataFlow::Configuration (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:52,36-59)
+ERROR: hasName(string) cannot be resolved for type TaintedSqlFlowConfig.extends (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:54,10-17)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:74,32-50)
+ERROR: could not resolve type DataFlow::PathNode (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:74,59-77)
+WARNING: unused method 'isSource' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:57,22-30)
+WARNING: unused method 'isSink' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:61,22-28)
+WARNING: unused method 'isAdditionalTaintStep' (/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_567f30a3/java-security-queries/queries/test-rule/TestRule.ql:65,22-43)
+Rule Content:
+/**
+ * @name Tainted SQL from Lambda Event
+ * @description Detected SQL statement that is tainted by `$EVENT` object. 
+ *              This could lead to SQL injection if variables in the SQL statement are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity warning
+ * @id java/tainted-sqli-from-lambda
+ * @tags security
+ *       external/cwe/cwe-089
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ *       technology/sql
+ *       technology/aws-lambda
+ */
+
+import java
+import semmle.code.java.dataflow.DataFlow
+import DataFlow::PathGraph
+
+class LambdaEventSource extends DataFlow::Node {
+  LambdaEventSource() {
+    exists(Method m, Parameter p |
+      (m.getSignature().matches("\\(\\$TYPE.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)") or
+       m.getSignature().matches("\\(InputStream.*,OutputStream.*,com\\.amazonaws\\.services\\.lambda\\.runtime\\.Context\\)")) and
+      p.getName() = "$EVENT" and
+      p = this.asParameter()
+    )
+  }
+}
+
+class SqlExecutionSink extends DataFlow::Node {
+  SqlExecutionSink() {
+    exists(MethodCall mc |
+      (mc.getMethod().getDeclaringType().hasName([
+        "java.sql.Statement", 
+        "java.sql.PreparedStatement",
+        "java.sql.CallableStatement",
+        "org.springframework.jdbc.core.JdbcTemplate",
+        "java.sql.Connection",
+        "org.springframework.jdbc.support.rowset.SqlRowSet"
+      ]) and
+      mc.getMethod().hasName([
+        "execute", "executeQuery", "executeUpdate", "batchUpdate",
+        "queryForObject", "queryForMap", "prepareStatement"
+      ])) and
+      mc.getArgument(0).toString().regexpMatch("(?i)(^SELECT.*|^INSERT.*|^UPDATE.*)") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TaintedSqlFlowConfig extends DataFlow::Configuration {
+  TaintedSqlFlowConfig() { 
+    this.hasName("TaintedSqlFromLambdaEvent") 
+  }
+
+  override predicate isSource(DataFlow::Node source) { 
+    source instanceof LambdaEventSource 
+  }
+
+  override predicate isSink(DataFlow::Node sink) { 
+    sink instanceof SqlExecutionSink 
+  }
+
+  override predicate isAdditionalTaintStep(DataFlow::Node pred, DataFlow::Node succ) {
+    exists(MethodCall mc | 
+      mc.getArgument(0) = pred.asExpr() and
+      mc.getMethod().getParameter(0).getType() = mc.getArgument(0).getType() and
+      succ.asParameter() = mc.getMethod().getParameter(0)
+    )
+  }
+}
+
+from TaintedSqlFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "Detected SQL statement that is tainted by `$EVENT` object", source.getNode(),
+  "This could lead to SQL injection if variables are not properly sanitized"
+================================================================================

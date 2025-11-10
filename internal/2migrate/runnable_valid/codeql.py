@@ -231,102 +231,49 @@ def validate_rules_concurrently(rules, base_dir, max_workers=3, language="python
     return results
 
 
+def validate_rules_in_directory(rules_dir, base_dir, max_workers=3, language="java"):
+    """
+    验证指定目录下的所有规则文件。
+    """
+    ensure_dir(base_dir)
+    results = []
+    rule_files = []
+
+    # 遍历目录，找到所有 .ql 文件
+    for root, _, files in os.walk(rules_dir):
+        for file in files:
+            if file.endswith(".go"):
+                rule_files.append(os.path.join(root, file))
+
+    print(f"[🔍] 找到 {len(rule_files)} 个规则文件，开始验证...")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(validate_codeql_rule, open(rule_file, "r", encoding="utf-8").read(), base_dir, language): rule_file
+            for rule_file in rule_files
+        }
+        for future in as_completed(futures):
+            rule_file = futures[future]
+            try:
+                result = future.result()
+                results.append({"file": rule_file, "result": result})
+                if result["valid"]:
+                    print(f"[✅] 验证通过: {rule_file}")
+                else:
+                    print(f"[❌] 验证失败: {rule_file} - {result['error']}")
+            except Exception as e:
+                print(f"[⚠️] 验证异常: {rule_file} - {e}")
+
+    # 保存验证结果到文件
+    results_file = os.path.join(base_dir, "validation_results.json")
+    with open(results_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)
+
+    print(f"[📄] 验证结果已保存到 {results_file}")
+
 if __name__ == "__main__":
-    sample_rule = '''/**
- * @name Use of exec function
- * @description Detects usage of the exec function in Python code
- * @id python/exec-usage
- * @kind problem
- * @problem.severity warning
- * @tags security
- *       external/cwe/cwe-078
- */
-
-where
-  name = call.getFunc() and
-  name.getId() = "exec"
-select call, "Use of exec function detected"
-'''
-    rule = '''
-    /**
- * @id el-injection
- * @severity Warning
- * @name Expression Language Injection
- * @description An expression is built with a dynamic value. The source of the value(s) should be 
- *              verified to avoid that unfiltered values fall into this risky code evaluation.
- * @kind path-problem
- * @problem.severity warning
- * @tags security
- *       external/cwe/cwe-094
- */
-
-import java
-import semmle.code.java.dataflow.FlowSources
-import semmle.code.java.dataflow.TaintTracking
-
-/** The source of potentially dangerous dynamic input */
-class DynamicInput extends DataFlow::Node {
-  DynamicInput() {
-    exists(Parameter p | this.asParameter() = p) or
-    exists(Literal l | this.asExpr() = l and not l.getValue().toString() = "\"...\"") or
-    exists(Call c | this.asExpr() = c)
-  }
-}
-
-/** The sink where untrusted input could lead to EL injection */
-class ElSink extends DataFlow::Node {
-  ElSink() {
-    exists(Call c |
-      c.getCallee().getName() = "createValueExpression" and
-      c.getCallee().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
-      this.asExpr() = c.getArgument(1)
-    ) or
-    exists(Call c |
-      c.getCallee().getName() = "createMethodExpression" and
-      c.getCallee().getDeclaringType().hasQualifiedName("javax.el", "ExpressionFactory") and
-      this.asExpr() = c.getArgument(1)
-    ) or
-    exists(Call c |
-      c.getCallee().getName() = "buildConstraintViolationWithTemplate" and
-      this.asExpr() = c.getArgument(0)
-    )
-  }
-}
-
-/** Sanitizer for string literals which are considered safe */
-class StringLiteralSanitizer extends DataFlow::Node {
-  StringLiteralSanitizer() {
-    exists(Literal l | this.asExpr() = l and l.getValue().toString() = "\"...\"")
-  }
-}
-
-/** Taint tracking configuration for EL injection */
-class ElInjectionConfig extends TaintTracking::Configuration {
-  ElInjectionConfig() { this = "ElInjectionConfig" }
-
-  override predicate isSource(DataFlow::Node source) { source instanceof DynamicInput }
-
-  override predicate isSink(DataFlow::Node sink) { sink instanceof ElSink }
-
-  override predicate isSanitizer(DataFlow::Node sanitizer) {
-    sanitizer instanceof StringLiteralSanitizer
-  }
-}
-
-from DataFlow::PathNode source, DataFlow::PathNode sink, ElInjectionConfig config
-where config.hasFlowPath(source, sink)
-select sink, "Expression injection risk detected with dynamic input: " + sink.getNode().toString(),
-  source, sink, "Potential EL injection vulnerability"
-    '''
-    
-
-    ensure_dir(base_path)
-    print(f"[{datetime.now()}] Starting validation with {max_workers} workers...")
-    result = validate_codeql_rule(rule, base_path, language = "java")
-    print(result)
-    if result["valid"]:
-        print("[✅] 规则验证通过！")
-
+    rules_directory = "/home/cbb/PJ/SAST-Rule-Migrate/output/semgrep2codeql"
+    validate_rules_in_directory(rules_directory, base_path, max_workers=max_workers, language="java")
 
 
 def ensure_codeql_deps_installed():

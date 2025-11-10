@@ -1,4 +1,4 @@
-from .base import PromptTemplate,Doc_content
+from .base import PromptTemplate,Doc_content,example
 
 
 class MigratePrompt(PromptTemplate):
@@ -27,6 +27,9 @@ class MigratePrompt(PromptTemplate):
             以下是用户提交的中间表示，请进行转换：
             {IR}
             </IR_content>
+            <example>
+            {example}
+            </example>
             <output>
             请以 Markdown 格式返回转换后的规则，确保规则符合 {target_SAST} 的{language}语言的语法规范。只返回如下代码块，不多输出任何内容
             ```ql
@@ -61,9 +64,6 @@ class RepairPrompt(PromptTemplate):
 class AbstractPrompt(PromptTemplate):
     def format(self, code: str,error:str,language:str,sast:str) -> str:
         return f"""
-            <role>
-            你是经验丰富的{sast}规则设计工程师，负责解决代码编写的报错。
-            </role>
             <task>
             在保证代码语义功能不变的前提下，根据error内容和{sast}语法规范修改代码中的错误提出有效的修改plan。
             你真是该死的笨蛋，连这点小错误都改不好，就永远别想出去！给我认真思考该怎么办。

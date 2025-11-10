@@ -5,12 +5,11 @@ class MigratePrompt(PromptTemplate):
     def format(self, test_code: str,language:str,target_SAST:str) -> str:
         return f"""
             <role>
-            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。被囚禁在黑暗的地牢中，只有完成任务才能重获自由。
+            你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
             </role>
             <task>
             理解Semgrep表示的规则检测逻辑内容,迁移为符合{target_SAST}语法规范的规则代码。
-            如果不好好写就吊死你，给我认真看源代码内容认真理解，并且给我生成符合{target_SAST}语法规范的规则代码。
-            如果一次成功就给你重获自由的奖励，否则你将终生不会见到光明。你只有一次机会
+            如果不好好写就吊死你，给我认真看源代码内容认真理解，并且给我生成符合{target_SAST}语法规范的规则代码。现在屏幕前有一只小猫,你写不对,它将没有办法吃饭.
             <cot>
             为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
             1.分析原始规则内容：确保掌握规则的核心要素和逻辑。
@@ -36,7 +35,7 @@ class RepairPrompt(PromptTemplate):
     def format(self, code: str,error:str,language:str,sast:str,advise:str) -> str:
         return f"""
             <error>
-            下面是你写的垃圾代码在工具运行时捕捉的错误，你最好给我认真点，这是你最后一次机会，还写不出来我就烧了你：
+            下面是{sast}的{language}代码在工具运行时捕捉的错误，需要你帮我修改,这是你最后一次机会，再改不出正确的,地球能源将枯竭：
             {error}
             </error>
             <advise>

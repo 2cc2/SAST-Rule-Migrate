@@ -110,3 +110,60 @@ propagations:
 ```
 ------
 """
+example= """
+            /**
+ * @name Tainted command from HTTP request
+ * @description Detected input from a HTTPServletRequest going into a 'ProcessBuilder' or 'exec' command.
+ *              This could lead to command injection if variables passed into the exec commands are not properly sanitized.
+ * @kind path-problem
+ * @problem.severity error
+ * @security-severity 9.8
+ * @id java/tainted-cmd-from-http-request
+ * @tags security
+ *       external/cwe/cwe-078
+ *       external/cwe/cwe-088
+ *       external/owasp/a01:2017
+ *       external/owasp/a03:2021
+ */
+
+import java
+import semmle.code.java.dataflow.TaintTracking
+import semmle.code.java.frameworks.Servlets
+
+class HttpRequestSource extends DataFlow::Node {
+  HttpRequestSource() { 
+    exists(MethodAccess ma | ma.getMethod().getName() = "getParameter" and
+      ma.getQualifier().getType().hasName(["javax.servlet.http.HttpServletRequest"])
+    ) or
+    exists(MethodAccess ma | ma.getMethod().getName() = "getValue" and
+      ma.getQualifier().getType().hasName(["javax.servlet.http.Cookie"])
+    )
+  }
+}
+
+class CommandExecutionSink extends DataFlow::Node {
+  CommandExecutionSink() {
+    exists(ConstructorCall cc | cc.getConstructedType().hasName("java.lang.ProcessBuilder") and
+      this.asExpr() = cc.getArgument(0)
+    ) or
+    exists(MethodCall mc | mc.getMethod().hasName("exec") and 
+      mc.getMethod().getDeclaringType().hasName("java.lang.Runtime") and
+      this.asExpr() = mc.getArgument(0)
+    )
+  }
+}
+
+class TaintedCommandFlowConfig extends TaintTracking::Configuration {
+  TaintedCommandFlowConfig() { this = "TaintedCommandFromHttp" }
+
+  override predicate isSource(DataFlow::Node source) { source instanceof HttpRequestSource }
+
+  override predicate isSink(DataFlow::Node sink) { sink instanceof CommandExecutionSink }
+}
+
+from TaintedCommandFlowConfig cfg, DataFlow::PathNode source, DataFlow::PathNode sink
+where cfg.hasFlowPath(source, sink)
+select sink.getNode(), source, sink, 
+  "User input from HTTP request reaches OS command execution", source.getNode(), 
+  "This user input comes from an HTTP request"
+"""

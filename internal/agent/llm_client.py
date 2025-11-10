@@ -23,9 +23,18 @@ class LLMBot:
             "Content-Type": "application/json"
         }
         self.model = model
+        self.log_file = "llm_context_log.txt"  # 日志文件路径
+
     def clear_context(self):
         """清除上下文，仅保留系统提示"""
         self.messages = [{"role": "system", "content":"你是静态分析工具漏洞检测规则编写大师"}]
+
+    def log_context(self):
+        """记录当前上下文到日志文件"""
+        with open(self.log_file, "a", encoding="utf-8") as log:
+            log.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}\n")
+            log.write(json.dumps(self.messages, ensure_ascii=False, indent=2))
+            log.write("\n\n")
 
     def inference(self, message, max_tokens=3000, preserve_context=True):
         """
@@ -50,18 +59,18 @@ class LLMBot:
             raise RuntimeError("Invalid response: 'message' or 'content' field is missing in choices.")
 
         content = response_json['choices'][0]['message']['content']
-
+        self.log_context()
         # 根据 preserve_context 参数决定是否保留上下文
         if not preserve_context:
             self.clear_context()
         else:
             # # 保留系统提示和最近两条消息
-            # if len(self.messages) > 2:
-            #     self.messages = [self.messages[0]] + [self.messages[1]]
-            if len(self.messages) > 5:
+            if len(self.messages) > 2:
                 self.messages = [self.messages[0]] + [self.messages[1]]
+            # if len(self.messages) > 5:
+            #     self.messages = [self.messages[0]] + [self.messages[1]]
         return content
-    
+        
 
 class LLM:
 
