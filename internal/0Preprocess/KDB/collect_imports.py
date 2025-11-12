@@ -70,7 +70,7 @@ def find_context(file_path, base_path, visited=None, G=None, parent_module=None,
 
     return G
 
-def visualize_dependency_graph(G, output_html="/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/KDB/SQL.html"):
+def visualize_dependency_graph(G, output_html="/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/KDB/XSS.html"):
     """使用 PyVis 生成交互式可视化 HTML 文件，并标记入度和出度最多的点"""
     net = Network(height="800px", width="100%", directed=True, bgcolor="#ffffff", font_color="black")
     net.from_nx(G)
@@ -117,7 +117,7 @@ def visualize_dependency_graph(G, output_html="/home/cbb/SAST-Rule-Migrate/inter
     net.write_html(output_html)
     print(f"\n✅ 依赖图已生成: {output_html}")
 
-def save_graph_to_json(G, output_path="SQL.json"):
+def save_graph_to_json(G, output_path="XSS.json"):
     """将 NetworkX 图保存为 JSON 格式"""
     data = {
         "nodes": list(G.nodes),
@@ -136,8 +136,8 @@ def print_in_out_degree_table(G):
         out_degree = G.out_degree(node)
         print(f"{node:<50}{in_degree:<10}{out_degree:<10}")
 def main():
-    # entry_file = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-079/SQL.ql"
-    entry_file = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-089/SqlTainted.ql"
+    entry_file = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-079/XSS.ql"
+    # entry_file = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-089/SqlTainted.ql"
     base_path  = "/home/cbb/codeql/java/ql/lib"
 
     print(f"开始解析入口文件: {entry_file}\n")
