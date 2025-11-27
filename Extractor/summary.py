@@ -4,8 +4,8 @@ import re
 from agent.llm_client import LLM
 
 # 配置路径和模板
-BASE_DIR = "/home/cbb/codeql/python/ql/src/Security/CWE-798"
-OUTPUT_FILE = "codeql_python_summary33.json"
+BASE_DIR = "/home/cbb/codeql/java/ql/src/Security/"
+OUTPUT_FILE = "codeql_java_summary.json"
 
 TEMPLATE = """
 <input>
@@ -53,10 +53,12 @@ TEMPLATE = """
         "sinktag::导入模块名::函数名",
         "propagationtag::导入模块名::函数名",
         "sanitizertag::导入模块名::函数名"
-    ]
+    ],
+    "tags": RULE（规则文件）|LIB（库文件）|ABSTRACT（抽象基类）,
+    "summary": "<文件内容|如果是规则文件，则总结如何检测漏洞的，明确如何进行污点分析。|如果是库文件，则总结该库文件提供了哪些功能。>"
 }}
-</output>
-"""
+    </output>
+    """
 
 llm = LLM(
     system_prompt="你擅长总结工具的语法规则",

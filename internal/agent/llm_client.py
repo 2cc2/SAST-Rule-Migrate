@@ -96,7 +96,15 @@ class LLM:
         if self.verbose:
             print(f"LLM response: {response}")
         return response.strip()
-    
+
+
+
+    def Summary(self, prompt: str, max_tokens: int = 3000) -> str:
+        print("prompt_tocken数",self.count_tokens(prompt))
+        response = self.bot.inference(prompt, max_tokens=max_tokens,preserve_context=False)
+        if self.verbose:
+            print(f"LLM response: {response}")
+        return response.strip()
     def Transform_rules(self, prompt: str, code: str,max_tokens: int = 3000) -> str:
         """
         Transform the input prompt using the LLM.
@@ -122,5 +130,7 @@ class LLM:
   
 if __name__ == "__main__":
     bot = LLMBot(system_prompt="You are a helpful assistant.", model=Model.GPT_4.value)
-    response = bot.inference('你知道的代码扫描工具PMD的最新版本是多少')
+    response = bot.inference('你知道的代码扫描工具Codeql的最新版本是多少')
+    print("问题: 你知道的代码扫描工具Codeql的最新版本是多少？")
+    print("LLM Response:")
     print(response)

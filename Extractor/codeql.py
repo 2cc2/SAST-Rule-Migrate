@@ -30,8 +30,8 @@ def extract_codeql_api(repo_path, lang="python"):
     # 按文件名的字典序排序
     result.sort(key=lambda x: x["file"])
 
-    with open("codeql_ql_index.json", "w", encoding="utf-8") as f:
+    with open("codeql_ql_java.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
     print(f"✅ Extracted {len(result)} files")
 
-extract_codeql_api("/home/cbb/codeql/python/ql/", "python")
+extract_codeql_api("/home/cbb/codeql/java/ql", "python")

@@ -137,7 +137,7 @@ def print_in_out_degree_table(G):
         print(f"{node:<50}{in_degree:<10}{out_degree:<10}")
 
 def main():
-    entry_file = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-079/XSS.ql"
+    entry_file = "/home/cbb/codeql/java/ql/lib/semmle/code/java/dataflow/ApiSources.qll"
     base_path = "/home/cbb/codeql/"
     print(f"开始解析入口文件: {entry_file}\n")
     visited = set()
@@ -165,6 +165,7 @@ def main():
     print(f"\n📁 共解析文件数: {len(visited)}")
     print(f"❌ 未找到的模块数: {len(missed_modules)}")
     save_missed_modules_to_json(missed_modules)
+    visualize_dependency_graph(G)
     save_graph_to_json(G)
 
 if __name__ == "__main__":

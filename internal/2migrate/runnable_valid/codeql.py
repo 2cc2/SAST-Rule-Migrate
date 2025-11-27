@@ -185,14 +185,14 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
         #     result["valid"] = False
         #     result["error"] = f"Pack install failed: {err_pack.strip()}"
         #     return result
-        lock_src = "/home/cbb/SAST-Rule-Migrate/internal/share/codeql-pack.lock.yml"
-        lock_dst = os.path.join(root_dir, "codeql-pack.lock.yml")
-        if os.path.exists(lock_src):
-            shutil.copy(lock_src, lock_dst)
-            print(f"[🧩] ({thread_id}) 已复制本地 lock 文件，跳过 pack install")
-        else:
-            print(f"[📦] ({thread_id}) 未找到缓存 lock 文件，正在执行 pack install ...")
-            code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
+        # lock_src = "/home/cbb/SAST-Rule-Migrate/internal/share/codeql-pack.lock.yml"
+        # lock_dst = os.path.join(root_dir, "codeql-pack.lock.yml")
+        # if os.path.exists(lock_src):
+        #     shutil.copy(lock_src, lock_dst)
+        #     print(f"[🧩] ({thread_id}) 已复制本地 lock 文件，跳过 pack install")
+        # else:
+        print(f"[📦] ({thread_id}) 未找到缓存 lock 文件，正在执行 pack install ...")
+        code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
         # 运行查询
         print(f"[🚀] ({thread_id}) 正在运行规则验证...")
         code, out, err = run_cmd([codeql_path, "query", "run", rule_file, "--database",db_path,"--search-path=" + packages_dir,])
@@ -242,7 +242,7 @@ def validate_rules_in_directory(rules_dir, base_dir, max_workers=3, language="ja
     # 遍历目录，找到所有 .ql 文件
     for root, _, files in os.walk(rules_dir):
         for file in files:
-            if file.endswith(".go"):
+            if file.endswith(".ql"):
                 rule_files.append(os.path.join(root, file))
 
     print(f"[🔍] 找到 {len(rule_files)} 个规则文件，开始验证...")
@@ -272,8 +272,8 @@ def validate_rules_in_directory(rules_dir, base_dir, max_workers=3, language="ja
     print(f"[📄] 验证结果已保存到 {results_file}")
 
 if __name__ == "__main__":
-    rules_directory = "/home/cbb/PJ/SAST-Rule-Migrate/output/semgrep2codeql"
-    validate_rules_in_directory(rules_directory, base_path, max_workers=max_workers, language="java")
+    rules_directory = "/home/cbb/SAST-Rule-Migrate/internal/2migrate/runnable_valid"
+    validate_rules_in_directory(rules_directory, base_path, max_workers=max_workers, language="python")
 
 
 def ensure_codeql_deps_installed():
