@@ -25,13 +25,14 @@ if __name__ == "__main__":
         model="deepseek-v3",
     )
 
-    
-    entry_dir = "/home/cbb/codeql/python/ql/src/Security/CWE-020/CookieInjection.ql"
+    language="java"
+    # entry_dir = "/home/cbb/codeql/python/ql/src/Security/CWE-020/CookieInjection.ql"
+    entry_dir = "/home/cbb/codeql/java/ql/src/Security/CWE/CWE-089/SqlTainted.ql"
     base_path = "/home/cbb/codeql/"
     print(f"开始解析入口目录: {entry_dir}\n")
 
     # ---------- 1. 读取 CSV 文件列表 ----------
-    python_list_path = f"/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/filelist/python.csv"
+    python_list_path = f"/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/filelist/{language}.csv"
     shared_list_path="/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/filelist/shared.csv"
     relative_paths = read_csv(python_list_path)
     shared_list=read_csv(shared_list_path)
@@ -40,7 +41,7 @@ if __name__ == "__main__":
     absolute_paths = [os.path.join(base_dir, rel_path) for rel_path in relative_paths]
 
     # ---------- 2. 加载模块映射 ----------
-    module_mapping_path = f"/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/module_mappings/python_module_to_filepath.json"
+    module_mapping_path = f"/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/module_mappings/{language}_module_to_filepath.json"
     module_mapping = load_module_mapping(module_mapping_path)
     shared_path="/home/cbb/SAST-Rule-Migrate/internal/0Preprocess/CodeqlPaser/module_mappings/shared_module_to_filepath.json"
     shared_mapping = load_module_mapping(shared_path)
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     visited = set()
     missed_modules = []
     G = nx.DiGraph()
-    max_depth=4
+    max_depth=1
     print(f"解析文件: {file_path}")
     G, missed_modules = find_context(
             file_path=file_path,

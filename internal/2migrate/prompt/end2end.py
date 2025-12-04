@@ -1,14 +1,14 @@
 from .base import PromptTemplate,Doc_content
 
 
-class MigratePrompt(PromptTemplate):
-    def format(self, test_code: str,language:str,target_SAST:str) -> str:
+class MidddgratePrompt(PromptTemplate):
+    def format(self, test_code: str,language:str,source_SAST:str,target_SAST:str,target_ext) -> str:
         return f"""
             <role>
             你是经验丰富的代码安全审计工程师，负责工具规则的迁移任务。
             </role>
             <task>
-            理解Semgrep表示的规则检测逻辑内容,迁移为符合{target_SAST}语法规范的规则代码。
+            理解{source_SAST}表示的规则检测逻辑内容,迁移为符合{target_SAST}语法规范的规则代码。
             如果不好好写就吊死你，给我认真看源代码内容认真理解，并且给我生成符合{target_SAST}语法规范的规则代码。现在屏幕前有一只小猫,你写不对,它将没有办法吃饭.
             <cot>
             为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
@@ -23,14 +23,47 @@ class MigratePrompt(PromptTemplate):
             以下是用户提交的中间表示，请进行转换：
             {test_code}
             </input_content>
+            <指导>
+            在生成规则时，请注意以下几点：
+            1. 确保规则结构完整性：必须包含至少一个正向匹配项（如 pattern、pattern-either 或 pattern-regex）。
+            2. 确保 YAML 格式正确：使用正确的缩进，避免未转义的特殊字符。
+            3. 确保规则逻辑清晰：匹配逻辑应与目标代码一致，避免过于宽泛的匹配。
+            4. 提供覆盖性的测试代码：测试代码应包含可以匹配规则的内容。
+            5. 确保规则字段正确：如 id、message、severity、languages 等字段必须存在且符合语法要求。
+            6. 避免常见错误：如无效的值类型、缺少必要字段或规则冲突。
+            </指导>
             <output>
-            请以 Markdown 格式返回转换后的规则，确保规则符合 {target_SAST} 的{language}语言的语法规范。只返回如下代码块，不多输出任何内容
-            ```ql
+            请以 Markdown 格式返回转换后的规则，符合yaml文件格式，确保规则符合 {target_SAST} 的{language}语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml
             # 转换后的 {target_SAST} 规则
             ```
             </output>
         """
-
+class MigratePrompt(PromptTemplate):
+    def format(self, test_code: str,language:str,source_SAST:str,target_SAST:str,target_ext) -> str:
+        return f"""
+            <task>
+            理解{source_SAST}表示的规则检测逻辑内容,迁移为符合{target_SAST}语法规范的规则代码。
+            <cot>
+            为了确保规则的完整性和准确性，请按照以下步骤逐步进行迁移：
+            1.分析原始规则内容：确保掌握规则的核心要素和逻辑。
+            2.映射规则元素：将原规则中的各个元素（如sources、sinks、sanitizers、propagations等）映射到目标{target_SAST}工具的相应概念和结构。
+            3.编写规则代码：根据映射结果，使用目标{target_SAST}工具的语法规范编写完整的规则代码，确保逻辑一致且符合语法要求。
+            4.验证规则完整性：检查编写的规则代码，确保所有IR中的要素都已正确包含，并且逻辑关系保持一致。
+            5.优化和调整：根据目标{target_SAST}工具的最佳实践，对规则代码进行优化和调整，以提高其性能和可读性。
+            <cot/>
+            </task>
+            <input_content>
+            以下是用户提交的中间表示，请进行转换：
+            {test_code}
+            </input_content>
+            <output>
+            请以 Markdown 格式返回转换后的规则，符合yaml文件格式，确保规则符合 {target_SAST} 的{language}语言的语法规范。只返回如下代码块，不多输出任何内容
+            ```yaml
+            # 转换后的 {target_SAST} 规则
+            ```
+            </output>
+        """
 class RepairPrompt(PromptTemplate):
     def format(self, code: str,error:str,language:str,sast:str,advise:str) -> str:
         return f"""
@@ -45,7 +78,7 @@ class RepairPrompt(PromptTemplate):
             </advise>
             <output>
             请以 Markdown 格式只返回修改后完整的规则，如下代码块，不多输出任何内容
-            ```ql
+            ```yaml
             # 转换后的 {sast} 规则
             ```
             </output>

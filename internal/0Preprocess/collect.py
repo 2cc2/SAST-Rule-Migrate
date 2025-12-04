@@ -125,7 +125,9 @@ def find_context(
         if module_name == "python":
             print("  " * level + f"[跳过] 模块名为 'python'，不解析 | import by {current_module}")
             continue
-
+        if module_name == "java":
+            print("  " * level + f"[跳过] 模块名为 'java'，不解析 | import by {current_module}")
+            continue
         # ---------- 6.1 解析 import 到文件路径 ----------
         resolved_path = resolve_import_path(module_name, all_files, module_mapping)
 

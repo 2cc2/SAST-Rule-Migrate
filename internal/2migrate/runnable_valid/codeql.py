@@ -58,7 +58,36 @@ def write_rule_file(rule_file: str, rule_content: str):
 def write_sample_code(sample_file: str, language: str = "python"):
     """写入简单样例源码"""
     if language == "python":
-        content = "import os\nos.system('ls')\n"
+        content = """
+from flask import Flask, request, make_response
+# Initialize the Flask application
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Test endpoints: /1 (set_cookie), /2 (set_cookie_header)"
+
+@app.route("/1")
+def set_cookie():
+    # BAD: User input is used to set the cookie's name and value
+    resp = make_response("Cookie set via set_cookie")
+    if "name" in request.args:
+        resp.set_cookie(request.args["name"],
+                        value=request.args["name"])
+    return resp
+
+@app.route("/2")
+def set_cookie_header():
+    # BAD: User input is used to set the raw cookie header. Highly vulnerable to Header Injection.
+    resp = make_response("Cookie set via raw header")
+    if "name" in request.args:
+        resp.headers['Set-Cookie'] = f"{request.args['name']}={request.args['name']};"
+    return resp
+
+if __name__ == "__main__":
+    # Not runnable here, but included for complete Flask app structure
+    pass
+"""
     elif language == "java":
         content = (
             "package com.example;\n\n"
@@ -185,14 +214,14 @@ def validate_codeql_rule(rule_content: str, base_dir: str = base_path, language:
         #     result["valid"] = False
         #     result["error"] = f"Pack install failed: {err_pack.strip()}"
         #     return result
-        # lock_src = "/home/cbb/SAST-Rule-Migrate/internal/share/codeql-pack.lock.yml"
-        # lock_dst = os.path.join(root_dir, "codeql-pack.lock.yml")
-        # if os.path.exists(lock_src):
-        #     shutil.copy(lock_src, lock_dst)
-        #     print(f"[🧩] ({thread_id}) 已复制本地 lock 文件，跳过 pack install")
-        # else:
-        print(f"[📦] ({thread_id}) 未找到缓存 lock 文件，正在执行 pack install ...")
-        code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
+        lock_src = "/home/cbb/SAST-Rule-Migrate/internal/share/test/codeql_test/run_efc70383/python-security-queries/codeql-pack.lock.yml"
+        lock_dst = os.path.join(root_dir, "codeql-pack.lock.yml")
+        if os.path.exists(lock_src):
+            shutil.copy(lock_src, lock_dst)
+            print(f"[🧩] ({thread_id}) 已复制本地 lock 文件，跳过 pack install")
+        else:
+            print(f"[📦] ({thread_id}) 未找到缓存 lock 文件，正在执行 pack install ...")
+            code, out_pack, err_pack = run_cmd([codeql_path, "pack", "install"], cwd=root_dir)
         # 运行查询
         print(f"[🚀] ({thread_id}) 正在运行规则验证...")
         code, out, err = run_cmd([codeql_path, "query", "run", rule_file, "--database",db_path,"--search-path=" + packages_dir,])
