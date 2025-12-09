@@ -93,23 +93,23 @@ def find_context(file_path, base_path, visited=None, G=None, parent_module=None,
 
     imports = parse_imports_from_content(content)
     for module_name in imports:
-        # if or module_name == "java":
-        #     continue
-        # elif module_name.startswith("semmle"):
-        #     base_path = "/home/cbb/codeql/java/ql/lib"
+        if or module_name == "java":
+            continue
+        elif module_name.startswith("semmle"):
+            base_path = "/home/cbb/codeql/java/ql/lib"
     
-        # elif module_name.startswith("codeql.util"):
-        #     base_path = "/home/cbb/codeql/shared/util/"
-        # elif module_name.startswith("codeql.ssa"):
-        #     base_path = "/home/cbb/codeql/shared/ssa/"
-        # elif module_name.startswith("codeql.controlflow.BasicBlock"):
-        #     base_path = "/home/cbb/codeql/shared/controlflow/"
-        # elif module_name.startswith("codeql.threatmodels.ThreatModels"):
-        #     base_path = "/home/cbb/codeql/shared/threat-models/"
-        # # elif module_name.startswith("FlowSummaryImpl"):
-        # #     base_path = "/home/cbb/codeql/java/ql/lib/semmle/code/java/dataflow/internal/FlowSummaryImpl.qll"
-        # elif module_name.startswith("codeql"):
-        #     base_path = "/home/cbb/codeql"
+        elif module_name.startswith("codeql.util"):
+            base_path = "/home/cbb/codeql/shared/util/"
+        elif module_name.startswith("codeql.ssa"):
+            base_path = "/home/cbb/codeql/shared/ssa/"
+        elif module_name.startswith("codeql.controlflow.BasicBlock"):
+            base_path = "/home/cbb/codeql/shared/controlflow/"
+        elif module_name.startswith("codeql.threatmodels.ThreatModels"):
+            base_path = "/home/cbb/codeql/shared/threat-models/"
+        # elif module_name.startswith("FlowSummaryImpl"):
+        #     base_path = "/home/cbb/codeql/java/ql/lib/semmle/code/java/dataflow/internal/FlowSummaryImpl.qll"
+        elif module_name.startswith("codeql"):
+            base_path = "/home/cbb/codeql"
         
         resolved_path = resolve_import_path(module_name,all_files)
         if resolved_path:
