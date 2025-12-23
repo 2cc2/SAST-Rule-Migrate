@@ -298,22 +298,100 @@ java/ql/src/Security/CWE/CWE-129/ImproperValidationOfArrayConstruction.java
         print(f"警告: 调用大模型失败: {e}")
         raise e
 
-def add_labels_to_samples(data: Dict[str, Any]) -> Dict[str, Any]:
-    """为所有示例的samples添加标签"""
+
+def add_labels_to_examples(data: Dict[str, Any]) -> Dict[str, Any]:
+    """为所有示例添加标签"""
+    # labeled_data是最终生成的标签集合
+    labeled_data = {}
+    
+    # 如果存在部分完成的结果文件，则加载它
+    if os.path.exists(CODEQL_EXAMPLE_LABELED_FILE):
+        try:
+            labeled_data = load_json_file(CODEQL_EXAMPLE_LABELED_FILE)
+            print(f"加载已存在的部分结果文件: {CODEQL_EXAMPLE_LABELED_FILE}")
+        except Exception as e:
+            print(f"警告: 无法加载已存在的结果文件: {e}")
+            labeled_data = {}
+    
     for language, rules in data.items():
+        if language not in labeled_data:
+            labeled_data[language] = {}
+        
         for rule, rule_info in rules.items():
-            examples = rule_info.get("examples", [])
-            for example in examples:
-                samples = example.get("samples", [])
-                for sample in samples:
-                    # 根据某些条件为每个sample添加标签
-                    # 这里假设一个简单的逻辑：如果代码中包含"secure"，则为"good"，否则为"bad"
-                    code = sample.get("code", "")
-                    if "secure" in code.lower():
-                        sample["label"] = "good"
-                    else:
-                        sample["label"] = "bad"
-    return data
+            # 如果规则已经处理过，检查是否所有示例都有标签
+            if rule in labeled_data.get(language, {}):
+                existing_examples = labeled_data[language][rule].get("examples", [])
+                # 检查是否所有示例都有label
+                if len(existing_examples) == 0:
+                    print(f"跳过example为空的规则: {rule}")
+                    continue
+                if all("label" in example for example in existing_examples):
+                    print(f"跳过已处理的规则: {rule}")
+                    continue
+            #
+            # labeled_examples = []
+            #
+            # # 检查已存在的示例标签
+            # existing_examples_dict = {}
+            # if rule in labeled_data.get(language, {}):
+            #     existing_examples = labeled_data[language][rule].get("examples", [])
+            #     for example in existing_examples:
+            #         if "label" in example:
+            #             example_path = example["path"]
+            #             existing_examples_dict[example_path] = example
+
+
+            # 重置该rule的example列表
+            labeled_data[language][rule]["examples"] = []
+            # 为每个example添加标签
+            for example in rule_info.get("examples", []):
+                labeled_example_list = []
+
+                example_path = example["path"]
+                
+                # # 如果示例已经有标签，则直接使用
+                # if example_path in existing_examples_dict:
+                #     labeled_examples.append(existing_examples_dict[example_path])
+                #     print(f"使用已有标签: {example_path} -> {existing_examples_dict[example_path]['label']}")
+                #     continue
+                
+                goodcase = example.get("goodcase", 0)
+                badcase = example.get("badcase", 0)
+                
+                # 使用大模型确定标签
+                label_tuples = determine_label_with_llm_without_rule_info(rule, example_path, goodcase, badcase)
+                print(f"生成标签: {example_path} -> {label_tuples}")
+                
+                # 根据要求处理返回值
+                if not label_tuples:
+                    # 如果返回的列表为空
+                    labeled_example_list = [{
+                        "path": example_path,
+                        "label": "none",
+                        "interval": []
+                    }]
+                else:
+                    # 对于每个元组，生成一个字典
+                    for label_tuple in label_tuples:
+                        if len(label_tuple) >= 3:
+                            label_type = label_tuple[0].strip("()").strip()
+                            start = label_tuple[1].strip("()").strip()
+                            end = label_tuple[2].strip("()").strip()
+                            labeled_example_list.append({
+                                "path": example_path,
+                                "label": label_type,
+                                "interval": [start, end]
+                            })
+                
+                # 每生成一个标签就保存一次
+                labeled_data[language][rule]["examples"] += labeled_example_list
+
+                print(f"生成映射: {rule} -> {labeled_example_list}\n")
+
+                save_json_file(CODEQL_EXAMPLE_LABELED_FILE, labeled_data)
+    
+    return labeled_data
+
 
 def main():
     """主函数"""
@@ -321,7 +399,7 @@ def main():
     data = load_json_file(CODEQL_EXAMPLE_FILE)
     
     print("正在为示例添加标签...")
-    labeled_data = add_labels_to_samples(data)
+    labeled_data = add_labels_to_examples(data)
     
     print("正在保存带标签的CodeQL示例文件...")
     save_json_file(CODEQL_EXAMPLE_LABELED_FILE, labeled_data)

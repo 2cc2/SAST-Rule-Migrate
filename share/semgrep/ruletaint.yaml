@@ -1,0 +1,38 @@
+rules:
+  - id: java.lang.security.os-command-injection.ProcessBuilder-Command-Injection
+    message: |
+      检测到潜在的 OS 命令注入漏洞 (OSCI)。
+      
+      来自函数参数（如 $USER_DATA）的用户输入未经充分的安全检查，被传递给了 ProcessBuilder.command() 方法。 
+      
+      这可能允许攻击者通过注入 shell 元字符（如 `&`, `|`, `;`）来执行任意系统命令。
+      
+      **修复建议:** 始终使用 ProcessBuilder 的参数化形式，确保用户输入作为单独的参数而不是命令字符串的一部分。理想情况下，对用户输入执行严格的白名单校验。
+    
+    # 将严重性设置为 ERROR，因为这是一个高危漏洞
+    severity: ERROR 
+    languages:
+      - java
+      
+    # 启用污点分析模式，以精确跟踪数据流
+    mode: taint 
+    
+    # --- 1. 污点源 (Sources) ---
+    # 定义哪些地方是外部输入/不受信任的数据
+    pattern-sources:
+      - pattern: $FUNCDECL(..., $USER_DATA, ...) { ... }
+
+    # --- 2. 污点汇聚点 (Sinks) ---
+    # 定义哪些地方是危险的 API 调用，它们是漏洞发生的终点
+    pattern-sinks:
+      - pattern-either:
+        # 场景 A: 污点数据直接或间接传入 ProcessBuilder.command(String...)
+        # 注意：Semgrep 的 taint mode 会自动跟踪赋值 $X = $USER_DATA;
+        - pattern: |
+            $PB.command(..., $USER_DATA, ...)
+        
+        # 场景 B: 污点数据传入 ProcessBuilder 构造函数（该构造函数也调用 command）
+        - pattern: new ProcessBuilder($USER_DATA)
+        
+        # 场景 C: 污点数据传入 ProcessBuilder 构造函数，作为其中一个参数
+        - pattern: new ProcessBuilder(..., $USER_DATA, ...)

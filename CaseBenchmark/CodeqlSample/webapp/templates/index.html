@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Code Auditor Pro - 标注助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .line-bad { background-color: #fee2e2; border-left: 4px solid #ef4444; }
+        .line-good { background-color: #dcfce7; border-left: 4px solid #22c55e; }
+        .line-hover:hover { background-color: #f8fafc; cursor: pointer; }
+        .line-selected { background-color: #e0e7ff !important; outline: 1px dashed #6366f1; }
+        .code-font { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.6; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .animate-pulse-fast { animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
+</head>
+<body class="bg-slate-50 h-screen flex flex-col overflow-hidden text-slate-900">
+    <div id="pipeline-toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-indigo-600 text-white px-6 py-2 rounded-full shadow-2xl font-bold text-sm transform transition-all duration-300 scale-0 opacity-0 flex items-center gap-3">
+        <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+        <span id="toast-msg">正在重启流水线...</span>
+    </div>
+    <header class="bg-slate-900 text-white p-3 shadow-md flex justify-between items-center z-10">
+        <div class="flex items-center gap-6">
+            <h1 class="text-lg font-bold text-indigo-400">DeepSeek <span class="text-white font-light">Auditor</span></h1>
+            
+            <div class="flex items-center bg-slate-800 rounded-lg px-2 py-1 gap-2">
+                <button onclick="navigate('prev')" class="hover:text-indigo-400 p-1.5 transition"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 19l-7-7 7-7"/></svg></button>
+                <button onclick="goToLastPos()" title="跳转到上次标注" class="text-slate-400 hover:text-indigo-400 p-1.5 transition border-x border-slate-700 px-3"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9z"></path></svg></button>
+                <span id="progress-tag" class="text-xs font-mono text-slate-400 min-w-[60px] text-center">0 / 0</span>
+                <button onclick="navigate('next')" class="hover:text-indigo-400 p-1.5 transition"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>
+            </div>
+
+            <button onclick="toggleAutoMode()" id="auto-mode-btn" class="bg-slate-700 hover:bg-slate-600 text-[10px] font-bold py-1 px-4 rounded-full border border-slate-500 transition-all flex items-center gap-2">
+                <span id="auto-dot" class="w-2 h-2 rounded-full bg-slate-400"></span>
+                <span>自动化流水线</span>
+            </button>
+        </div>
+
+        <div id="save-status" class="text-[10px] font-bold px-3 py-1 rounded-full bg-slate-800 text-slate-500 flex items-center gap-2">
+            <div id="status-dot" class="w-2 h-2 rounded-full bg-slate-600"></div> 
+            <span id="status-text">就绪</span>
+        </div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden">
+        <div class="flex-1 flex flex-col p-4 overflow-hidden">
+            <div class="flex items-center gap-4 mb-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex bg-slate-100 rounded-lg p-1">
+                    <button id="btn-bad" onclick="setMode('bad')" class="px-4 py-1.5 rounded-md text-xs font-bold transition-all bg-red-500 text-white shadow-sm">标记 BAD</button>
+                    <button id="btn-good" onclick="setMode('good')" class="px-4 py-1.5 rounded-md text-xs font-bold transition-all text-slate-600 hover:bg-slate-200">标记 GOOD</button>
+                </div>
+                <button onclick="clearAll()" class="px-4 py-1.5 rounded-md text-xs font-bold transition-all text-slate-500 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100">清除所有</button>
+                <!-- <button onclick="undo()" id="undo-btn" class="ml-auto text-slate-400 hover:text-indigo-600 transition"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg></button> -->
+            </div>
+            <div id="code-display" class="flex-1 bg-white border border-slate-200 rounded-xl shadow-sm overflow-auto p-4 code-font whitespace-pre"></div>
+        </div>
+
+        <div class="w-80 bg-slate-50 border-l border-slate-200 flex flex-col">
+            <div class="p-4 border-b bg-white">
+                <h3 class="text-[10px] font-bold text-slate-400 uppercase mb-2">当前规则</h3>
+                <div id="rule-name" class="text-sm font-mono font-bold text-indigo-600 break-all leading-tight">加载中...</div>
+            </div>
+            
+            <div class="flex-1 overflow-auto p-4 space-y-4">
+                <section>
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-[10px] font-bold text-slate-400 uppercase">AI 智能分析</h3>
+                        <button onclick="runAI()" id="ai-btn" class="bg-indigo-600 text-white text-[10px] px-2 py-1 rounded hover:bg-indigo-700 transition">✨ 分析</button>
+                    </div>
+                    <div id="ai-loading" class="hidden text-center py-4 animate-pulse text-indigo-500 text-xs font-medium border border-dashed border-indigo-200 rounded-lg">DeepSeek 正在思考...</div>
+                    <div id="ai-content" class="hidden bg-white rounded-lg border border-indigo-100 p-3 text-xs shadow-sm">
+                        <div class="flex justify-between items-center mb-2">
+                            <span id="ai-status-badge" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold text-[9px]">差异待核对</span>
+                            <span id="ai-diff-value" class="text-slate-400 font-mono text-[9px]">Diff: 0</span>
+                        </div>
+                        <p id="ai-reasoning" class="text-slate-500 italic mb-3 leading-relaxed border-b pb-2"></p>
+                        <div id="ai-commands" class="font-mono text-[10px] text-indigo-700 bg-indigo-50 p-2 rounded mb-3 max-h-32 overflow-auto"></div>
+                        <button onclick="applyAI()" class="w-full py-2 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 transition">应用并覆盖 AI 建议</button>
+                    </div>
+                </section>
+
+                <section>
+                    <h3 class="text-[10px] font-bold text-slate-400 uppercase mb-2">操作历史</h3>
+                    <div id="history-list" class="space-y-2 max-h-[300px] overflow-auto text-[10px]"></div>
+                </section>
+            </div>
+
+            <div class="p-4 bg-white border-t space-y-2">
+                <button id="save-btn" onclick="saveCurrent()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-bold shadow-lg transition-all active:scale-95 disabled:bg-slate-300">保存当前修改</button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentData, activeLabels = [], labelHistory = [], currentMode = 'bad', firstLine = null, isDirty = false, lastAICommands = [], isAutoRunning = false;
+
+        function setStatus(status) {
+            isDirty = (status === 'dirty');
+            const dot = document.getElementById('status-dot'), text = document.getElementById('status-text');
+            dot.className = isDirty ? "w-2 h-2 rounded-full bg-amber-500 animate-pulse" : "w-2 h-2 rounded-full bg-emerald-500";
+            text.innerText = isDirty ? "有未保存更改" : "数据已同步";
+        }
+
+        async function navigate(dir) {
+            if (isDirty && !isAutoRunning && !confirm("更改未保存，确定切换吗？")) return;
+            const res = await fetch(`/api/load?dir=${dir}`);
+            loadDataToUI(await res.json());
+        }
+
+        async function goToLastPos() {
+            if (isDirty && !isAutoRunning && !confirm("更改未保存，确定跳转吗？")) return;
+            const res = await fetch('/api/last_pos');
+            loadDataToUI(await res.json());
+        }
+
+        function loadDataToUI(data) {
+            if (data.status === 'error') return alert(data.message);
+            currentData = data;
+            activeLabels = JSON.parse(JSON.stringify(data.existing_labels || []));
+            labelHistory = JSON.parse(JSON.stringify(data.history || []));
+            firstLine = null; setStatus('clean'); render(); updateHistoryUI();
+            document.getElementById('ai-content').classList.add('hidden');
+        }
+
+        function render() {
+            if (!currentData) return;
+            document.getElementById('progress-tag').innerText = `${currentData.index} / ${currentData.total}`;
+            document.getElementById('rule-name').innerText = currentData.rule;
+            const container = document.getElementById('code-display');
+            container.innerHTML = currentData.code.map((line, i) => {
+                const ln = i + 1;
+                let cls = "line-row line-hover", tag = "";
+                activeLabels.forEach(lb => {
+                    if(ln >= lb.StartLine && ln <= lb.EndLine) {
+                        cls += lb.label === 'bad' ? ' line-bad' : ' line-good';
+                        tag = `<span class="inline-block px-1 rounded bg-white text-[8px] font-black mr-1 border shadow-sm ${lb.label === 'bad' ? 'text-red-500 border-red-100' : 'text-green-600 border-green-100'}">${lb.label.toUpperCase()}</span>`;
+                    }
+                });
+                if (firstLine === ln) cls += " line-selected";
+                return `<div class="${cls} py-0.5 px-2" onclick="handleLineClick(${ln})"><span class="inline-block w-8 text-slate-300 text-right mr-4 italic text-[10px] select-none">${ln}</span>${tag}${line.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</div>`;
+            }).join('');
+        }
+
+        function handleLineClick(n) {
+            // 1. 检查点击是否在已有标注内 -> 删除标注
+            const existingIdx = activeLabels.findIndex(lb => n >= lb.StartLine && n <= lb.EndLine);
+            if (existingIdx !== -1) {
+                pushHistory(`删除标注 ${activeLabels[existingIdx].label.toUpperCase()} ${activeLabels[existingIdx].StartLine}-${activeLabels[existingIdx].EndLine}`);
+                activeLabels.splice(existingIdx, 1);
+                firstLine = null; // 重置选择状态
+                setStatus('dirty');
+                render();
+                return;
+            }
+
+            if (firstLine === null) {
+                firstLine = n;
+                render(); // 触发重绘以显示高亮
+            } else {
+                const s = Math.min(firstLine, n), e = Math.max(firstLine, n);
+                pushHistory(`标注 ${currentMode.toUpperCase()} ${s}-${e}`);
+                activeLabels = activeLabels.filter(lb => !(lb.StartLine <= e && lb.EndLine >= s));
+                activeLabels.push({label: currentMode, StartLine: s, EndLine: e});
+                firstLine = null; setStatus('dirty'); render();
+            }
+        }
+
+        function clearAll() {
+            if (activeLabels.length === 0) return;
+            if (!confirm("确定要清除所有标注吗？")) return;
+            pushHistory("清除所有标注");
+            activeLabels = [];
+            firstLine = null;
+            setStatus('dirty');
+            render();
+        }
+
+        // async function saveCurrent() {
+        //     const res = await fetch('/api/save', {
+        //         method: 'POST', headers: {'Content-Type': 'application/json'},
+        //         body: JSON.stringify({labels: activeLabels, history: labelHistory})
+        //     });
+        //     if ((await res.json()).status === 'success') setStatus('clean');
+        // }
+        async function saveCurrent() {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true; // 防止重复点击
+    
+    const res = await fetch('/api/save', {
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({labels: activeLabels, history: labelHistory})
+    });
+    
+    const result = await res.json();
+    if (result.status === 'success') {
+        setStatus('clean');
+        
+        // 检查是否是从“人工干预”状态保存的
+        const aiSectionVisible = !document.getElementById('ai-content').classList.contains('hidden');
+        
+        if (aiSectionVisible) {
+            showToast("检测到人工修正，保存成功！正在跳转...");
+            
+            // 1. 隐藏 AI 面板
+            document.getElementById('ai-content').classList.add('hidden');
+            
+            // 2. 延迟跳转并重启
+            setTimeout(async () => {
+                showToast("正在同步最新进度...");
+                await navigate('next'); // 移动到下一条
+                
+                showToast("流水线已重启 🚀");
+                if (!isAutoRunning) toggleAutoMode(); // 如果没开，就启动
+                
+                // 3秒后自动隐藏 Toast
+                setTimeout(() => hideToast(), 2000);
+            }, 800);
+        }
+    }
+    btn.disabled = false;
+}
+function showToast(msg) {
+    const toast = document.getElementById('pipeline-toast');
+    document.getElementById('toast-msg').innerText = msg;
+    toast.classList.remove('scale-0', 'opacity-0');
+    toast.classList.add('scale-100', 'opacity-100');
+}
+
+function hideToast() {
+    const toast = document.getElementById('pipeline-toast');
+    toast.classList.remove('scale-100', 'opacity-100');
+    toast.classList.add('scale-0', 'opacity-0');
+}
+async function toggleAutoMode() {
+    // 如果已经在运行中，点击则是停止
+    if (isAutoRunning) {
+        isAutoRunning = false;
+        updateAutoBtnUI(false);
+        showToast("流水线已手动停止");
+        setTimeout(() => hideToast(), 1500);
+        return;
+    }
+
+    // 如果准备开启，先检查是否有未保存内容
+    if (isDirty) {
+        if (confirm("当前有未保存的标注，是否【保存并开始】流水线？")) {
+            await saveCurrent(); // saveCurrent 会自动触发重启逻辑，所以这里直接 return
+            return;
+        }
+    }
+
+    isAutoRunning = true;
+    updateAutoBtnUI(true);
+    runAutoLoop();
+}
+
+// 抽离 UI 更新逻辑
+function updateAutoBtnUI(running) {
+    const btn = document.getElementById('auto-mode-btn'), dot = document.getElementById('auto-dot');
+    if (running) {
+        btn.className = "bg-red-600 text-white text-[10px] font-bold py-1 px-4 rounded-full border border-red-400 transition-all flex items-center gap-2 animate-pulse-fast";
+        dot.className = "w-2 h-2 rounded-full bg-white";
+        btn.children[1].innerText = "停止流水线";
+    } else {
+        btn.className = "bg-slate-700 text-white text-[10px] font-bold py-1 px-4 rounded-full border border-slate-500 transition-all flex items-center gap-2";
+        dot.className = "w-2 h-2 rounded-full bg-slate-400";
+        btn.children[1].innerText = "自动化流水线";
+    }
+}
+        function pushHistory(msg) {
+            labelHistory.push({ name: msg, data: JSON.parse(JSON.stringify(activeLabels)), time: new Date().toLocaleTimeString() });
+            updateHistoryUI();
+        }
+
+        function updateHistoryUI() {
+            const list = document.getElementById('history-list');
+            list.innerHTML = labelHistory.slice().reverse().map((h, i) => `
+                <div class="bg-white p-2 rounded border border-slate-200 flex justify-between items-center group shadow-sm hover:border-indigo-300">
+                    <div class="flex flex-col">
+                        <span class="font-bold text-slate-700">${h.name}</span>
+                        <span class="text-[8px] text-slate-400">${h.time}</span>
+                    </div>
+                    <button onclick="restoreHistory(${labelHistory.length-1-i})" class="text-indigo-600 font-bold hover:underline opacity-0 group-hover:opacity-100 transition">回退</button>
+                </div>`).join('');
+        }
+
+        function restoreHistory(idx) {
+            activeLabels = JSON.parse(JSON.stringify(labelHistory[idx].data));
+            labelHistory = labelHistory.slice(0, idx); setStatus('dirty'); render(); updateHistoryUI();
+        }
+
+        function undo() {
+    // 只有当历史记录大于 0 时才能撤销
+    if (labelHistory.length > 0) {
+        // 1. 移除当前的最后一个历史记录
+        labelHistory.pop();
+        
+        // 2. 检查移除后是否还有更早的历史
+        if (labelHistory.length > 0) {
+            // 回到上一个动作完成后的状态
+            const previousState = labelHistory[labelHistory.length - 1];
+            activeLabels = JSON.parse(JSON.stringify(previousState.data));
+        } else {
+            // 如果历史清空了，说明回到了最初始加载的状态
+            activeLabels = JSON.parse(JSON.stringify(currentData.existing_labels || []));
+        }
+        
+        // 3. 更新 UI
+        setStatus('dirty'); 
+        render(); 
+        updateHistoryUI();
+    } else {
+        console.log("没有可撤销的操作");
+    }
+}
+
+        // --- 自动化控制核心 ---
+        function toggleAutoMode() {
+            isAutoRunning = !isAutoRunning;
+            const btn = document.getElementById('auto-mode-btn'), dot = document.getElementById('auto-dot');
+            if (isAutoRunning) {
+                btn.className = "bg-red-600 text-white text-[10px] font-bold py-1 px-4 rounded-full border border-red-400 transition-all flex items-center gap-2 animate-pulse-fast";
+                dot.className = "w-2 h-2 rounded-full bg-white";
+                btn.children[1].innerText = "停止流水线";
+                runAutoLoop();
+            } else {
+                btn.className = "bg-slate-700 text-white text-[10px] font-bold py-1 px-4 rounded-full border border-slate-500 transition-all flex items-center gap-2";
+                dot.className = "w-2 h-2 rounded-full bg-slate-400";
+                btn.children[1].innerText = "自动化流水线";
+            }
+        }
+
+        async function runAutoLoop() {
+    if (!isAutoRunning) return;
+    
+    // 显示加载状态
+    document.getElementById('ai-loading').classList.remove('hidden');
+
+    try {
+        const res = await fetch('/api/auto_batch_step', { method: 'POST' });
+        const result = await res.json();
+
+        if (result.status === 'auto_saved') {
+            loadDataToUI(result.next_data);
+            setTimeout(runAutoLoop, 400); 
+        } 
+        else if (result.status === 'require_manual') {
+            // --- 核心修复点：在这里强制更新 AI 显示框 ---
+            toggleAutoMode(); // 停止自动化开关
+            
+            // 1. 将后端传回的 AI 结果赋值给全局变量
+            lastAICommands = result.ai_suggestion.commands || [];
+            
+            // 2. 更新文本和 Diff 标签
+            document.getElementById('ai-reasoning').innerText = result.ai_suggestion.reasoning || "AI 未提供推理理由";
+            document.getElementById('ai-diff-value').innerText = `Diff Score: ${result.diff}`;
+            
+            // 3. 显式调用渲染函数来生成指令列表 HTML
+            renderAICommands(); 
+            
+            // 4. 确保 AI 内容区域是可见的
+            document.getElementById('ai-content').classList.remove('hidden');
+            
+            // 5. 更新状态标签颜色
+            const badge = document.getElementById('ai-status-badge');
+            badge.innerText = result.diff === 999 ? "全新样本" : `差异显著: ${result.diff}`;
+            badge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold ${result.diff === 999 ? 'bg-indigo-100 text-indigo-700' : 'bg-red-100 text-red-700'}`;
+            
+            alert(`流水线已暂停：当前标注与 AI 建议差异值 (${result.diff}) 超过阈值。`);
+        }
+    } catch (e) {
+        console.error("Pipeline Error:", e);
+        toggleAutoMode();
+    } finally {
+        document.getElementById('ai-loading').classList.add('hidden');
+    }
+}
+
+// 确保这个函数能正确生成内容
+function renderAICommands() {
+    const box = document.getElementById('ai-commands');
+    if (!lastAICommands || lastAICommands.length === 0) {
+        box.innerHTML = '<div class="text-slate-400 italic">无可用区间建议</div>';
+        return;
+    }
+    
+    box.innerHTML = lastAICommands.map(c => {
+        const isBad = c.toLowerCase().startsWith('bad');
+        return `<div class="flex items-center gap-2 py-1.5 border-b border-indigo-50 last:border-0 font-mono font-bold ${isBad ? 'text-red-600' : 'text-green-600'}">
+            <span>${isBad ? '✘' : '✔'}</span> ${c.toUpperCase()}
+        </div>`;
+    }).join('');
+}
+        async function runAI() {
+            document.getElementById('ai-loading').innerText = "AI 正在深度扫描...";
+            document.getElementById('ai-loading').classList.remove('hidden');
+            try {
+                const res = await fetch('/api/analyze', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rule: currentData.rule, code: currentData.code})
+                });
+                const r = await res.json();
+                lastAICommands = r.commands || [];
+                document.getElementById('ai-reasoning').innerText = r.reasoning;
+                document.getElementById('ai-diff-value').innerText = "Manual Run";
+                renderAICommands();
+                document.getElementById('ai-content').classList.remove('hidden');
+            } finally {
+                document.getElementById('ai-loading').classList.add('hidden');
+            }
+        }
+
+        function renderAICommands() {
+            const box = document.getElementById('ai-commands');
+            box.innerHTML = lastAICommands.map(c => {
+                const isBad = c.toLowerCase().startsWith('bad');
+                return `<div class="flex items-center gap-2 py-1 border-b border-indigo-100/50 last:border-0 font-bold ${isBad ? 'text-red-600' : 'text-green-600'}">
+                    <span>${isBad ? '⚠️' : '✅'}</span> ${c.toUpperCase()}
+                </div>`;
+            }).join('');
+        }
+
+        function applyAI() {
+            if (!lastAICommands.length) return;
+            pushHistory("人工应用 AI 建议覆盖");
+            activeLabels = lastAICommands.map(c => {
+                const p = c.split(' ');
+                return { label: p[0], StartLine: parseInt(p[1]), EndLine: parseInt(p[2]) };
+            });
+            setStatus('dirty'); render();
+        }
+
+        function setMode(m) {
+            currentMode = m;
+            document.getElementById('btn-bad').className = m === 'bad' ? 'px-4 py-1.5 rounded-md text-xs font-bold bg-red-500 text-white shadow-sm' : 'px-4 py-1.5 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-200';
+            document.getElementById('btn-good').className = m === 'good' ? 'px-4 py-1.5 rounded-md text-xs font-bold bg-green-600 text-white shadow-sm' : 'px-4 py-1.5 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-200';
+        }
+
+        window.onkeydown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveCurrent(); }
+        };
+
+        navigate('init');
+    </script>
+</body>
+</html>

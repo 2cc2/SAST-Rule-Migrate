@@ -13,7 +13,6 @@
 import python 
 import semmle.python.dataflow.new.DataFlow
 import semmle.python.dataflow.new.TaintTracking
-private import python
 private import semmle.python.dataflow.new.DataFlow
 private import semmle.python.Concepts
 private import semmle.python.dataflow.new.RemoteFlowSources
@@ -41,19 +40,12 @@ module SqlInjection {
 
 private module SqlInjectionConfig implements DataFlow::ConfigSig {
   predicate isSource(DataFlow::Node source) { source instanceof SqlInjection::Source }
-
   predicate isSink(DataFlow::Node sink) { sink instanceof SqlInjection::Sink }
-
   predicate isBarrier(DataFlow::Node node) { node instanceof SqlInjection::Sanitizer }
-
   predicate observeDiffInformedIncrementalMode() { any() }
 }
 
-/** Global taint-tracking for detecting "SQL injection" vulnerabilities. */
 module SqlInjectionFlow = TaintTracking::Global<SqlInjectionConfig>;
-
-
-
 
 from SqlInjectionFlow::PathNode source, SqlInjectionFlow::PathNode sink
 where SqlInjectionFlow::flowPath(source, sink)
